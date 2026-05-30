@@ -121,11 +121,11 @@ export default function GestorObras({ usuario }) {
   }, [])
 
   const TABS = [
-    { id: 'obras', label: 'Obras' },
-    { id: 'gastos', label: 'Gastos' },
-    { id: 'informe', label: 'Informe' },
-    { id: 'contactos', label: 'Contactos' },
-    ...(esAdmin ? [{ id: 'admin', label: '⚙ Admin' }] : []),
+    { id: 'obras',     label: 'Obras',     icon: '🏗️' },
+    { id: 'gastos',    label: 'Gastos',    icon: '🧾' },
+    { id: 'informe',   label: 'Informe',   icon: '📊' },
+    { id: 'contactos', label: 'Contactos', icon: '👥' },
+    ...(esAdmin ? [{ id: 'admin', label: 'Admin', icon: '⚙️' }] : []),
   ]
 
   const guardarProveedor = async (datos) => {
@@ -225,12 +225,19 @@ export default function GestorObras({ usuario }) {
         </div>
 
         {/* BOTTOM NAV MOBILE */}
-        <div className="mobile-tabs" style={{ display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, background: C.surface, borderTop: `1px solid ${C.border}`, zIndex: 50, paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}>
-          <div style={{ display: 'flex' }}>
+        <div className="mobile-tabs" style={{ display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, background: C.surface, borderTop: `1px solid ${C.border}`, zIndex: 50, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+          <div style={{ display: 'flex', height: 56 }}>
             {TABS.map(t => (
-              <button key={t.id} onClick={() => setPanel(t.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '8px 0', border: 'none', background: 'transparent', cursor: 'pointer', color: panel === t.id ? C.purple : C.textFaint }}>
-                <span style={{ fontSize: 10, fontWeight: panel === t.id ? 600 : 400, fontFamily: "'Outfit', sans-serif" }}>{t.label}</span>
-                {panel === t.id && <div style={{ width: 20, height: 2, borderRadius: 99, background: C.purple }} />}
+              <button key={t.id} onClick={() => setPanel(t.id)} style={{
+                flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', gap: 3, padding: '6px 2px',
+                border: 'none', background: 'transparent', cursor: 'pointer',
+                color: panel === t.id ? C.purple : C.textFaint,
+                transition: 'color 0.12s', position: 'relative',
+              }}>
+                {panel === t.id && <div style={{ position: 'absolute', top: 0, left: '20%', right: '20%', height: 2, background: C.purple, borderRadius: '0 0 3px 3px' }} />}
+                <span style={{ fontSize: 20, lineHeight: 1 }}>{t.icon}</span>
+                <span style={{ fontSize: 10, fontWeight: panel === t.id ? 600 : 400, fontFamily: "'Outfit', sans-serif", letterSpacing: '0.01em' }}>{t.label}</span>
               </button>
             ))}
           </div>
