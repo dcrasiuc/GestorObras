@@ -289,7 +289,7 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar })
   return (
     <div>
       <PageHeader titulo="Obras" sub={`${obras.length} proyectos`}>
-        {esAdmin && <BtnPrimary onClick={onNueva}>+ Nueva obra</BtnPrimary>}
+        <BtnPrimary onClick={onNueva}>+ Nueva obra</BtnPrimary>
       </PageHeader>
       {loading ? <Spinner /> : obras.length === 0 ? <EmptyState texto="No hay obras registradas" /> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
@@ -301,8 +301,8 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar })
                 <div style={{ display: 'flex' }}>
                   <div style={{ width: 3, background: o.estado === 'activa' ? C.purple : C.border, flexShrink: 0 }} />
                   <div style={{ flex: 1, padding: '16px 16px 16px 14px', position: 'relative' }}>
-                    {esAdmin && <button style={{ position: 'absolute', top: 12, right: 12, ...btnIconSt }} onClick={e => { e.stopPropagation(); onEditar(o) }}>✏️</button>}
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: esAdmin ? 32 : 0 }}>{o.nombre}</div>
+                    <button style={{ position: 'absolute', top: 12, right: 12, ...btnIconSt }} onClick={e => { e.stopPropagation(); onEditar(o) }}>✏️</button>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 32 }}>{o.nombre}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 14 }}>{o.cliente || 'Sin cliente'}</div>
                     <div style={{ fontSize: 24, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace", letterSpacing: '-0.02em' }}>$ {fmt(o.total_gastado)}</div>
                     <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: o.presupuesto > 0 ? 10 : 12 }}>{o.cant_gastos} gasto{o.cant_gastos !== 1 ? 's' : ''}</div>
@@ -339,8 +339,8 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
     <div>
       <PageHeader titulo="Gastos" sub={`Total: $ ${fmt(total)}`}>
         <div style={{ display: 'flex', gap: 8 }}>
-          {esAdmin && <BtnSecondary onClick={onNuevoFoto}>📷 Foto</BtnSecondary>}
-          {esAdmin && <BtnPrimary onClick={onNuevoManual}>+ Gasto</BtnPrimary>}
+          <BtnSecondary onClick={onNuevoFoto}>📷 Foto</BtnSecondary>
+          <BtnPrimary onClick={onNuevoManual}>+ Gasto</BtnPrimary>
         </div>
       </PageHeader>
 
@@ -388,8 +388,8 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                   </div>
                   <div style={{ display: 'flex', gap: 5 }}>
                     {esAdmin && !g.pagado && <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF' }} onClick={() => onPagar(g)}>$ Pagar</button>}
-                    {esAdmin && <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>}
-                    {esAdmin && <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>}
+                    <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
+                    <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>
                   </div>
                 </div>
               </div>
@@ -406,9 +406,9 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                 <col style={{ width: 90 }} />
                 <col style={{ width: 98 }} />
                 <col />
-                <col style={{ width: 90 }} />
+                <col style={{ width: 110 }} />
                 <col style={{ width: 72 }} />
-                <col style={{ width: esAdmin ? 90 : 60 }} />
+                <col style={{ width: esAdmin ? 100 : 70 }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#FAFAFA' }}>
@@ -431,8 +431,8 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                     <td style={{ ...tdSt, padding: '8px 8px' }}>
                       <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
                         {esAdmin && !g.pagado && <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px' }} onClick={() => onPagar(g)}>Pagar</button>}
-                        {esAdmin && <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>}
-                        {esAdmin && <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>}
+                        <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
+                        <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>
                       </div>
                     </td>
                   </tr>
@@ -508,8 +508,8 @@ function PanelContactos({ clientes, proveedores, esAdmin, onNuevoCliente, onNuev
     <div>
       <PageTitle titulo="Contactos" sub="Clientes y proveedores" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginTop: 20 }}>
-        <ContactoCol titulo="Clientes" items={clientes} onNuevo={esAdmin ? onNuevoCliente : null} onEditar={esAdmin ? onEditarCliente : null} btnLabel="+ Cliente" renderSub={c => [c.telefono, c.email].filter(Boolean).join(' · ')} />
-        <ContactoCol titulo="Proveedores" items={proveedores} onNuevo={esAdmin ? onNuevoProveedor : null} onEditar={esAdmin ? onEditarProveedor : null} btnLabel="+ Proveedor" outline renderSub={p => { const sit = getSituacion(p.situacion_impositiva); return [sit.label, p.cuit && `CUIT: ${p.cuit}`].filter(Boolean).join(' · ') }} />
+        <ContactoCol titulo="Clientes" items={clientes} onNuevo={onNuevoCliente} onEditar={onEditarCliente} btnLabel="+ Cliente" renderSub={c => [c.telefono, c.email].filter(Boolean).join(' · ')} />
+        <ContactoCol titulo="Proveedores" items={proveedores} onNuevo={onNuevoProveedor} onEditar={onEditarProveedor} btnLabel="+ Proveedor" outline renderSub={p => { const sit = getSituacion(p.situacion_impositiva); return [sit.label, p.cuit && `CUIT: ${p.cuit}`].filter(Boolean).join(' · ') }} />
       </div>
     </div>
   )
