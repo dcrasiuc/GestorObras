@@ -286,14 +286,36 @@ export default function GestorObras({ usuario }) {
 
 // ── Panel Obras ───────────────────────────────────────────────
 function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar }) {
+  const [filtroEstado, setFiltroEstado] = useState('activa')
+  const obrasFiltradas = filtroEstado === 'todas' ? obras : obras.filter(o => o.estado === filtroEstado)
+  const FILTROS = [
+    { value: 'activa', label: 'Activas' },
+    { value: 'pausada', label: 'Pausadas' },
+    { value: 'finalizada', label: 'Finalizadas' },
+    { value: 'todas', label: 'Todas' },
+  ]
   return (
     <div>
-      <PageHeader titulo="Obras" sub={`${obras.length} proyectos`}>
-        <BtnPrimary onClick={onNueva}>+ Nueva obra</BtnPrimary>
+      <PageHeader titulo="Obras" sub={`${obrasFiltradas.length} de ${obras.length} proyectos`}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+            {FILTROS.map(f => (
+              <button key={f.value} onClick={() => setFiltroEstado(f.value)} style={{
+                padding: '6px 12px', fontSize: 12, cursor: 'pointer', border: 'none',
+                borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif",
+                fontWeight: filtroEstado === f.value ? 600 : 400,
+                background: filtroEstado === f.value ? C.purpleDim : C.surface,
+                color: filtroEstado === f.value ? C.purple : C.textMuted,
+                whiteSpace: 'nowrap',
+              }}>{f.label}</button>
+            ))}
+          </div>
+          <BtnPrimary onClick={onNueva}>+ Nueva obra</BtnPrimary>
+        </div>
       </PageHeader>
-      {loading ? <Spinner /> : obras.length === 0 ? <EmptyState texto="No hay obras registradas" /> : (
+      {loading ? <Spinner /> : obrasFiltradas.length === 0 ? <EmptyState texto={`No hay obras ${filtroEstado === 'todas' ? 'registradas' : filtroEstado + 's'}`} /> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-          {obras.map(o => {
+          {obrasFiltradas.map(o => {
             const pct = o.presupuesto > 0 ? Math.min(100, Math.round((o.total_gastado / o.presupuesto) * 100)) : 0
             const sobrep = o.presupuesto > 0 && o.total_gastado > o.presupuesto
             return (
