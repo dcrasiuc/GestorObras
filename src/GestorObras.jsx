@@ -1,4 +1,3 @@
-// src/GestorObras.jsx
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 
@@ -105,11 +104,18 @@ export default function GestorObras() {
     setItemEditando(null)
   }
 
+  // FUERZA BRUTA: Bloqueamos el scroll horizontal en toda la página
+  useEffect(() => {
+    document.body.style.margin = '0'
+    document.body.style.padding = '0'
+    document.body.style.overflowX = 'hidden'
+  }, [])
+
   return (
-    <div style={{ minHeight: '100vh', background: '#f8f8f7', fontFamily: 'system-ui, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: '#f8f8f7', fontFamily: 'system-ui, sans-serif', width: '100%', overflowX: 'hidden' }}>
       {/* Topbar */}
       <div style={s.topbar}>
-        <span style={s.logo}>● GestorObras - TENAMIA SRL</span>
+        <span style={s.logo}>● GestorObras - TENAMIA</span>
         <div style={s.navTabs}>
           {['obras', 'gastos', 'informe', 'contactos'].map((p) => (
             <button key={p} style={panel === p ? s.tabActive : s.tab} onClick={() => setPanel(p)}>
@@ -119,7 +125,7 @@ export default function GestorObras() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 960, margin: '0 auto', padding: '20px 16px' }}>
+      <div style={{ maxWidth: 960, width: '100%', margin: '0 auto', padding: '20px 16px', boxSizing: 'border-box' }}>
         {panel === 'obras' && (
           <PanelObras
             obras={obras}
@@ -263,7 +269,7 @@ export default function GestorObras() {
 // ── Panel Contactos ───────────────────────────────────
 function PanelContactos({ clientes, proveedores, onNuevoCliente, onNuevoProveedor, onEditarCliente, onEditarProveedor }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
       {/* Columna Clientes */}
       <div>
         <div style={s.panelHeader}>
@@ -363,14 +369,14 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, on
           <option value="">Todas las obras</option>
           {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
         </select>
-        <button style={s.btnOutline} onClick={onNuevoFoto}>📷 Cargar por foto</button>
-        <button style={s.btnPrimary} onClick={onNuevoManual}>+ Gasto manual</button>
+        <button style={s.btnOutline} onClick={onNuevoFoto}>📷 Foto</button>
+        <button style={s.btnPrimary} onClick={onNuevoManual}>+ Gasto</button>
       </div>
 
       {loading ? <p style={s.muted}>Cargando...</p> : gastos.length === 0 ? (
         <p style={s.muted}>No hay gastos registrados.</p>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ width: '100%', overflowX: 'auto', paddingBottom: 10, WebkitOverflowScrolling: 'touch' }}>
           <table style={s.tabla}>
             <thead>
               <tr>{['Fecha', 'Obra', 'Proveedor', 'Concepto', 'Descripción', 'Monto', 'Acciones'].map(h => (
@@ -701,12 +707,10 @@ function estadoStyle(estado) {
 }
 
 // ── Estilos ───────────────────────────────────────────────────
-// ── Estilos ───────────────────────────────────────────────────
-// ── Estilos ───────────────────────────────────────────────────
 const s = {
-  topbar: { background: '#fff', borderBottom: '0.5px solid #e5e5e3', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '12px 16px', position: 'sticky', top: 0, zIndex: 10 },
+  topbar: { background: '#fff', borderBottom: '0.5px solid #e5e5e3', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '12px 16px', position: 'sticky', top: 0, zIndex: 10, width: '100%', boxSizing: 'border-box' },
   logo: { fontSize: 15, fontWeight: 500, flexGrow: 1, minWidth: 200 },
-  navTabs: { display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' },
+  navTabs: { display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', maxWidth: '100%' },
   tab: { padding: '6px 14px', borderRadius: 8, fontSize: 13, cursor: 'pointer', border: '0.5px solid transparent', background: 'transparent', color: '#888', whiteSpace: 'nowrap' },
   tabActive: { padding: '6px 14px', borderRadius: 8, fontSize: 13, cursor: 'pointer', border: '0.5px solid #1B2A4A', background: '#1B2A4A', color: '#fff', whiteSpace: 'nowrap' },
   panelHeader: { display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
