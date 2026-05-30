@@ -702,6 +702,7 @@ function estadoStyle(estado) {
 
 // ── Estilos ───────────────────────────────────────────────────
 // ── Estilos ───────────────────────────────────────────────────
+// ── Estilos ───────────────────────────────────────────────────
 const s = {
   topbar: { background: '#fff', borderBottom: '0.5px solid #e5e5e3', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '12px 16px', position: 'sticky', top: 0, zIndex: 10 },
   logo: { fontSize: 15, fontWeight: 500, flexGrow: 1, minWidth: 200 },
