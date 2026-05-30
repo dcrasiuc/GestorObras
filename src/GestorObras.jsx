@@ -79,7 +79,7 @@ function useGastos(obraIdFiltro) {
   const cargar = useCallback(async () => {
     setLoading(true)
     let q = supabase.from('gastos')
-      .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, bancos(nombre))')
+      .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url, bancos(nombre))')
       .order('fecha', { ascending: false })
     if (obraIdFiltro) q = q.eq('obra_id', obraIdFiltro)
     const { data, error } = await q
@@ -388,6 +388,8 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                   </div>
                   <div style={{ display: 'flex', gap: 5 }}>
                     {esAdmin && !g.pagado && <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF' }} onClick={() => onPagar(g)}>$ Pagar</button>}
+                    {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
+                    {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                     <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                     <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>
                   </div>
@@ -408,7 +410,7 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                 <col />
                 <col style={{ width: 110 }} />
                 <col style={{ width: 72 }} />
-                <col style={{ width: esAdmin ? 100 : 70 }} />
+                <col style={{ width: esAdmin ? 120 : 90 }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#FAFAFA' }}>
@@ -431,6 +433,8 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                     <td style={{ ...tdSt, padding: '8px 8px' }}>
                       <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
                         {esAdmin && !g.pagado && <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px' }} onClick={() => onPagar(g)}>Pagar</button>}
+                        {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
+                        {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Ver comprobante de pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                         <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                         <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>
                       </div>
@@ -589,9 +593,24 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
     nro_operacion: '',
     titular_tarjeta: '',
     observaciones: '',
+    comprobante_url: '',
   })
+  const [archivoNombre, setArchivoNombre] = useState('')
+  const [subiendo, setSubiendo] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const necesitaBanco = ['transferencia', 'cheque', 'tarjeta'].includes(form.medio_pago)
+
+  const subirComprobante = async (file) => {
+    setSubiendo(true)
+    const ext = file.name.split('.').pop()
+    const path = `pagos/${Date.now()}.${ext}`
+    const { data, error } = await supabase.storage.from('comprobantes-pagos').upload(path, file)
+    if (error) { alert('Error al subir archivo: ' + error.message); setSubiendo(false); return }
+    const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+    set('comprobante_url', url)
+    setArchivoNombre(file.name)
+    setSubiendo(false)
+  }
 
   return (
     <Modal title={`Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: parseFloat(form.monto) || 0, banco_id: form.banco_id || null })} guardarLabel="Confirmar pago">
@@ -630,13 +649,31 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
         )}
 
         {['transferencia', 'cheque'].includes(form.medio_pago) && (
-          <Campo label={form.medio_pago === 'cheque' ? 'Nro. de cheque' : 'Nro. de operación'} style={{ gridColumn: '1/-1' }}>
-            <input style={inputSt} value={form.nro_operacion} onChange={e => set('nro_operacion', e.target.value)} placeholder="Número de referencia" />
+          <Campo label={form.medio_pago === 'cheque' ? 'Nro. de cheque (opcional)' : 'Nro. de operación (opcional)'} style={{ gridColumn: '1/-1' }}>
+            <input style={inputSt} value={form.nro_operacion} onChange={e => set('nro_operacion', e.target.value)} placeholder="Opcional" />
           </Campo>
         )}
 
         <Campo label="Observaciones (opcional)" style={{ gridColumn: '1/-1' }}>
           <textarea style={{ ...inputSt, minHeight: 56, resize: 'vertical' }} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} />
+        </Campo>
+
+        {/* Comprobante de pago */}
+        <Campo label="Comprobante de pago (opcional)" style={{ gridColumn: '1/-1' }}>
+          {form.comprobante_url ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: C.greenDim, border: `1px solid #B8E6CF`, borderRadius: 8 }}>
+              <span style={{ fontSize: 18 }}>📎</span>
+              <span style={{ fontSize: 12, color: C.green, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{archivoNombre}</span>
+              <a href={form.comprobante_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>Ver</a>
+              <button onClick={() => { set('comprobante_url', ''); setArchivoNombre('') }} style={{ fontSize: 11, color: '#D0021B', background: 'transparent', border: 'none', cursor: 'pointer' }}>✕</button>
+            </div>
+          ) : (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#FAFAFA', border: `1.5px dashed ${C.border}`, borderRadius: 8, cursor: 'pointer' }}>
+              <span style={{ fontSize: 18 }}>{subiendo ? '⏳' : '📎'}</span>
+              <span style={{ fontSize: 12, color: C.textMuted }}>{subiendo ? 'Subiendo...' : 'Subir foto o PDF del comprobante'}</span>
+              <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && subirComprobante(e.target.files[0])} disabled={subiendo} />
+            </label>
+          )}
         </Campo>
       </div>
     </Modal>
