@@ -4,6 +4,15 @@ import { supabase } from './supabaseClient'
 import GestorObras from './GestorObras'
 import Login from './Login'
 
+async function cargarPerfil(userId) {
+  const { data } = await supabase
+    .from('usuarios')
+    .select('*')
+    .eq('id', userId)
+    .single()
+  return data
+}
+
 function App() {
   const [usuario, setUsuario] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -12,19 +21,21 @@ function App() {
     // Verificar sesión activa al cargar
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
-        const { data: perfil } = await supabase
-          .from('usuarios')
-          .select('*')
-          .eq('id', session.user.id)
-          .single()
+        const perfil = await cargarPerfil(session.user.id)
         setUsuario({ ...session.user, perfil })
       }
       setLoading(false)
     })
 
-    // Escuchar cambios de sesión
+    // Escuchar cambios de sesión (login / logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT') setUsuario(null)
+      if (event === 'SIGNED_IN' && session?.user) {
+        const perfil = await cargarPerfil(session.user.id)
+        setUsuario({ ...session.user, perfil })
+      }
+      if (event === 'SIGNED_OUT') {
+        setUsuario(null)
+      }
     })
     return () => subscription.unsubscribe()
   }, [])
