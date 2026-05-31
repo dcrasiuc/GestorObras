@@ -14,11 +14,18 @@ function App() {
   const [loading, setLoading] = useState(true)
 
   const verificarSesion = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.user) {
-      const perfil = await cargarPerfil(session.user.id)
-      setUsuario({ ...session.user, perfil })
-    } else {
+    try {
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      const sesion = supabase.auth.getSession().then(async ({ data: { session } }) => {
+        if (session?.user) {
+          const perfil = await cargarPerfil(session.user.id)
+          setUsuario({ ...session.user, perfil })
+        } else {
+          setUsuario(null)
+        }
+      })
+      await Promise.race([sesion, timeout])
+    } catch {
       setUsuario(null)
     }
     setLoading(false)
