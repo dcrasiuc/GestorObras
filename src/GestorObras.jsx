@@ -81,12 +81,15 @@ function useGastos(obraIdFiltro) {
   const [loading, setLoading] = useState(true)
   const cargar = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('gastos')
-      .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url, bancos(nombre))')
-      .order('fecha', { ascending: false })
-    if (obraIdFiltro) q = q.eq('obra_id', obraIdFiltro)
-    const { data, error } = await q
-    if (!error) setGastos(data ?? [])
+    try {
+      let q = supabase.from('gastos')
+        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url, bancos(nombre))')
+        .order('fecha', { ascending: false })
+      if (obraIdFiltro) q = q.eq('obra_id', obraIdFiltro)
+      const { data, error } = await q
+      if (error) { console.error('useGastos error:', error); setGastos([]) }
+      else setGastos(data ?? [])
+    } catch (e) { console.error('useGastos catch:', e); setGastos([]) }
     setLoading(false)
   }, [obraIdFiltro])
   useEffect(() => { cargar() }, [cargar])
@@ -108,7 +111,7 @@ export default function GestorObras({ usuario }) {
   const { gastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(
     panel === 'gastos' ? filtroObraId : ''
   )
-  const todosGastos = useGastos('').gastos
+  const { gastos: todosGastos } = useGastos('')
   const recargarTodo = () => { recargarObras(); recargarGastos() }
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
   const cerrarModal = () => { setModal(null); setItemEditando(null) }
@@ -122,12 +125,12 @@ export default function GestorObras({ usuario }) {
   }, [])
 
   const TABS = [
-    { id: 'inicio',    label: 'Inicio',    icon: '🏠' },
-    { id: 'obras',     label: 'Obras',     icon: '🏗️' },
-    { id: 'gastos',    label: 'Gastos',    icon: '🧾' },
-    { id: 'cc',        label: 'Cta Cte',   icon: '📋' },
-    { id: 'informe',   label: 'Informe',   icon: '📊' },
-    { id: 'mas',       label: 'Más',       icon: '☰' },
+    { id: 'inicio',  label: 'Inicio',  icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg> },
+    { id: 'obras',   label: 'Obras',   icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="14" width="8" height="8"/><rect x="14" y="2" width="8" height="8"/><path d="M2 2h8v8H2zM14 14h8v8h-8z" strokeOpacity="0"/><rect x="2" y="2" width="8" height="8"/><rect x="14" y="14" width="8" height="8"/></svg> },
+    { id: 'gastos',  label: 'Gastos',  icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg> },
+    { id: 'cc',      label: 'Cta Cte', icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> },
+    { id: 'informe', label: 'Informe', icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
+    { id: 'mas',     label: 'Más',     icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg> },
   ]
 
   const guardarProveedor = async (datos) => {
@@ -242,13 +245,13 @@ export default function GestorObras({ usuario }) {
           {/* Quick actions */}
           <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 20, position: 'relative', zIndex: 1 }}>
             {[
-              { icon: '🏗️', label: 'Obras', action: () => setPanel('obras') },
-              { icon: '🧾', label: '+ Gasto', action: () => { setPanel('gastos'); abrirModal('gasto') } },
-              { icon: '📷', label: 'Foto', action: () => { setPanel('gastos'); abrirModal('foto') } },
-              { icon: '📊', label: 'Informe', action: () => setPanel('informe') },
+              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="8" height="8"/><rect x="14" y="2" width="8" height="8"/><rect x="2" y="14" width="8" height="8"/><rect x="14" y="14" width="8" height="8"/></svg>, label: 'Obras', action: () => setPanel('obras') },
+              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: '+ Gasto', action: () => { setPanel('gastos'); abrirModal('gasto') } },
+              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>, label: 'Foto', action: () => { setPanel('gastos'); abrirModal('foto') } },
+              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>, label: 'Informe', action: () => setPanel('informe') },
             ].map(a => (
               <button key={a.label} onClick={a.action} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, background: 'transparent', border: 'none', cursor: 'pointer' }}>
-                <div style={{ width: 52, height: 52, borderRadius: 16, background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>{a.icon}</div>
+                <div style={{ width: 52, height: 52, borderRadius: 16, background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>{a.icon}</div>
                 <span style={{ fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', fontFamily: "'Outfit', sans-serif" }}>{a.label}</span>
               </button>
             ))}
@@ -270,13 +273,13 @@ export default function GestorObras({ usuario }) {
         </div>
 
         {/* ── BOTTOM NAV MOBILE ── */}
-        <div className="mobile-tabs" style={{ display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, background: C.surface, borderTop: `1px solid ${C.border}`, zIndex: 50, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
-          <div style={{ display: 'flex', height: 56 }}>
+        <div className="mobile-tabs" style={{ display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, width: '100%', background: C.surface, borderTop: `1px solid ${C.border}`, zIndex: 50, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+          <div style={{ display: 'flex', width: '100%', height: 56 }}>
             {TABS.map(t => (
-              <button key={t.id} onClick={() => setPanel(t.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, padding: '6px 2px', border: 'none', background: 'transparent', cursor: 'pointer', color: panel === t.id ? C.purple : C.textFaint, transition: 'color 0.12s', position: 'relative' }}>
-                {panel === t.id && <div style={{ position: 'absolute', top: 0, left: '22%', right: '22%', height: 2, background: C.purple, borderRadius: '0 0 3px 3px' }} />}
-                <span style={{ fontSize: 20, lineHeight: 1 }}>{t.icon}</span>
-                <span style={{ fontSize: 10, fontWeight: panel === t.id ? 600 : 400, fontFamily: "'Outfit', sans-serif" }}>{t.label}</span>
+              <button key={t.id} onClick={() => setPanel(t.id)} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, padding: '6px 2px', border: 'none', background: 'transparent', cursor: 'pointer', color: panel === t.id ? C.purple : C.textFaint, transition: 'color 0.12s', position: 'relative' }}>
+                {panel === t.id && <div style={{ position: 'absolute', top: 0, left: '20%', right: '20%', height: 2, background: C.purple, borderRadius: '0 0 3px 3px' }} />}
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{t.icon}</span>
+                <span style={{ fontSize: 9, fontWeight: panel === t.id ? 600 : 400, fontFamily: "'Outfit', sans-serif", letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>{t.label}</span>
               </button>
             ))}
           </div>
