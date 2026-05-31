@@ -242,12 +242,13 @@ export default function GestorObras({ usuario }) {
             </div>
             <MobileHeaderStats obras={obras} gastos={todosGastos} />
           </div>
-          {/* Quick actions */}
+          {/* Quick actions — solo en panel inicio */}
+          {panel === 'inicio' && (
           <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 20, position: 'relative', zIndex: 1 }}>
             {[
               { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="8" height="8"/><rect x="14" y="2" width="8" height="8"/><rect x="2" y="14" width="8" height="8"/><rect x="14" y="14" width="8" height="8"/></svg>, label: 'Obras', action: () => setPanel('obras') },
-              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: '+ Gasto', action: () => { if (obras.length === 0) return alert('Cargando obras...'); abrirModal('gasto') } },
-              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>, label: 'Foto', action: () => { if (obras.length === 0) return alert('Cargando obras...'); abrirModal('foto') } },
+              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: '+ Gasto', action: () => { setPanel('gastos'); setTimeout(() => abrirModal('gasto'), 50) } },
+              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>, label: 'Foto', action: () => { setPanel('gastos'); setTimeout(() => abrirModal('foto'), 50) } },
               { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>, label: 'Informe', action: () => setPanel('informe') },
             ].map(a => (
               <button key={a.label} onClick={a.action} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, background: 'transparent', border: 'none', cursor: 'pointer' }}>
@@ -256,6 +257,7 @@ export default function GestorObras({ usuario }) {
               </button>
             ))}
           </div>
+          )}
         </div>
 
         {/* ── CONTENIDO ── */}
