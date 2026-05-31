@@ -904,7 +904,7 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
           <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{form.discrimina_iva ? '→ Factura A' : '→ Sin IVA'}</span>
         </label>
       </Campo>
-      <Campo label="Descripción" style={{ gridColumn: '1/-1' }}><textarea sty
+      <Campo label="Descripción" style={{ gridColumn: '1/-1' }}><textarea style={{ ...inputSt, minHeight: 64, resize: 'vertical' }} value={form.descripcion || ''} onChange={e => set('descripcion', e.target.value)} /></Campo>
     </div>
   )
 }
