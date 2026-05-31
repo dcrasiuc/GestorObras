@@ -914,52 +914,6 @@ function PanelAdmin({ bancos, recargarListas }) {
     recargarListas()
   }
 
-  return (
-    <div>
-      <PageTitle titulo="Administración" sub="Configuración del sistema" />
-      <div style={{ marginTop: 20, maxWidth: 520 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Bancos y billeteras</div>
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
-          {bancos.length === 0 && <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin bancos registrados</div>}
-          {bancos.map((b, i) => (
-            <div key={b.id} style={{ padding: '10px 14px', borderBottom: i < bancos.length - 1 ? `1px solid ${C.borderFaint}` : 'none' }}>
-              {editando?.id === b.id ? (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input style={{ ...inputSt, flex: 1 }} value={editando.nombre} onChange={e => setEditando(ed => ({ ...ed, nombre: e.target.value }))} autoFocus />
-                  <select style={{ ...inputSt, width: 110 }} value={editando.tipo} onChange={e => setEditando(ed => ({ ...ed, tipo: e.target.value }))}>
-                    <option value="banco">Banco</option>
-                    <option value="billetera">Billetera</option>
-                  </select>
-                  <button onClick={guardarEdicion} style={{ padding: '7px 12px', background: C.purple, color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Guardar</button>
-                  <button onClick={() => setEditando(null)} style={{ padding: '7px 10px', background: 'transparent', color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>✕</button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
-                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{b.nombre}</span>
-                    <span style={{ fontSize: 10, color: C.textFaint, background: C.borderFaint, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{b.tipo}</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => setEditando({ id: b.id, nombre: b.nombre, tipo: b.tipo })} style={{ padding: '4px 8px', background: C.purpleDim, color: C.purple, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✏️ Editar</button>
-                    <button onClick={() => eliminar(b.id, b.nombre)} style={{ padding: '4px 8px', background: '#FFF0F0', color: '#D0021B', border: '1px solid #FFDCDC', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✕ Borrar</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input style={{ ...inputSt, flex: 1 }} value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} placeholder="Nombre del banco / billetera" onKeyDown={e => e.key === 'Enter' && agregar()} />
-          <select style={{ ...inputSt, width: 120 }} value={nuevoTipo} onChange={e => setNuevoTipo(e.target.value)}>
-            <option value="banco">Banco</option>
-            <option value="billetera">Billetera</option>
-          </select>
-          <BtnPrimary onClick={agregar}>{guardando ? '...' : '+ Agregar'}</BtnPrimary>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── Modal Pago ────────────────────────────────────────────────
 function ModalPago({ gasto, bancos, onClose, onGuardar }) {
