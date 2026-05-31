@@ -146,7 +146,7 @@ export default function GestorObras({ usuario }) {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@600;700;800&display=swap');
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { font-family: 'Outfit', sans-serif !important; background: ${C.bg}; }
         ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -352,7 +352,7 @@ function MobileHeaderStats({ obras, gastos }) {
   return (
     <div>
       <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>Total gastado</div>
-      <div style={{ fontSize: 36, fontWeight: 700, color: '#fff', fontFamily: "'DM Mono', monospace", letterSpacing: '-0.02em', lineHeight: 1 }}>$ {fmt(totalGastos)}</div>
+      <div style={{ fontSize: 38, fontWeight: 800, color: '#fff', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em', lineHeight: 1 }}>$ {fmt(totalGastos)}</div>
       <div style={{ display: 'flex', gap: 14, marginTop: 6 }}>
         <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>🏗️ {obrasActivas} obra{obrasActivas !== 1 ? 's' : ''} activa{obrasActivas !== 1 ? 's' : ''}</span>
         {pendiente > 0 && <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>⏳ {fmtK(pendiente)} pendiente</span>}
@@ -389,7 +389,7 @@ function PanelInicio({ obras, esAdmin, onVerGastos, onVerObras, onNuevoGasto, on
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{s.label}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: s.alert ? '#D0021B' : C.text, fontFamily: "'DM Mono', monospace" }}>{s.value}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: s.alert ? '#D0021B' : C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{s.value}</div>
               <div style={{ fontSize: 11, color: C.textFaint, marginTop: 4 }}>{s.sub}</div>
             </div>
           ))}
@@ -400,12 +400,12 @@ function PanelInicio({ obras, esAdmin, onVerGastos, onVerObras, onNuevoGasto, on
       <div className="mobile-only" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Pagado</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: C.green, fontFamily: "'DM Mono', monospace" }}>{fmtK(pagado)}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.green, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(pagado)}</div>
           <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{totalGastos > 0 ? Math.round(pagado/totalGastos*100) : 0}% del total</div>
         </div>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Pendiente</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: pendiente > 0 ? '#D0021B' : C.textFaint, fontFamily: "'DM Mono', monospace" }}>{fmtK(pendiente)}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: pendiente > 0 ? '#D0021B' : C.textFaint, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(pendiente)}</div>
           <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{gastos.filter(g=>!g.pagado).length} facturas</div>
         </div>
       </div>
@@ -434,7 +434,7 @@ function PanelInicio({ obras, esAdmin, onVerGastos, onVerObras, onNuevoGasto, on
                 )}
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace" }}>{fmtK(o.total_gastado)}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(o.total_gastado)}</div>
                 <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{o.cant_gastos} gastos</div>
               </div>
             </div>
@@ -460,7 +460,7 @@ function PanelInicio({ obras, esAdmin, onVerGastos, onVerObras, onNuevoGasto, on
                   <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.obras?.nombre} · {g.fecha}</div>
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace", whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
                   <PagoBadge pagado={g.pagado} />
                 </div>
               </div>
@@ -540,7 +540,7 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar })
                     <button style={{ position: 'absolute', top: 12, right: 12, ...btnIconSt }} onClick={e => { e.stopPropagation(); onEditar(o) }}>✏️</button>
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 32 }}>{o.nombre}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 14 }}>{o.cliente || 'Sin cliente'}</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace", letterSpacing: '-0.02em' }}>$ {fmt(o.total_gastado)}</div>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(o.total_gastado)}</div>
                     <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: o.presupuesto > 0 ? 10 : 12 }}>{o.cant_gastos} gasto{o.cant_gastos !== 1 ? 's' : ''}</div>
                     {o.presupuesto > 0 && (
                       <div style={{ marginBottom: 12 }}>
@@ -587,7 +587,7 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px' }}>
               <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>{s.label}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: s.color, fontFamily: "'DM Mono', monospace", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.value}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: s.color, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.value}</div>
             </div>
           ))}
         </div>
@@ -615,7 +615,7 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                       <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.obras?.nombre ?? '—'} · {g.fecha}</div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace", whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
                       <PagoBadge pagado={g.pagado} />
                     </div>
                   </div>
@@ -655,13 +655,13 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
               <tbody>
                 {gastos.map((g, i) => (
                   <tr key={g.id} style={{ borderBottom: i < gastos.length-1 ? `1px solid ${C.borderFaint}` : 'none', background: g.pagado ? '#FAFFFE' : C.surface }}>
-                    <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'DM Mono', monospace", fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
+                    <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
                     <td style={tdSt}><span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.obras?.nombre ?? '—'}</span></td>
                     <td style={{ ...tdSt, fontWeight: 500, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.proveedores?.nombre ?? '—'}</td>
                     <td style={tdSt}><ConceptoBadge concepto={g.concepto} /></td>
                     <td style={tdSt}><ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} /></td>
                     <td style={{ ...tdSt, color: C.textMuted, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.descripcion}</td>
-                    <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace", whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</td>
+                    <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</td>
                     <td style={tdSt}><PagoBadge pagado={g.pagado} /></td>
                     <td style={{ ...tdSt, padding: '8px 8px' }}>
                       <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
@@ -712,7 +712,7 @@ function PanelInforme({ obras }) {
             ].map(s => (
               <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
                 <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{s.label}</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: s.alert ? '#D0021B' : C.text, fontFamily: "'DM Mono', monospace" }}>{s.value}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: s.alert ? '#D0021B' : C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{s.value}</div>
                 <div style={{ fontSize: 11, color: C.textFaint, marginTop: 4 }}>{s.sub}</div>
               </div>
             ))}
@@ -727,7 +727,7 @@ function PanelInforme({ obras }) {
                   <div style={{ flex: 1, height: 4, background: C.borderFaint, borderRadius: 99, overflow: 'hidden' }}>
                     <div style={{ height: '100%', borderRadius: 99, width: `${Math.round(porConcepto[c] / maxVal * 100)}%`, background: color, transition: 'width 0.5s' }} />
                   </div>
-                  <div style={{ width: 96, fontSize: 12, fontWeight: 600, color: C.text, textAlign: 'right', fontFamily: "'DM Mono', monospace", flexShrink: 0, whiteSpace: 'nowrap' }}>$ {fmt(porConcepto[c])}</div>
+                  <div style={{ width: 96, fontSize: 12, fontWeight: 600, color: C.text, textAlign: 'right', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', flexShrink: 0, whiteSpace: 'nowrap' }}>$ {fmt(porConcepto[c])}</div>
                 </div>
               )
             })}

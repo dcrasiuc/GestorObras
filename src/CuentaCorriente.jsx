@@ -185,7 +185,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
                         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{p.fecha_pago} · {p.bancos?.nombre ?? ''} {p.nro_operacion ? `· Op: ${p.nro_operacion}` : ''}</div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: 16, fontWeight: 700, color: C.green, fontFamily: "'DM Mono', monospace" }}>$ {fmt(p.monto_total)}</div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: C.green, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(p.monto_total)}</div>
                         <div style={{ fontSize: 10, color: C.textFaint, marginTop: 2 }}>{p.cc_pago_items?.length ?? 0} remito{p.cc_pago_items?.length !== 1 ? 's' : ''} cancelado{p.cc_pago_items?.length !== 1 ? 's' : ''}</div>
                       </div>
                     </div>
@@ -291,7 +291,7 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>{remito.fecha}</div>
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>
               {remito.monto_neto > 0 ? `$ ${fmt(remito.monto_neto)}` : 'Sin importe'}
             </div>
             {esRI && remito.monto_neto > 0 && (
@@ -328,7 +328,7 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
                   <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderBottom: i < remito.remito_items.length - 1 ? `1px solid ${C.borderFaint}` : 'none', fontSize: 12 }}>
                     <span style={{ color: C.text, flex: 1 }}>{item.descripcion}</span>
                     <span style={{ color: C.textMuted, marginLeft: 10 }}>{item.cantidad} {item.unidad}</span>
-                    {item.precio_unitario > 0 && <span style={{ color: C.text, fontWeight: 600, marginLeft: 10, fontFamily: "'DM Mono', monospace" }}>$ {fmt(item.subtotal)}</span>}
+                    {item.precio_unitario > 0 && <span style={{ color: C.text, fontWeight: 600, marginLeft: 10, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(item.subtotal)}</span>}
                   </div>
                 ))}
               </div>
@@ -343,7 +343,7 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
                 {dist.map((d, i) => (
                   <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderBottom: i < dist.length - 1 ? `1px solid ${C.borderFaint}` : 'none', fontSize: 12 }}>
                     <span style={{ color: C.text }}>{d.porcentaje > 0 ? `${d.porcentaje}%` : ''}</span>
-                    <span style={{ fontWeight: 600, color: C.purple, fontFamily: "'DM Mono', monospace" }}>$ {fmt(d.monto)}</span>
+                    <span style={{ fontWeight: 600, color: C.purple, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(d.monto)}</span>
                   </div>
                 ))}
               </div>
@@ -420,7 +420,7 @@ function ModalRemito({ itemEdit, proveedorId, obras, onClose, onGuardar }) {
             <input style={{ ...inputSt, fontSize: 11 }} type="number" value={it.cantidad} onChange={e => setItem(idx, 'cantidad', e.target.value)} placeholder="Cant" />
             <input style={{ ...inputSt, fontSize: 11 }} value={it.unidad} onChange={e => setItem(idx, 'unidad', e.target.value)} placeholder="Un" />
             <input style={{ ...inputSt, fontSize: 11 }} type="number" value={it.precio_unitario} onChange={e => setItem(idx, 'precio_unitario', e.target.value)} placeholder="Precio" />
-            <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: C.text, textAlign: 'right' }}>$ {fmt(it.subtotal || 0)}</div>
+            <div style={{ fontSize: 11, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', color: C.text, textAlign: 'right' }}>$ {fmt(it.subtotal || 0)}</div>
             <button onClick={() => setItems(items.filter((_, i) => i !== idx))} style={{ background: 'transparent', border: 'none', color: '#D0021B', cursor: 'pointer', fontSize: 14 }}>✕</button>
           </div>
         ))}
@@ -533,7 +533,7 @@ function ModalFotoRemito({ proveedorId, proveedores, obras, onClose, onGuardar }
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 12px', borderBottom: i < items.length - 1 ? `1px solid ${C.borderFaint}` : 'none', fontSize: 12 }}>
                     <span style={{ color: C.text }}>{it.descripcion}</span>
                     <span style={{ color: C.textMuted }}>{it.cantidad} {it.unidad}</span>
-                    {it.subtotal > 0 && <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>$ {fmt(it.subtotal)}</span>}
+                    {it.subtotal > 0 && <span style={{ fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>$ {fmt(it.subtotal)}</span>}
                   </div>
                 ))}
               </div>
@@ -734,7 +734,7 @@ function StatCard({ label, value, sub, color }) {
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 16px' }}>
       <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: color || C.text, fontFamily: "'DM Mono', monospace" }}>{value}</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: color || C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 4 }}>{sub}</div>}
     </div>
   )
