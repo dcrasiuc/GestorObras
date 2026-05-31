@@ -84,36 +84,142 @@ function useCCPagos(proveedorId) {
   return { pagos, recargar: cargar }
 }
 
+function useResumenCC() {
+  const [resumen, setResumen] = useState([])
+  const [loading, setLoading] = useState(true)
+  const cargar = useCallback(async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('remitos')
+      .select('*, proveedores(id, nombre, situacion_impositiva)')
+      .eq('estado', 'pendiente')
+      .order('fecha', { ascending: false })
+    if (data) {
+      // Agrupar por proveedor
+      const mapa = {}
+      data.forEach(r => {
+        const pId = r.proveedor_id
+        if (!mapa[pId]) mapa[pId] = { proveedor: r.proveedores, remitos: [], totalNeto: 0 }
+        mapa[pId].remitos.push(r)
+        mapa[pId].totalNeto += r.monto_neto ?? 0
+      })
+      setResumen(Object.values(mapa).sort((a, b) => b.totalNeto - a.totalNeto))
+    }
+    setLoading(false)
+  }, [])
+  useEffect(() => { cargar() }, [cargar])
+  return { resumen, loading, recargar: cargar }
+}
+
+
 // ── Componente principal ─────────────────────────────────────
 export default function CuentaCorriente({ esAdmin, usuario }) {
   const proveedores = useProveedores()
   const obras = useObras()
   const bancos = useBancos()
-  const [proveedorId, setProveedorId] = useState('')
-  const [tab, setTab] = useState('remitos') // 'remitos' | 'pagos'
+  const [proveedorId, setProveedorId] = useState(null) // null = vista general
+  const [tab, setTab] = useState('remitos')
   const [modal, setModal] = useState(null)
   const [itemEditando, setItemEditando] = useState(null)
 
-  const { remitos, loading, recargar: recargarRemitos } = useRemitos(proveedorId)
+  const { resumen, loading: loadingResumen, recargar: recargarResumen } = useResumenCC()
+  const { remitos, loading: loadingRemitos, recargar: recargarRemitos } = useRemitos(proveedorId)
   const { pagos, recargar: recargarPagos } = useCCPagos(proveedorId)
 
   const proveedor = proveedores.find(p => p.id === proveedorId)
   const esRI = proveedor?.situacion_impositiva === 'responsable_inscripto'
-
   const remitosP = remitos.filter(r => r.estado === 'pendiente')
   const saldoPendiente = remitosP.reduce((s, r) => s + (r.monto_neto ?? 0), 0)
   const saldoConIva = esRI ? saldoPendiente * (1 + IVA) : saldoPendiente
 
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
   const cerrarModal = () => { setModal(null); setItemEditando(null) }
+  const recargarTodo = () => { recargarRemitos(); recargarResumen(); recargarPagos() }
 
+  // Vista general — lista de proveedores con saldo pendiente
+  if (!proveedorId) {
+    const totalPendiente = resumen.reduce((s, r) => s + r.totalNeto, 0)
+    return (
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
+          <div>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>Cuenta Corriente</h1>
+            <p style={{ fontSize: 12, color: C.textMuted, margin: '3px 0 0' }}>Estado general de proveedores</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <BtnSecondary onClick={() => abrirModal('foto')}>📷 Remito foto</BtnSecondary>
+            <BtnPrimary onClick={() => abrirModal('remito')}>+ Remito</BtnPrimary>
+          </div>
+        </div>
+
+        {/* Total general */}
+        {totalPendiente > 0 && (
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px 20px', marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Total pendiente de pago</div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: C.orange, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em' }}>$ {fmt(totalPendiente)}</div>
+            </div>
+            <div style={{ fontSize: 13, color: C.textMuted }}>{resumen.length} proveedor{resumen.length !== 1 ? 'es' : ''}</div>
+          </div>
+        )}
+
+        {loadingResumen ? <Spinner /> : resumen.length === 0 ? (
+          <EmptyState texto="No hay remitos pendientes" />
+        ) : (
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+            {resumen.map((item, i) => {
+              const esRi = item.proveedor?.situacion_impositiva === 'responsable_inscripto'
+              const conIva = esRi ? item.totalNeto * (1 + IVA) : item.totalNeto
+              return (
+                <button key={item.proveedor?.id} onClick={() => setProveedorId(item.proveedor?.id)} style={{ width: '100%', display: 'flex', alignItems: 'center', padding: '14px 18px', borderBottom: i < resumen.length - 1 ? `1px solid ${C.borderFaint}` : 'none', background: 'transparent', border: 'none', borderBottom: i < resumen.length - 1 ? `1px solid ${C.borderFaint}` : 'none', cursor: 'pointer', textAlign: 'left', gap: 14, fontFamily: "'Outfit', sans-serif" }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 12, background: C.purpleDim, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0, fontWeight: 700, color: C.purple }}>
+                    {(item.proveedor?.nombre ?? '?').charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{item.proveedor?.nombre ?? 'Sin nombre'}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                      {item.remitos.length} remito{item.remitos.length !== 1 ? 's' : ''} pendiente{item.remitos.length !== 1 ? 's' : ''}
+                      {esRi && <span style={{ color: C.orange, marginLeft: 6 }}>· Resp. Inscripto</span>}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(item.totalNeto)}</div>
+                    {esRi && <div style={{ fontSize: 10, color: C.orange, marginTop: 2 }}>c/IVA: $ {fmt(conIva)}</div>}
+                  </div>
+                  <div style={{ color: C.textFaint, fontSize: 16, flexShrink: 0 }}>›</div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Modales desde vista general */}
+        {modal === 'remito' && <ModalRemito proveedorId={null} proveedores={proveedores} obras={obras} onClose={cerrarModal} onGuardar={async (datos, items, dist) => {
+          const { data } = await supabase.from('remitos').insert([{ proveedor_id: datos.proveedor_id, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }]).select().single()
+          if (items.length > 0) await supabase.from('remito_items').insert(items.map(it => ({ ...it, remito_id: data.id })))
+          if (dist.length > 0) await supabase.from('comprobante_obras').insert(dist.map(d => ({ tipo: 'remito', referencia_id: data.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
+          cerrarModal(); recargarResumen()
+        }} />}
+        {modal === 'foto' && <ModalFotoRemito proveedorId={null} proveedores={proveedores} obras={obras} onClose={cerrarModal} onGuardar={async (datos, items, dist) => {
+          const { data } = await supabase.from('remitos').insert([{ proveedor_id: datos.proveedor_id, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente', imagen_url: datos.imagen_url }]).select().single()
+          if (items.length > 0) await supabase.from('remito_items').insert(items.map(it => ({ ...it, remito_id: data.id })))
+          if (dist.length > 0) await supabase.from('comprobante_obras').insert(dist.map(d => ({ tipo: 'remito', referencia_id: data.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
+          cerrarModal(); recargarResumen()
+        }} />}
+      </div>
+    )
+  }
+
+  // Vista detalle de un proveedor
   return (
     <div>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>Cuenta Corriente</h1>
-          <p style={{ fontSize: 12, color: C.textMuted, margin: '3px 0 0' }}>Remitos y pagos por proveedor</p>
+          <button onClick={() => setProveedorId(null)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: C.purple, fontSize: 13, fontWeight: 600, fontFamily: "'Outfit', sans-serif", padding: 0, marginBottom: 8 }}>
+            ← Volver
+          </button>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>{proveedor?.nombre}</h1>
+          <p style={{ fontSize: 12, color: C.textMuted, margin: '3px 0 0' }}>{esRI ? 'Responsable Inscripto · Factura A + IVA' : proveedor?.situacion_impositiva === 'monotributo' ? 'Monotributo · Factura C' : 'Cuenta corriente'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <BtnSecondary onClick={() => abrirModal('foto')}>📷 Remito foto</BtnSecondary>
@@ -121,20 +227,23 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
         </div>
       </div>
 
-      {/* Selector de proveedor */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
-        <label style={labelSt}>Proveedor</label>
-        <select style={inputSt} value={proveedorId} onChange={e => setProveedorId(e.target.value)}>
-          <option value="">Seleccionar proveedor...</option>
-          {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-        </select>
+      {/* Stats del proveedor */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
+        <StatCard label="Remitos pendientes" value={remitosP.length} sub="sin cancelar" />
+        <StatCard label="Saldo neto" value={`$ ${fmt(saldoPendiente)}`} sub="sin IVA" />
+        {esRI && <StatCard label="Saldo c/ IVA (21%)" value={`$ ${fmt(saldoConIva)}`} sub="estimado con factura A" color={C.orange} />}
       </div>
 
-      {!proveedorId ? (
-        <div style={{ textAlign: 'center', padding: '48px 20px', color: C.textFaint, fontSize: 13 }}>
-          Seleccioná un proveedor para ver su cuenta corriente
-        </div>
-      ) : (
+      {/* Tabs */}
+      <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', marginBottom: 16, width: 'fit-content' }}>
+        {[{ id: 'remitos', label: `Remitos (${remitos.length})` }, { id: 'pagos', label: `Pagos (${pagos.length})` }].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '7px 18px', fontSize: 13, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: tab === t.id ? 600 : 400, background: tab === t.id ? C.purpleDim : C.surface, color: tab === t.id ? C.purple : C.textMuted }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {!proveedorId ? null : (
         <>
           {/* Stats del proveedor */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>

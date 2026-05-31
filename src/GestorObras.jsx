@@ -779,27 +779,177 @@ function PanelAdmin({ bancos, recargarListas }) {
   const [nuevoNombre, setNuevoNombre] = useState('')
   const [nuevoTipo, setNuevoTipo] = useState('banco')
   const [guardando, setGuardando] = useState(false)
+  const [editando, setEditando] = useState(null)
+  const [usuarios, setUsuarios] = useState([])
+  const [loadingUsuarios, setLoadingUsuarios] = useState(true)
+
+  const cargarUsuarios = async () => {
+    setLoadingUsuarios(true)
+    const { data } = await supabase
+      .from('usuarios')
+      .select('*')
+      .order('nombre')
+    if (data) setUsuarios(data)
+    setLoadingUsuarios(false)
+  }
+
+  useEffect(() => { cargarUsuarios() }, [])
+
+  const cambiarRol = async (id, nuevoRol) => {
+    await supabase.from('usuarios').update({ rol: nuevoRol }).eq('id', id)
+    cargarUsuarios()
+  }
+
   const agregar = async () => {
     if (!nuevoNombre.trim()) return
     setGuardando(true)
     await supabase.from('bancos').insert([{ nombre: nuevoNombre.trim(), tipo: nuevoTipo }])
     setNuevoNombre(''); await recargarListas(); setGuardando(false)
   }
+
+  const guardarEdicion = async () => {
+    if (!editando.nombre.trim()) return
+    await supabase.from('bancos').update({ nombre: editando.nombre, tipo: editando.tipo }).eq('id', editando.id)
+    setEditando(null); recargarListas()
+  }
+
+  const eliminar = async (id, nombre) => {
+    if (!window.confirm(`¿Eliminar "${nombre}"?`)) return
+    await supabase.from('bancos').delete().eq('id', id)
+    recargarListas()
+  }
+
   return (
     <div>
       <PageTitle titulo="Administración" sub="Configuración del sistema" />
-      <div style={{ marginTop: 20, maxWidth: 480 }}>
+
+      {/* USUARIOS */}
+      <div style={{ marginTop: 20, maxWidth: 560, marginBottom: 32 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Usuarios</div>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+          {loadingUsuarios ? (
+            <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Cargando...</div>
+          ) : usuarios.length === 0 ? (
+            <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin usuarios registrados</div>
+          ) : usuarios.map((u, i) => (
+            <div key={u.id} style={{ padding: '12px 16px', borderBottom: i < usuarios.length - 1 ? `1px solid ${C.borderFaint}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{u.nombre}</div>
+                <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.id.slice(0, 16)}...</div>
+              </div>
+              <select
+                value={u.rol}
+                onChange={e => cambiarRol(u.id, e.target.value)}
+                style={{ ...inputSt, width: 130, padding: '5px 10px', fontSize: 12, colorScheme: 'light' }}
+              >
+                <option value="operador">Operador</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* BANCOS */}
+      <div style={{ maxWidth: 520 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Bancos y billeteras</div>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
+          {bancos.length === 0 && <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin bancos registrados</div>}
           {bancos.map((b, i) => (
-            <div key={b.id} style={{ padding: '10px 16px', borderBottom: i < bancos.length-1 ? `1px solid ${C.borderFaint}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: C.text }}>{b.nombre}</span>
-              <span style={{ fontSize: 10, color: C.textFaint, background: C.borderFaint, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{b.tipo}</span>
+            <div key={b.id} style={{ padding: '10px 14px', borderBottom: i < bancos.length - 1 ? `1px solid ${C.borderFaint}` : 'none' }}>
+              {editando?.id === b.id ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input style={{ ...inputSt, flex: 1 }} value={editando.nombre} onChange={e => setEditando(ed => ({ ...ed, nombre: e.target.value }))} autoFocus />
+                  <select style={{ ...inputSt, width: 110 }} value={editando.tipo} onChange={e => setEditando(ed => ({ ...ed, tipo: e.target.value }))}>
+                    <option value="banco">Banco</option>
+                    <option value="billetera">Billetera</option>
+                  </select>
+                  <button onClick={guardarEdicion} style={{ padding: '7px 12px', background: C.purple, color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Guardar</button>
+                  <button onClick={() => setEditando(null)} style={{ padding: '7px 10px', background: 'transparent', color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>✕</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{b.nombre}</span>
+                    <span style={{ fontSize: 10, color: C.textFaint, background: C.borderFaint, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{b.tipo}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => setEditando({ id: b.id, nombre: b.nombre, tipo: b.tipo })} style={{ padding: '4px 8px', background: C.purpleDim, color: C.purple, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✏️ Editar</button>
+                    <button onClick={() => eliminar(b.id, b.nombre)} style={{ padding: '4px 8px', background: '#FFF0F0', color: '#D0021B', border: '1px solid #FFDCDC', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✕ Borrar</button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <input style={{ ...inputSt, flex: 1 }} value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} placeholder="Nombre del banco / billetera" />
+          <input style={{ ...inputSt, flex: 1 }} value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} placeholder="Nombre del banco / billetera" onKeyDown={e => e.key === 'Enter' && agregar()} />
+          <select style={{ ...inputSt, width: 120 }} value={nuevoTipo} onChange={e => setNuevoTipo(e.target.value)}>
+            <option value="banco">Banco</option>
+            <option value="billetera">Billetera</option>
+          </select>
+          <BtnPrimary onClick={agregar}>{guardando ? '...' : '+ Agregar'}</BtnPrimary>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+  const agregar = async () => {
+    if (!nuevoNombre.trim()) return
+    setGuardando(true)
+    await supabase.from('bancos').insert([{ nombre: nuevoNombre.trim(), tipo: nuevoTipo }])
+    setNuevoNombre(''); await recargarListas(); setGuardando(false)
+  }
+
+  const guardarEdicion = async () => {
+    if (!editando.nombre.trim()) return
+    await supabase.from('bancos').update({ nombre: editando.nombre, tipo: editando.tipo }).eq('id', editando.id)
+    setEditando(null); recargarListas()
+  }
+
+  const eliminar = async (id, nombre) => {
+    if (!window.confirm(`¿Eliminar "${nombre}"?`)) return
+    await supabase.from('bancos').delete().eq('id', id)
+    recargarListas()
+  }
+
+  return (
+    <div>
+      <PageTitle titulo="Administración" sub="Configuración del sistema" />
+      <div style={{ marginTop: 20, maxWidth: 520 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Bancos y billeteras</div>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
+          {bancos.length === 0 && <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin bancos registrados</div>}
+          {bancos.map((b, i) => (
+            <div key={b.id} style={{ padding: '10px 14px', borderBottom: i < bancos.length - 1 ? `1px solid ${C.borderFaint}` : 'none' }}>
+              {editando?.id === b.id ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input style={{ ...inputSt, flex: 1 }} value={editando.nombre} onChange={e => setEditando(ed => ({ ...ed, nombre: e.target.value }))} autoFocus />
+                  <select style={{ ...inputSt, width: 110 }} value={editando.tipo} onChange={e => setEditando(ed => ({ ...ed, tipo: e.target.value }))}>
+                    <option value="banco">Banco</option>
+                    <option value="billetera">Billetera</option>
+                  </select>
+                  <button onClick={guardarEdicion} style={{ padding: '7px 12px', background: C.purple, color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Guardar</button>
+                  <button onClick={() => setEditando(null)} style={{ padding: '7px 10px', background: 'transparent', color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>✕</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{b.nombre}</span>
+                    <span style={{ fontSize: 10, color: C.textFaint, background: C.borderFaint, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{b.tipo}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => setEditando({ id: b.id, nombre: b.nombre, tipo: b.tipo })} style={{ padding: '4px 8px', background: C.purpleDim, color: C.purple, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✏️ Editar</button>
+                    <button onClick={() => eliminar(b.id, b.nombre)} style={{ padding: '4px 8px', background: '#FFF0F0', color: '#D0021B', border: '1px solid #FFDCDC', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✕ Borrar</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input style={{ ...inputSt, flex: 1 }} value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} placeholder="Nombre del banco / billetera" onKeyDown={e => e.key === 'Enter' && agregar()} />
           <select style={{ ...inputSt, width: 120 }} value={nuevoTipo} onChange={e => setNuevoTipo(e.target.value)}>
             <option value="banco">Banco</option>
             <option value="billetera">Billetera</option>
