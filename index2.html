@@ -24,10 +24,9 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     <script>
-      // Service worker desactivado temporalmente
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(registrations => {
-          registrations.forEach(registration => registration.unregister())
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
         })
       }
     </script>
