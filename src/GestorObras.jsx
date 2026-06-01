@@ -63,15 +63,28 @@ function useListas() {
   return { clientes, proveedores, bancos, recargarListas: cargar }
 }
 
-function useObras() {
+function useObras(usuarioId, esAdmin) {
   const [obras, setObras] = useState([])
   const [loading, setLoading] = useState(true)
   const cargar = useCallback(async () => {
     setLoading(true)
-    const { data, error } = await supabase.from('obras_resumen').select('*').order('nombre')
-    if (!error) setObras(data ?? [])
+    if (esAdmin) {
+      // Admin ve todas las obras
+      const { data, error } = await supabase.from('obras_resumen').select('*').order('nombre')
+      if (!error) setObras(data ?? [])
+    } else {
+      // Operador ve solo sus obras asignadas
+      const { data: asignadas } = await supabase
+        .from('obra_usuarios')
+        .select('obra_id')
+        .eq('usuario_id', usuarioId)
+      const ids = (asignadas ?? []).map(a => a.obra_id)
+      if (ids.length === 0) { setObras([]); setLoading(false); return }
+      const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).order('nombre')
+      if (!error) setObras(data ?? [])
+    }
     setLoading(false)
-  }, [])
+  }, [usuarioId, esAdmin])
   useEffect(() => { cargar() }, [cargar])
   return { obras, loading, recargar: cargar }
 }
@@ -108,7 +121,7 @@ export default function GestorObras({ usuario }) {
   const [onProveedorCreado, setOnProveedorCreado] = useState(null)
 
   const { clientes, proveedores, bancos, recargarListas } = useListas()
-  const { obras, loading: loadingObras, recargar: recargarObras } = useObras()
+  const { obras, loading: loadingObras, recargar: recargarObras } = useObras(usuario?.id, esAdmin)
   const { gastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(
     panel === 'gastos' ? filtroObraId : ''
   )
@@ -793,22 +806,45 @@ function PanelAdmin({ bancos, recargarListas }) {
   const [editando, setEditando] = useState(null)
   const [usuarios, setUsuarios] = useState([])
   const [loadingUsuarios, setLoadingUsuarios] = useState(true)
+  const [obras, setObras] = useState([])
+  const [asignaciones, setAsignaciones] = useState([]) // { obra_id, usuario_id }[]
+  const [seccion, setSeccion] = useState('usuarios') // 'usuarios' | 'obras' | 'bancos'
 
-  const cargarUsuarios = async () => {
+  const [pendientes, setPendientes] = useState([])
+
+  const cargarTodo = async () => {
     setLoadingUsuarios(true)
-    const { data } = await supabase
-      .from('usuarios')
-      .select('*')
-      .order('nombre')
-    if (data) setUsuarios(data)
+    const [resU, resO, resA] = await Promise.all([
+      supabase.from('usuarios').select('*').order('nombre'),
+      supabase.from('obras').select('id, nombre, estado').order('nombre'),
+      supabase.from('obra_usuarios').select('*'),
+    ])
+    if (resU.data) setUsuarios(resU.data)
+    if (resO.data) setObras(resO.data)
+    if (resA.data) setAsignaciones(resA.data)
+
+    // Buscar usuarios de auth que no tienen perfil todavía
+    const { data: authUsers } = await supabase.rpc('get_auth_users_sin_perfil')
+    if (authUsers) setPendientes(authUsers)
+
     setLoadingUsuarios(false)
   }
 
-  useEffect(() => { cargarUsuarios() }, [])
+  useEffect(() => { cargarTodo() }, [])
 
   const cambiarRol = async (id, nuevoRol) => {
     await supabase.from('usuarios').update({ rol: nuevoRol }).eq('id', id)
-    cargarUsuarios()
+    cargarTodo()
+  }
+
+  const toggleAsignacion = async (obraId, usuarioId) => {
+    const existe = asignaciones.find(a => a.obra_id === obraId && a.usuario_id === usuarioId)
+    if (existe) {
+      await supabase.from('obra_usuarios').delete().eq('obra_id', obraId).eq('usuario_id', usuarioId)
+    } else {
+      await supabase.from('obra_usuarios').insert([{ obra_id: obraId, usuario_id: usuarioId }])
+    }
+    cargarTodo()
   }
 
   const agregar = async () => {
@@ -829,102 +865,306 @@ function PanelAdmin({ bancos, recargarListas }) {
     await supabase.from('bancos').delete().eq('id', id)
     recargarListas()
   }
+
+  const operadores = usuarios.filter(u => u.rol === 'operador')
 
   return (
     <div>
       <PageTitle titulo="Administración" sub="Configuración del sistema" />
 
-      {/* USUARIOS */}
-      <div style={{ marginTop: 20, maxWidth: 560, marginBottom: 32 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Usuarios</div>
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
-          {loadingUsuarios ? (
-            <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Cargando...</div>
-          ) : usuarios.length === 0 ? (
-            <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin usuarios registrados</div>
-          ) : usuarios.map((u, i) => (
-            <div key={u.id} style={{ padding: '12px 16px', borderBottom: i < usuarios.length - 1 ? `1px solid ${C.borderFaint}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{u.nombre}</div>
-                <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.id.slice(0, 16)}...</div>
-              </div>
-              <select
-                value={u.rol}
-                onChange={e => cambiarRol(u.id, e.target.value)}
-                style={{ ...inputSt, width: 130, padding: '5px 10px', fontSize: 12, colorScheme: 'light' }}
-              >
-                <option value="operador">Operador</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-          ))}
-        </div>
+      {/* Tabs de sección */}
+      <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', margin: '20px 0 24px', width: 'fit-content' }}>
+        {[
+          { id: 'usuarios', label: '👤 Usuarios' },
+          { id: 'obras',    label: '🏗️ Asignar obras' },
+          { id: 'bancos',   label: '🏦 Bancos' },
+        ].map(s => (
+          <button key={s.id} onClick={() => setSeccion(s.id)} style={{ padding: '7px 18px', fontSize: 13, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: seccion === s.id ? 600 : 400, background: seccion === s.id ? C.purpleDim : C.surface, color: seccion === s.id ? C.purple : C.textMuted }}>
+            {s.label}
+          </button>
+        ))}
       </div>
 
-      {/* BANCOS */}
-      <div style={{ maxWidth: 520 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Bancos y billeteras</div>
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
-          {bancos.length === 0 && <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin bancos registrados</div>}
-          {bancos.map((b, i) => (
-            <div key={b.id} style={{ padding: '10px 14px', borderBottom: i < bancos.length - 1 ? `1px solid ${C.borderFaint}` : 'none' }}>
-              {editando?.id === b.id ? (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input style={{ ...inputSt, flex: 1 }} value={editando.nombre} onChange={e => setEditando(ed => ({ ...ed, nombre: e.target.value }))} autoFocus />
-                  <select style={{ ...inputSt, width: 110 }} value={editando.tipo} onChange={e => setEditando(ed => ({ ...ed, tipo: e.target.value }))}>
-                    <option value="banco">Banco</option>
-                    <option value="billetera">Billetera</option>
-                  </select>
-                  <button onClick={guardarEdicion} style={{ padding: '7px 12px', background: C.purple, color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Guardar</button>
-                  <button onClick={() => setEditando(null)} style={{ padding: '7px 10px', background: 'transparent', color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>✕</button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
-                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{b.nombre}</span>
-                    <span style={{ fontSize: 10, color: C.textFaint, background: C.borderFaint, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{b.tipo}</span>
+      {/* USUARIOS */}
+      {seccion === 'usuarios' && (
+        <div style={{ maxWidth: 560 }}>
+
+          {/* PENDIENTES */}
+          {pendientes.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.orange, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>
+                ⏳ Usuarios pendientes de aprobación ({pendientes.length})
+              </div>
+              <div style={{ background: C.surface, border: `1px solid #FFDCAA`, borderRadius: 12, overflow: 'hidden' }}>
+                {pendientes.map((u, i) => (
+                  <div key={u.id} style={{ padding: '12px 16px', borderBottom: i < pendientes.length - 1 ? `1px solid ${C.borderFaint}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{u.nombre}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{u.email}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={async () => {
+                        await supabase.from('usuarios').insert([{ id: u.id, nombre: u.nombre, rol: 'operador' }])
+                        cargarTodo()
+                      }} style={{ padding: '5px 12px', background: C.greenDim, color: C.green, border: `1px solid #B8E6CF`, borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        ✓ Aprobar
+                      </button>
+                      <button onClick={async () => {
+                        if (!window.confirm(`¿Rechazar a ${u.nombre}? Se eliminará su cuenta.`)) return
+                        await supabase.auth.admin.deleteUser(u.id)
+                        cargarTodo()
+                      }} style={{ padding: '5px 10px', background: '#FFF0F0', color: '#D0021B', border: '1px solid #FFDCDC', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                        ✕
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => setEditando({ id: b.id, nombre: b.nombre, tipo: b.tipo })} style={{ padding: '4px 8px', background: C.purpleDim, color: C.purple, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✏️ Editar</button>
-                    <button onClick={() => eliminar(b.id, b.nombre)} style={{ padding: '4px 8px', background: '#FFF0F0', color: '#D0021B', border: '1px solid #FFDCDC', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✕ Borrar</button>
-                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* USUARIOS ACTIVOS */}
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Usuarios activos</div>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+            {loadingUsuarios ? <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Cargando...</div>
+            : usuarios.length === 0 ? <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin usuarios</div>
+            : usuarios.map((u, i) => (
+              <div key={u.id} style={{ padding: '12px 16px', borderBottom: i < usuarios.length - 1 ? `1px solid ${C.borderFaint}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{u.nombre}</div>
+                  <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>{u.id.slice(0, 16)}...</div>
                 </div>
-              )}
+                <select value={u.rol} onChange={e => cambiarRol(u.id, e.target.value)} style={{ ...inputSt, width: 130, padding: '5px 10px', fontSize: 12 }}>
+                  <option value="operador">Operador</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ASIGNAR OBRAS */}
+      {seccion === 'obras' && (
+        <div style={{ maxWidth: 640 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Asignación de obras por operador</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 16 }}>Los admins ven todas las obras. Seleccioná qué obras ve cada operador.</div>
+          {operadores.length === 0 ? (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '20px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>No hay operadores registrados</div>
+          ) : operadores.map(u => (
+            <div key={u.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
+              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: C.purpleDim }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.purple }}>{u.nombre}</div>
+                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                  {asignaciones.filter(a => a.usuario_id === u.id).length} obra{asignaciones.filter(a => a.usuario_id === u.id).length !== 1 ? 's' : ''} asignada{asignaciones.filter(a => a.usuario_id === u.id).length !== 1 ? 's' : ''}
+                </div>
+              </div>
+              <div style={{ padding: '8px 0' }}>
+                {obras.map(o => {
+                  const asignada = asignaciones.some(a => a.obra_id === o.id && a.usuario_id === u.id)
+                  return (
+                    <label key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={asignada} onChange={() => toggleAsignacion(o.id, u.id)} style={{ width: 16, height: 16, accentColor: C.purple, flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: 13, color: C.text, fontWeight: asignada ? 600 : 400 }}>{o.nombre}</span>
+                        <EstadoBadge estado={o.estado} />
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
             </div>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input style={{ ...inputSt, flex: 1 }} value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} placeholder="Nombre del banco / billetera" onKeyDown={e => e.key === 'Enter' && agregar()} />
-          <select style={{ ...inputSt, width: 120 }} value={nuevoTipo} onChange={e => setNuevoTipo(e.target.value)}>
-            <option value="banco">Banco</option>
-            <option value="billetera">Billetera</option>
-          </select>
-          <BtnPrimary onClick={agregar}>{guardando ? '...' : '+ Agregar'}</BtnPrimary>
+      )}
+
+      {/* BANCOS */}
+      {seccion === 'bancos' && (
+        <div style={{ maxWidth: 520 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>Bancos y billeteras</div>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
+            {bancos.length === 0 && <div style={{ padding: '16px', color: C.textFaint, fontSize: 13, textAlign: 'center' }}>Sin bancos registrados</div>}
+            {bancos.map((b, i) => (
+              <div key={b.id} style={{ padding: '10px 14px', borderBottom: i < bancos.length - 1 ? `1px solid ${C.borderFaint}` : 'none' }}>
+                {editando?.id === b.id ? (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input style={{ ...inputSt, flex: 1 }} value={editando.nombre} onChange={e => setEditando(ed => ({ ...ed, nombre: e.target.value }))} autoFocus />
+                    <select style={{ ...inputSt, width: 110 }} value={editando.tipo} onChange={e => setEditando(ed => ({ ...ed, tipo: e.target.value }))}>
+                      <option value="banco">Banco</option>
+                      <option value="billetera">Billetera</option>
+                    </select>
+                    <button onClick={guardarEdicion} style={{ padding: '7px 12px', background: C.purple, color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>✓</button>
+                    <button onClick={() => setEditando(null)} style={{ padding: '7px 10px', background: 'transparent', color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                      <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{b.nombre}</span>
+                      <span style={{ fontSize: 10, color: C.textFaint, background: C.borderFaint, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{b.tipo}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => setEditando({ id: b.id, nombre: b.nombre, tipo: b.tipo })} style={{ padding: '4px 8px', background: C.purpleDim, color: C.purple, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✏️</button>
+                      <button onClick={() => eliminar(b.id, b.nombre)} style={{ padding: '4px 8px', background: '#FFF0F0', color: '#D0021B', border: '1px solid #FFDCDC', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 500 }}>✕</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input style={{ ...inputSt, flex: 1 }} value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} placeholder="Nombre del banco / billetera" onKeyDown={e => e.key === 'Enter' && agregar()} />
+            <select style={{ ...inputSt, width: 120 }} value={nuevoTipo} onChange={e => setNuevoTipo(e.target.value)}>
+              <option value="banco">Banco</option>
+              <option value="billetera">Billetera</option>
+            </select>
+            <BtnPrimary onClick={agregar}>{guardando ? '...' : '+ Agregar'}</BtnPrimary>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
 
-  const agregar = async () => {
-    if (!nuevoNombre.trim()) return
-    setGuardando(true)
-    await supabase.from('bancos').insert([{ nombre: nuevoNombre.trim(), tipo: nuevoTipo }])
-    setNuevoNombre(''); await recargarListas(); setGuardando(false)
+// ── Modales ───────────────────────────────────────────────────
+function ModalGasto({ itemEdit, obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
+  const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => onGuardar(form)}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} /></Modal>
+}
+
+function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
+  const [step, setStep] = useState('upload')
+  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '' })
+  const [preview, setPreview] = useState(null)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const procesarFoto = async (file) => {
+    setPreview(URL.createObjectURL(file)); setStep('loading')
+    const ext = file.name.split('.').pop()
+    const { data: uploadData } = await supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
+    const imageUrl = uploadData ? supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl : ''
+    const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
+    try {
+      const { data, error } = await supabase.functions.invoke('analizar-comprobante', { body: { base64, mimeType: file.type, hoy: hoy() } })
+      if (!error && data?.content) {
+        const text = data.content.map(i => i.text || '').join('')
+        const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
+        const nombreIA = parsed.proveedor || ''
+        const matchProv = proveedores.find(p => p.nombre.toLowerCase().includes(nombreIA.toLowerCase()))
+        let tipo = 'factura_a', iva = true
+        if (matchProv) { const sit = getSituacion(matchProv.situacion_impositiva); tipo = sit.comprobante; iva = sit.iva }
+        setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
+        if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) })
+      } else { setForm(f => ({ ...f, imagen_url: imageUrl })) }
+    } catch { setForm(f => ({ ...f, imagen_url: imageUrl })) }
+    setStep('review')
   }
 
-  const guardarEdicion = async () => {
-    if (!editando.nombre.trim()) return
-    await supabase.from('bancos').update({ nombre: editando.nombre, tipo: editando.tipo }).eq('id', editando.id)
-    setEditando(null); recargarListas()
-  }
+  return (
+    <Modal title="Cargar comprobante" onClose={onClose} onGuardar={step === 'review' ? () => onGuardar({ ...form, proveedor_id: form.proveedor_id || null, monto: parseFloat(form.monto) || 0 }) : null} guardarLabel="Guardar gasto">
+      {step === 'upload' && (
+        <label style={{ display: 'block', border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: '32px 24px', textAlign: 'center', cursor: 'pointer', background: '#FAFAFA' }}>
+          <div style={{ fontSize: 36, marginBottom: 10 }}>📷</div>
+          <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Tocá para subir foto del comprobante</div>
+          <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>JPG, PNG, WEBP</div>
+          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
+        </label>
+      )}
+      {step === 'loading' && (
+        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+          {preview && <img src={preview} alt="" style={{ maxHeight: 120, borderRadius: 8, marginBottom: 16, opacity: 0.6 }} />}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <div style={{ width: 16, height: 16, border: `2px solid ${C.purple}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <span style={{ fontSize: 13, color: C.textMuted }}>Analizando con IA...</span>
+          </div>
+        </div>
+      )}
+      {step === 'review' && (
+        <div>
+          {preview && <img src={preview} alt="" style={{ maxHeight: 80, borderRadius: 6, marginBottom: 12, display: 'block' }} />}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: C.purpleDim, color: C.purple, fontSize: 11, borderRadius: 99, marginBottom: 14, fontWeight: 600 }}>✨ Revisá los datos antes de guardar</div>
+          <FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} />
+        </div>
+      )}
+    </Modal>
+  )
+}
 
-  const eliminar = async (id, nombre) => {
-    if (!window.confirm(`¿Eliminar "${nombre}"?`)) return
-    await supabase.from('bancos').delete().eq('id', id)
-    recargarListas()
-  }
+function ModalAltaProveedor({ datosIniciales, onClose, onGuardar }) {
+  const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const sit = getSituacion(form.situacion_impositiva)
+  return (
+    <Modal title="Dar de alta proveedor" onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel="Dar de alta">
+      <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: C.purple }}><strong>Proveedor detectado por IA</strong> — completá los datos fiscales.</div>
+      <Campo label="Nombre / Razón Social" style={{ marginBottom: 10 }}><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} /></Campo>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+        <Campo label="CUIT / RUT"><input style={inputSt} value={form.cuit} onChange={e => set('cuit', e.target.value)} placeholder="Sin guiones" /></Campo>
+        <Campo label="Rubro"><input style={inputSt} value={form.rubro} onChange={e => set('rubro', e.target.value)} /></Campo>
+      </div>
+      <Campo label="Situación impositiva" style={{ marginBottom: 12 }}><select style={inputSt} value={form.situacion_impositiva} onChange={e => set('situacion_impositiva', e.target.value)}>{SITUACIONES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></Campo>
+      <div style={{ background: '#F9F9F9', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
+        <div style={{ color: C.textFaint, fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Se sugerirá automáticamente</div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, color: C.text }}>{getTipoLabel(sit.comprobante)}</span>
+          <span style={{ fontSize: 11, color: sit.iva ? C.green : C.textMuted, background: sit.iva ? C.greenDim : '#F3F3F3', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{sit.iva ? 'Discrimina IVA' : 'Sin IVA'}</span>
+        </div>
+      </div>
+    </Modal>
+  )
+}
 
+function ModalObra({ itemEdit, clientes, onClose, onGuardar }) {
+  const [form, setForm] = useState(itemEdit || { nombre: '', cliente_id: '', estado: 'activa', presupuesto: '' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  return (
+    <Modal title={itemEdit ? 'Editar Obra' : 'Nueva Obra'} onClose={onClose} onGuardar={() => onGuardar(form)}>
+      <Campo label="Nombre de la obra"><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} placeholder="Ej: Edificio Tucumán 1420" /></Campo>
+      <div style={{ marginTop: 10 }}><Campo label="Cliente"><select style={inputSt} value={form.cliente_id || ''} onChange={e => set('cliente_id', e.target.value)}><option value="">Sin cliente</option>{clientes?.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></Campo></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+        <Campo label="Presupuesto"><input style={inputSt} type="number" value={form.presupuesto} onChange={e => set('presupuesto', e.target.value)} placeholder="0" /></Campo>
+        <Campo label="Estado"><select style={inputSt} value={form.estado} onChange={e => set('estado', e.target.value)}>{['activa','pausada','finalizada'].map(v => <option key={v} value={v}>{v.charAt(0).toUpperCase()+v.slice(1)}</option>)}</select></Campo>
+      </div>
+    </Modal>
+  )
+}
+
+function ModalCliente({ itemEdit, onClose, onGuardar }) {
+  const [form, setForm] = useState(itemEdit || { nombre: '', telefono: '', email: '' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  return (
+    <Modal title={itemEdit ? 'Editar Cliente' : 'Nuevo Cliente'} onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel={itemEdit ? 'Actualizar' : 'Guardar'}>
+      <Campo label="Nombre / Razón Social"><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} /></Campo>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+        <Campo label="Teléfono"><input style={inputSt} value={form.telefono || ''} onChange={e => set('telefono', e.target.value)} /></Campo>
+        <Campo label="Email"><input style={inputSt} type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} /></Campo>
+      </div>
+    </Modal>
+  )
+}
+
+function ModalProveedor({ itemEdit, onClose, onGuardar }) {
+  const [form, setForm] = useState(itemEdit || { nombre: '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const sit = getSituacion(form.situacion_impositiva)
+  return (
+    <Modal title={itemEdit ? 'Editar Proveedor' : 'Nuevo Proveedor'} onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel={itemEdit ? 'Actualizar' : 'Guardar'}>
+      <Campo label="Nombre / Razón Social"><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} /></Campo>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+        <Campo label="CUIT / RUT"><input style={inputSt} value={form.cuit || ''} onChange={e => set('cuit', e.target.value)} /></Campo>
+        <Campo label="Rubro"><input style={inputSt} value={form.rubro || ''} onChange={e => set('rubro', e.target.value)} /></Campo>
+      </div>
+      <div style={{ marginTop: 10 }}><Campo label="Situación impositiva"><select style={inputSt} value={form.situacion_impositiva} onChange={e => set('situacion_impositiva', e.target.value)}>{SITUACIONES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></Campo></div>
+      <div style={{ background: '#F9F9F9', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', fontSize: 12, marginTop: 12 }}>
+        <div style={{ color: C.textFaint, fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Comprobante sugerido</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, color: C.text }}>{getTipoLabel(sit.comprobante)}</span>
+          <span style={{ fontSize: 11, color: sit.iva ? C.green : C.textMuted, background: sit.iva ? C.greenDim : '#F3F3F3', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{sit.iva ? 'Discrimina IVA' : 'Sin IVA'}</span>
+        </div>
+      </div>
+    </Modal>
+  )
+}
 
 // ── Modal Pago ────────────────────────────────────────────────
 function ModalPago({ gasto, bancos, onClose, onGuardar }) {
