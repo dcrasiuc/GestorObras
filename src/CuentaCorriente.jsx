@@ -1,24 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
-
-const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'decimal', maximumFractionDigits: 0 }).format(n ?? 0)
-const hoy = () => new Date().toISOString().slice(0, 10)
-const IVA = 0.21
-
-const MEDIOS_PAGO = [
-  { value: 'transferencia', label: 'Transferencia bancaria' },
-  { value: 'cheque',        label: 'Cheque' },
-  { value: 'efectivo',      label: 'Efectivo' },
-  { value: 'tarjeta',       label: 'Tarjeta' },
-]
-
-const C = {
-  bg: '#F7F7F7', surface: '#FFFFFF', border: '#EBEBEB', borderFaint: '#F5F5F5',
-  purple: '#7B4DB5', purpleLight: '#9B6DD5', purpleDim: '#F3F0FF',
-  text: '#1A1A1A', textMuted: '#888888', textFaint: '#CDCDCD',
-  green: '#1A6B3C', greenDim: '#EDFAF3',
-  orange: '#8A5200', orangeDim: '#FFF8ED',
-}
+import { C, MEDIOS_PAGO, IVA } from './constants'
+import { fmt, hoy } from './utils'
+import { toast } from './toast'
 
 // ── Hooks ────────────────────────────────────────────────────
 function useProveedores() {
@@ -714,7 +698,7 @@ function ModalPagarCC({ proveedor, remitos, bancos, esRI, onClose, onGuardar }) 
   return (
     <Modal title="Pago de cuenta corriente" onClose={onClose} ancho={520}
       onGuardar={() => {
-        if (seleccionados.length === 0) return alert('Seleccioná al menos un remito')
+        if (seleccionados.length === 0) return toast('Seleccioná al menos un remito')
         const montosAplicados = remitosSel.map(r => esRI ? (r.monto_neto ?? 0) * (1 + IVA) : (r.monto_neto ?? 0))
         onGuardar({ ...form, monto_total: totalConIva, banco_id: form.banco_id || null }, seleccionados, montosAplicados)
       }}

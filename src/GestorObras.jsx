@@ -1,48 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
-
-const CONCEPTOS = ['materiales', 'mano-obra', 'equipos', 'subcontratos', 'varios']
-const CONCEPTO_LABELS = { materiales: 'Materiales', 'mano-obra': 'Mano de obra', equipos: 'Equipos', subcontratos: 'Subcontratos', varios: 'Varios' }
-const CONCEPTO_COLORS = {
-  materiales: ['#F3F0FF','#6B3FA0'], 'mano-obra': ['#EDFAF3','#1A6B3C'],
-  equipos: ['#FFF8ED','#8A5200'], subcontratos: ['#EDF3FF','#1A3F8A'], varios: ['#F3F3F3','#666666'],
-}
-const TIPOS_COMPROBANTE = [
-  { value: 'factura_a', label: 'Factura A', iva: true },
-  { value: 'factura_b', label: 'Factura B', iva: false },
-  { value: 'factura_c', label: 'Factura C', iva: false },
-  { value: 'recibo', label: 'Recibo', iva: false },
-  { value: 'ticket', label: 'Ticket', iva: false },
-  { value: 'sin_comprobante', label: 'Sin comprobante', iva: false },
-  { value: 'otro', label: 'Otro', iva: false },
-]
-const SITUACIONES = [
-  { value: 'responsable_inscripto', label: 'Responsable Inscripto', comprobante: 'factura_a', iva: true },
-  { value: 'monotributo', label: 'Monotributo', comprobante: 'factura_c', iva: false },
-  { value: 'exento', label: 'Exento', comprobante: 'factura_b', iva: false },
-  { value: 'consumidor_final', label: 'Consumidor Final', comprobante: 'ticket', iva: false },
-]
-const MEDIOS_PAGO = [
-  { value: 'transferencia', label: 'Transferencia bancaria' },
-  { value: 'cheque', label: 'Cheque' },
-  { value: 'efectivo', label: 'Efectivo' },
-  { value: 'tarjeta', label: 'Tarjeta' },
-]
-const CONCEPTO_ICONS = { materiales: '🔧', 'mano-obra': '👷', equipos: '🚜', subcontratos: '🏢', varios: '📦' }
-
-const getSituacion = (val) => SITUACIONES.find(s => s.value === val) ?? SITUACIONES[0]
-const getTipoLabel = (val) => TIPOS_COMPROBANTE.find(t => t.value === val)?.label ?? val
-const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'decimal', maximumFractionDigits: 0 }).format(n ?? 0)
-const fmtK = (n) => n >= 1000000 ? `$${(n/1000000).toFixed(1)}M` : n >= 1000 ? `$${Math.round(n/1000)}k` : `$${fmt(n)}`
-const hoy = () => new Date().toISOString().slice(0, 10)
-
-const C = {
-  bg: '#F7F7F7', surface: '#FFFFFF', border: '#EBEBEB', borderFaint: '#F5F5F5',
-  purple: '#7B4DB5', purpleLight: '#9B6DD5', purpleDark: '#5B2D8E', purpleDim: '#F3F0FF',
-  text: '#1A1A1A', textMuted: '#888888', textFaint: '#CDCDCD',
-  green: '#1A6B3C', greenDim: '#EDFAF3',
-}
+import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO } from './constants'
+import { fmt, fmtK, hoy, getSituacion, getTipoLabel } from './utils'
+import './toast'
 
 // ── Hooks ────────────────────────────────────────────────────
 function useListas() {
@@ -158,7 +119,7 @@ export default function GestorObras({ usuario }) {
   const guardarProveedor = async (datos) => {
     const { nombre, cuit, rubro, situacion_impositiva } = datos
     const { data, error } = await supabase.from('proveedores').insert([{ nombre, cuit, rubro, situacion_impositiva }]).select().single()
-    if (error) { alert('Error: ' + error.message); return }
+    if (error) { console.error('Error:', error.message); return }
     await recargarListas()
     if (onProveedorCreado) onProveedorCreado(data)
     setProveedorPendiente(null)
@@ -312,22 +273,22 @@ export default function GestorObras({ usuario }) {
 
       {/* ── MODALES ── */}
       {modal === 'obra' && <ModalObra itemEdit={itemEditando} clientes={clientes} onClose={cerrarModal} onGuardar={async d => {
-        if (!d.nombre) return alert('El nombre es obligatorio')
+        if (!d.nombre) return window._toast?.('El nombre es obligatorio')
         const { id, nombre, cliente_id, estado, presupuesto } = d
         const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0 }
         const res = id ? await supabase.from('obras').update(payload).eq('id', id) : await supabase.from('obras').insert([payload])
-        if (res.error) alert('Error: ' + res.error.message)
+        if (res.error) console.error('Error:', res.error.message)
         else { cerrarModal(); recargarObras() }
       }} />}
 
       {modal === 'gasto' && obras.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
-          if (!d.monto || d.monto <= 0) return alert('Ingresá un monto válido')
+          if (!d.monto || d.monto <= 0) return window._toast?.('Ingresá un monto válido')
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
           const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante }
           const res = id ? await supabase.from('gastos').update(payload).eq('id', id) : await supabase.from('gastos').insert([payload])
-          if (res.error) alert('Error: ' + res.error.message)
+          if (res.error) console.error('Error:', res.error.message)
           else { cerrarModal(); recargarTodo(); setPanel('gastos') }
         }}
       />}
@@ -336,7 +297,7 @@ export default function GestorObras({ usuario }) {
         onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           const { error } = await supabase.from('gastos').insert([d])
-          if (error) alert('Error: ' + error.message)
+          if (error) console.error('Error:', error.message)
           else { cerrarModal(); recargarTodo() }
         }}
       />}
@@ -344,13 +305,13 @@ export default function GestorObras({ usuario }) {
       {modal === 'pago' && esAdmin && <ModalPago gasto={itemEditando} bancos={bancos} onClose={cerrarModal} onGuardar={async d => {
         const payload = { ...d, gasto_id: itemEditando.id, creado_por: usuario.id }
         const { error } = await supabase.from('pagos').insert([payload])
-        if (error) { alert('Error: ' + error.message); return }
+        if (error) { console.error('Error:', error.message); return }
         await supabase.from('gastos').update({ pagado: true }).eq('id', itemEditando.id)
         cerrarModal(); recargarGastos()
       }} />}
 
-      {modal === 'cliente'   && <ModalCliente   itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return alert('Nombre obligatorio'); const { id, nombre, telefono, email } = d; const res = id ? await supabase.from('clientes').update({ nombre, telefono, email }).eq('id', id) : await supabase.from('clientes').insert([{ nombre, telefono, email }]); if (res.error) alert('Error: ' + res.error.message); else { cerrarModal(); recargarListas() } }} />}
-      {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return alert('Nombre obligatorio'); const { id, nombre, cuit, rubro, situacion_impositiva } = d; const res = id ? await supabase.from('proveedores').update({ nombre, cuit, rubro, situacion_impositiva }).eq('id', id) : await supabase.from('proveedores').insert([{ nombre, cuit, rubro, situacion_impositiva }]); if (res.error) alert('Error: ' + res.error.message); else { cerrarModal(); recargarListas() } }} />}
+      {modal === 'cliente'   && <ModalCliente   itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return window._toast?.('Nombre obligatorio'); const { id, nombre, telefono, email } = d; const res = id ? await supabase.from('clientes').update({ nombre, telefono, email }).eq('id', id) : await supabase.from('clientes').insert([{ nombre, telefono, email }]); if (res.error) console.error('Error:', res.error.message); else { cerrarModal(); recargarListas() } }} />}
+      {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return window._toast?.('Nombre obligatorio'); const { id, nombre, cuit, rubro, situacion_impositiva } = d; const res = id ? await supabase.from('proveedores').update({ nombre, cuit, rubro, situacion_impositiva }).eq('id', id) : await supabase.from('proveedores').insert([{ nombre, cuit, rubro, situacion_impositiva }]); if (res.error) console.error('Error:', res.error.message); else { cerrarModal(); recargarListas() } }} />}
       {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} />}
     </>
   )
@@ -1179,7 +1140,7 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
     const ext = file.name.split('.').pop()
     const path = `pagos/${Date.now()}.${ext}`
     const { data, error } = await supabase.storage.from('comprobantes-pagos').upload(path, file)
-    if (error) { alert('Error al subir: ' + error.message); setSubiendo(false); return }
+    if (error) { console.error('Error al subir:', error.message); setSubiendo(false); return }
     const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
     set('comprobante_url', url); setArchivoNombre(file.name); setSubiendo(false)
   }
