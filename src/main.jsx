@@ -13,27 +13,18 @@ function App() {
   const [usuario, setUsuario] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  const verificarSesion = async () => {
-    try {
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-      const sesion = supabase.auth.getSession().then(async ({ data: { session } }) => {
-        if (session?.user) {
-          const perfil = await cargarPerfil(session.user.id)
-          setUsuario({ ...session.user, perfil })
-        } else {
-          setUsuario(null)
-        }
-      })
-      await Promise.race([sesion, timeout])
-    } catch {
-      setUsuario(null)
-    }
-    setLoading(false)
-  }
-
   useEffect(() => {
-    verificarSesion()
+    // Carga inicial: obtener sesión existente sin timeout agresivo
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        const perfil = await cargarPerfil(session.user.id)
+        setUsuario({ ...session.user, perfil })
+      }
+      setLoading(false)
+    })
 
+    // onAuthStateChange maneja todos los cambios de estado:
+    // login, logout y renovación de token — es la fuente de verdad
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
         const perfil = await cargarPerfil(session.user.id)
@@ -50,15 +41,7 @@ function App() {
       }
     })
 
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') verificarSesion()
-    }
-    document.addEventListener('visibilitychange', handleVisibility)
-
-    return () => {
-      subscription.unsubscribe()
-      document.removeEventListener('visibilitychange', handleVisibility)
-    }
+    return () => subscription.unsubscribe()
   }, [])
 
   if (loading) return (
