@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || 'https://gestordeobras.pages.dev',
@@ -9,28 +8,6 @@ const corsHeaders = {
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
-  }
-
-  // Verificar JWT del usuario
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return new Response(JSON.stringify({ error: 'No autorizado' }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 401,
-    })
-  }
-
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-  const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    global: { headers: { Authorization: authHeader } }
-  })
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) {
-    return new Response(JSON.stringify({ error: 'Sesión inválida' }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 401,
-    })
   }
 
   try {
@@ -44,6 +21,8 @@ serve(async (req) => {
         status: 500,
       })
     }
+
+    console.log('Llamando Anthropic, mimeType:', mimeType, 'base64 length:', base64?.length)
 
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -67,10 +46,11 @@ serve(async (req) => {
     })
 
     const data = await resp.json()
+    console.log('Anthropic status:', resp.status, 'response type:', data?.type)
 
     if (!resp.ok || data?.type === 'error') {
-      console.error('Anthropic API error:', JSON.stringify(data))
-      return new Response(JSON.stringify({ error: data?.error?.message || 'Error Anthropic API', detail: data }), {
+      console.error('Anthropic error:', JSON.stringify(data?.error))
+      return new Response(JSON.stringify({ error: data?.error?.message || 'Error Anthropic', detail: data }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 502,
       })
@@ -80,7 +60,7 @@ serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (error) {
-    console.error('Edge Function exception:', error.message)
+    console.error('Exception:', error.message)
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
