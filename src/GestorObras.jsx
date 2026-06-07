@@ -1003,12 +1003,18 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
 
   const procesarFoto = async (file) => {
     setPreview(URL.createObjectURL(file)); setStep('loading')
-    const ext = file.name.split('.').pop()
-    const { data: uploadData } = await supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
-    const imageUrl = uploadData ? supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl : ''
-    const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
+    let imageUrl = ''
     try {
-      const { data, error } = await supabase.functions.invoke('analizar-comprobante', { body: { base64, mimeType: file.type, hoy: hoy() } })
+      const ext = file.name.split('.').pop()
+      const { data: uploadData } = await supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
+      imageUrl = uploadData ? supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl : ''
+      const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
+      // Timeout de 25s para que no quede girando si la función no responde
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))
+      const { data, error } = await Promise.race([
+        supabase.functions.invoke('analizar-comprobante', { body: { base64, mimeType: file.type, hoy: hoy() } }),
+        timeout
+      ])
       if (!error && data?.content) {
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
@@ -1018,9 +1024,17 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
         if (matchProv) { const sit = getSituacion(matchProv.situacion_impositiva); tipo = sit.comprobante; iva = sit.iva }
         setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
         if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) })
-      } else { setForm(f => ({ ...f, imagen_url: imageUrl })) }
-    } catch { setForm(f => ({ ...f, imagen_url: imageUrl })) }
-    setStep('review')
+      } else {
+        setForm(f => ({ ...f, imagen_url: imageUrl }))
+        if (error) window._toast?.('IA no disponible — completá los datos manualmente')
+      }
+    } catch (e) {
+      console.error('procesarFoto error:', e)
+      setForm(f => ({ ...f, imagen_url: imageUrl }))
+      window._toast?.(e?.message === 'timeout' ? 'IA tardó demasiado — completá los datos manualmente' : 'Error al analizar la imagen — completá los datos manualmente')
+    } finally {
+      setStep('review')
+    }
   }
 
   return (
