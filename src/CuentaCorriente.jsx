@@ -73,21 +73,27 @@ function useResumenCC() {
   const [loading, setLoading] = useState(true)
   const cargar = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from('remitos')
-      .select('*, proveedores(id, nombre, situacion_impositiva)')
-      .eq('estado', 'pendiente')
-      .order('fecha', { ascending: false })
-    if (data) {
-      // Agrupar por proveedor
-      const mapa = {}
-      data.forEach(r => {
-        const pId = r.proveedor_id
-        if (!mapa[pId]) mapa[pId] = { proveedor: r.proveedores, remitos: [], totalNeto: 0 }
-        mapa[pId].remitos.push(r)
-        mapa[pId].totalNeto += r.monto_neto ?? 0
-      })
-      setResumen(Object.values(mapa).sort((a, b) => b.totalNeto - a.totalNeto))
+    try {
+      const { data, error } = await supabase
+        .from('remitos')
+        .select('*, proveedores(id, nombre, situacion_impositiva)')
+        .eq('estado', 'pendiente')
+        .order('fecha', { ascending: false })
+      if (error) {
+        console.error('useResumenCC error:', error)
+      } else if (data) {
+        const mapa = {}
+        data.forEach(r => {
+          const pId = r.proveedor_id
+          if (!mapa[pId]) mapa[pId] = { proveedor: r.proveedores, remitos: [], totalNeto: 0 }
+          mapa[pId].remitos.push(r)
+          mapa[pId].totalNeto += r.monto_neto ?? 0
+        })
+        setResumen(Object.values(mapa).sort((a, b) => b.totalNeto - a.totalNeto))
+      }
+    } catch (e) {
+      console.error('useResumenCC exception:', e)
+      setResumen([])
     }
     setLoading(false)
   }, [])

@@ -29,20 +29,27 @@ function useObras(usuarioId, esAdmin) {
   const [loading, setLoading] = useState(true)
   const cargar = useCallback(async () => {
     setLoading(true)
-    if (esAdmin) {
-      // Admin ve todas las obras
-      const { data, error } = await supabase.from('obras_resumen').select('*').order('nombre')
-      if (!error) setObras(data ?? [])
-    } else {
-      // Operador ve solo sus obras asignadas
-      const { data: asignadas } = await supabase
-        .from('obra_usuarios')
-        .select('obra_id')
-        .eq('usuario_id', usuarioId)
-      const ids = (asignadas ?? []).map(a => a.obra_id)
-      if (ids.length === 0) { setObras([]); setLoading(false); return }
-      const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).order('nombre')
-      if (!error) setObras(data ?? [])
+    try {
+      if (esAdmin) {
+        // Admin ve todas las obras
+        const { data, error } = await supabase.from('obras_resumen').select('*').order('nombre')
+        if (error) console.error('useObras admin error:', error)
+        else setObras(data ?? [])
+      } else {
+        // Operador ve solo sus obras asignadas
+        const { data: asignadas } = await supabase
+          .from('obra_usuarios')
+          .select('obra_id')
+          .eq('usuario_id', usuarioId)
+        const ids = (asignadas ?? []).map(a => a.obra_id)
+        if (ids.length === 0) { setObras([]); setLoading(false); return }
+        const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).order('nombre')
+        if (error) console.error('useObras error:', error)
+        else setObras(data ?? [])
+      }
+    } catch (e) {
+      console.error('useObras exception:', e)
+      setObras([])
     }
     setLoading(false)
   }, [usuarioId, esAdmin])
@@ -50,22 +57,20 @@ function useObras(usuarioId, esAdmin) {
   return { obras, loading, recargar: cargar }
 }
 
-function useGastos(obraIdFiltro) {
+function useGastos() {
   const [gastos, setGastos] = useState([])
   const [loading, setLoading] = useState(true)
   const cargar = useCallback(async () => {
     setLoading(true)
     try {
-      let q = supabase.from('gastos')
-        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url, bancos(nombre))')
+      const { data, error } = await supabase.from('gastos')
+        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
         .order('fecha', { ascending: false })
-      if (obraIdFiltro) q = q.eq('obra_id', obraIdFiltro)
-      const { data, error } = await q
       if (error) { console.error('useGastos error:', error); setGastos([]) }
       else setGastos(data ?? [])
     } catch (e) { console.error('useGastos catch:', e); setGastos([]) }
     setLoading(false)
-  }, [obraIdFiltro])
+  }, [])
   useEffect(() => { cargar() }, [cargar])
   return { gastos, loading, recargar: cargar }
 }
@@ -83,10 +88,8 @@ export default function GestorObras({ usuario }) {
 
   const { clientes, proveedores, bancos, recargarListas } = useListas()
   const { obras, loading: loadingObras, recargar: recargarObras } = useObras(usuario?.id, esAdmin)
-  const { gastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(
-    panel === 'gastos' ? filtroObraId : ''
-  )
-  const { gastos: todosGastos } = useGastos('')
+  const { gastos: todosGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos()
+  const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   const recargarTodo = () => { recargarObras(); recargarGastos() }
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
 
@@ -246,11 +249,11 @@ export default function GestorObras({ usuario }) {
         {/* ── CONTENIDO ── */}
         <div className="main-content" style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 20px', width: '100%' }}>
           <div className="fade-up" key={panel}>
-            {panel === 'inicio'    && <PanelInicio obras={obras} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
+            {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async id => { if (window.confirm('¿Eliminar este gasto?')) { await supabase.from('gastos').delete().eq('id', id); recargarTodo() } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
-            {panel === 'informe'   && <PanelInforme obras={obras} />}
+            {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)} />}
             {panel === 'admin'     && esAdmin && <PanelAdmin bancos={bancos} recargarListas={recargarListas} />}
             {panel === 'mas'       && <PanelMas esAdmin={esAdmin} onContactos={() => setPanel('contactos')} onAdmin={() => setPanel('admin')} onLogout={handleLogout} usuario={usuario} />}
@@ -347,8 +350,7 @@ function MobileHeaderStats({ obras, gastos }) {
 }
 
 // ── Panel Inicio ──────────────────────────────────────────────
-function PanelInicio({ obras, esAdmin, onVerGastos, onVerObras, onNuevoGasto, onNuevoFoto }) {
-  const { gastos } = useGastos('')
+function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoGasto, onNuevoFoto }) {
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const totalGastos = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
@@ -669,9 +671,9 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
 }
 
 // ── Panel Informe ─────────────────────────────────────────────
-function PanelInforme({ obras }) {
+function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
   const [obraId, setObraId] = useState('')
-  const { gastos, loading } = useGastos(obraId)
+  const gastos = obraId ? todosGastosInforme.filter(g => g.obra_id === obraId) : todosGastosInforme
   const total = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   const porConcepto = {}
