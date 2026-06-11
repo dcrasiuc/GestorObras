@@ -131,23 +131,15 @@ export default function GestorObras({ usuario }) {
   ]
 
   const guardarProveedor = async (datos) => {
-    try {
-      const { nombre, cuit, rubro, situacion_impositiva } = datos
-      if (!nombre?.trim()) return window._toast?.('El nombre del proveedor es obligatorio')
-      const { data, error } = await supabase.from('proveedores').insert([{ nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva }]).select().single()
-      if (error) {
-        console.error('Error guardarProveedor:', error.message)
-        window._toast?.('Error al guardar: ' + (error.message || 'Error desconocido'))
-        return
-      }
-      await recargarListas()
-      if (onProveedorCreado) onProveedorCreado(data)
-      setProveedorPendiente(null)
-      setOnProveedorCreado(null)
-    } catch (e) {
-      console.error('guardarProveedor exception:', e)
-      window._toast?.('Error inesperado al guardar el proveedor')
-    }
+    const { nombre, cuit, rubro, situacion_impositiva } = datos
+    const { data, error } = await supabase.from('proveedores')
+      .insert([{ nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva }])
+      .select().single()
+    if (error) throw new Error(error.message || 'Error al guardar en Supabase')
+    await recargarListas()
+    if (onProveedorCreado) onProveedorCreado(data)
+    setProveedorPendiente(null)
+    setOnProveedorCreado(null)
   }
 
   return (
@@ -1116,11 +1108,26 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
 
 function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
   const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
+  const [saving, setSaving] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const sit = getSituacion(form.situacion_impositiva)
+
+  const handleGuardar = async () => {
+    if (!form.nombre?.trim()) { setErrorMsg('El nombre es obligatorio'); return }
+    setSaving(true); setErrorMsg('')
+    try {
+      await onGuardar(form)
+    } catch (e) {
+      setErrorMsg(e?.message || 'Error al guardar')
+      setSaving(false)
+    }
+  }
+
   return (
-    <Modal title="Dar de alta proveedor" onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel="Dar de alta" zIndex={zIndex}>
+    <Modal title="Dar de alta proveedor" onClose={onClose} onGuardar={handleGuardar} guardarLabel={saving ? 'Guardando...' : 'Dar de alta'} zIndex={zIndex}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: C.purple }}><strong>Proveedor detectado por IA</strong> — completá los datos fiscales.</div>
+      {errorMsg && <div style={{ background: '#FFF0F0', border: '1px solid #FFDCDC', color: '#D0021B', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12, fontWeight: 500 }}>⚠ {errorMsg}</div>}
       <Campo label="Nombre / Razón Social" style={{ marginBottom: 10 }}><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} /></Campo>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
         <Campo label="CUIT / RUT"><input style={inputSt} value={form.cuit} onChange={e => set('cuit', e.target.value)} placeholder="Sin guiones" /></Campo>
