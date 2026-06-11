@@ -1091,7 +1091,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
           {preview && (currentFile?.type === 'application/pdf'
             ? <div style={{ fontSize: 48, marginBottom: 16 }}>📄</div>
             : <img src={preview} alt="" style={{ maxHeight: 120, borderRadius: 8, marginBottom: 16, opacity: 0.6 }} />
-          )}}
+          )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             <div style={{ width: 16, height: 16, border: `2px solid ${C.purple}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             <span style={{ fontSize: 13, color: C.textMuted }}>Analizando con IA...</span>
