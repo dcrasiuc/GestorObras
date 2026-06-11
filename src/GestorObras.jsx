@@ -1046,7 +1046,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
         const matchProv = proveedores.find(p => p.nombre.toLowerCase().includes(nombreIA.toLowerCase()))
         let tipo = 'factura_a', iva = true
         if (matchProv) { const sit = getSituacion(matchProv.situacion_impositiva); tipo = sit.comprobante; iva = sit.iva }
-        setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
+        setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
         if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) })
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
