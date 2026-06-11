@@ -132,8 +132,13 @@ export default function GestorObras({ usuario }) {
 
   const guardarProveedor = async (datos) => {
     const { nombre, cuit, rubro, situacion_impositiva } = datos
-    const { data, error } = await supabase.from('proveedores').insert([{ nombre, cuit, rubro, situacion_impositiva }]).select().single()
-    if (error) { console.error('Error:', error.message); return }
+    if (!nombre?.trim()) return window._toast?.('El nombre del proveedor es obligatorio')
+    const { data, error } = await supabase.from('proveedores').insert([{ nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro?.trim() || null, situacion_impositiva }]).select().single()
+    if (error) {
+      console.error('Error guardarProveedor:', error.message)
+      window._toast?.('Error al guardar: ' + (error.message || 'Error desconocido'))
+      return
+    }
     await recargarListas()
     if (onProveedorCreado) onProveedorCreado(data)
     setProveedorPendiente(null)
@@ -326,7 +331,7 @@ export default function GestorObras({ usuario }) {
 
       {modal === 'cliente'   && <ModalCliente   itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return window._toast?.('Nombre obligatorio'); const { id, nombre, telefono, email } = d; const res = id ? await supabase.from('clientes').update({ nombre, telefono, email }).eq('id', id) : await supabase.from('clientes').insert([{ nombre, telefono, email }]); if (res.error) console.error('Error:', res.error.message); else { cerrarModal(); recargarListas() } }} />}
       {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return window._toast?.('Nombre obligatorio'); const { id, nombre, cuit, rubro, situacion_impositiva } = d; const res = id ? await supabase.from('proveedores').update({ nombre, cuit, rubro, situacion_impositiva }).eq('id', id) : await supabase.from('proveedores').insert([{ nombre, cuit, rubro, situacion_impositiva }]); if (res.error) console.error('Error:', res.error.message); else { cerrarModal(); recargarListas() } }} />}
-      {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} />}
+      {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} zIndex={300} />}
     </>
   )
 }
@@ -1100,12 +1105,12 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
   )
 }
 
-function ModalAltaProveedor({ datosIniciales, onClose, onGuardar }) {
+function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
   const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const sit = getSituacion(form.situacion_impositiva)
   return (
-    <Modal title="Dar de alta proveedor" onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel="Dar de alta">
+    <Modal title="Dar de alta proveedor" onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel="Dar de alta" zIndex={zIndex}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: C.purple }}><strong>Proveedor detectado por IA</strong> — completá los datos fiscales.</div>
       <Campo label="Nombre / Razón Social" style={{ marginBottom: 10 }}><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} /></Campo>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
@@ -1278,9 +1283,9 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
 }
 
 // ── UI Genérico ───────────────────────────────────────────────
-function Modal({ title, children, onClose, onGuardar, guardarLabel = 'Guardar' }) {
+function Modal({ title, children, onClose, onGuardar, guardarLabel = 'Guardar', zIndex = 200 }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.2)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={e => e.target === e.currentTarget && onClose()}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.2)', zIndex, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.12)' }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 18 }}>{title}</h3>
         {children}
