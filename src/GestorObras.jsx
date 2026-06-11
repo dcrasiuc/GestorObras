@@ -250,7 +250,7 @@ export default function GestorObras({ usuario }) {
             {[
               { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="8" height="8"/><rect x="14" y="2" width="8" height="8"/><rect x="2" y="14" width="8" height="8"/><rect x="14" y="14" width="8" height="8"/></svg>, label: 'Obras', action: () => setPanel('obras') },
               { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: '+ Gasto', action: () => { setPanel('gastos'); setPendingModal('gasto') } },
-              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>, label: 'Foto', action: () => { setPanel('gastos'); setPendingModal('foto') } },
+              { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>, label: 'Comprobante', action: () => { setPanel('gastos'); setPendingModal('foto') } },
               { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>, label: 'Informe', action: () => setPanel('informe') },
             ].map(a => (
               <button key={a.label} onClick={a.action} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, background: 'transparent', border: 'none', cursor: 'pointer' }}>
@@ -379,7 +379,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
       <div className="desktop-only" style={{ marginBottom: 20 }}>
         <PageHeader titulo="Inicio" sub="Resumen general">
           <div style={{ display: 'flex', gap: 8 }}>
-          <BtnSecondary onClick={onNuevoFoto}>📷 Foto</BtnSecondary>
+          <BtnSecondary onClick={onNuevoFoto}>📎 Comprobante</BtnSecondary>
           <BtnPrimary onClick={onNuevoGasto}>+ Gasto</BtnPrimary>
           </div>
         </PageHeader>
@@ -576,7 +576,7 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
     <div>
       <PageHeader titulo="Gastos" sub={`Total: $ ${fmt(total)}`}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <BtnSecondary onClick={onNuevoFoto}>📷 Foto</BtnSecondary>
+          <BtnSecondary onClick={onNuevoFoto}>📎 Comprobante</BtnSecondary>
           <BtnPrimary onClick={onNuevoManual}>+ Gasto</BtnPrimary>
         </div>
       </PageHeader>
