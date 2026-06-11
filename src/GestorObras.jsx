@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
-import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO } from './constants'
+import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel } from './utils'
 import './toast'
 
@@ -131,18 +131,23 @@ export default function GestorObras({ usuario }) {
   ]
 
   const guardarProveedor = async (datos) => {
-    const { nombre, cuit, rubro, situacion_impositiva } = datos
-    if (!nombre?.trim()) return window._toast?.('El nombre del proveedor es obligatorio')
-    const { data, error } = await supabase.from('proveedores').insert([{ nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro?.trim() || null, situacion_impositiva }]).select().single()
-    if (error) {
-      console.error('Error guardarProveedor:', error.message)
-      window._toast?.('Error al guardar: ' + (error.message || 'Error desconocido'))
-      return
+    try {
+      const { nombre, cuit, rubro, situacion_impositiva } = datos
+      if (!nombre?.trim()) return window._toast?.('El nombre del proveedor es obligatorio')
+      const { data, error } = await supabase.from('proveedores').insert([{ nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva }]).select().single()
+      if (error) {
+        console.error('Error guardarProveedor:', error.message)
+        window._toast?.('Error al guardar: ' + (error.message || 'Error desconocido'))
+        return
+      }
+      await recargarListas()
+      if (onProveedorCreado) onProveedorCreado(data)
+      setProveedorPendiente(null)
+      setOnProveedorCreado(null)
+    } catch (e) {
+      console.error('guardarProveedor exception:', e)
+      window._toast?.('Error inesperado al guardar el proveedor')
     }
-    await recargarListas()
-    if (onProveedorCreado) onProveedorCreado(data)
-    setProveedorPendiente(null)
-    setOnProveedorCreado(null)
   }
 
   return (
@@ -1119,7 +1124,7 @@ function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
       <Campo label="Nombre / Razón Social" style={{ marginBottom: 10 }}><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} /></Campo>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
         <Campo label="CUIT / RUT"><input style={inputSt} value={form.cuit} onChange={e => set('cuit', e.target.value)} placeholder="Sin guiones" /></Campo>
-        <Campo label="Rubro"><input style={inputSt} value={form.rubro} onChange={e => set('rubro', e.target.value)} /></Campo>
+        <Campo label="Rubro"><select style={inputSt} value={form.rubro} onChange={e => set('rubro', e.target.value)}><option value="">— Seleccionar —</option>{RUBROS.map(r => <option key={r} value={r}>{r}</option>)}</select></Campo>
       </div>
       <Campo label="Situación impositiva" style={{ marginBottom: 12 }}><select style={inputSt} value={form.situacion_impositiva} onChange={e => set('situacion_impositiva', e.target.value)}>{SITUACIONES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></Campo>
       <div style={{ background: '#F9F9F9', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
@@ -1171,7 +1176,7 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
       <Campo label="Nombre / Razón Social"><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} /></Campo>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
         <Campo label="CUIT / RUT"><input style={inputSt} value={form.cuit || ''} onChange={e => set('cuit', e.target.value)} /></Campo>
-        <Campo label="Rubro"><input style={inputSt} value={form.rubro || ''} onChange={e => set('rubro', e.target.value)} /></Campo>
+        <Campo label="Rubro"><select style={inputSt} value={form.rubro || ''} onChange={e => set('rubro', e.target.value)}><option value="">— Seleccionar —</option>{RUBROS.map(r => <option key={r} value={r}>{r}</option>)}</select></Campo>
       </div>
       <div style={{ marginTop: 10 }}><Campo label="Situación impositiva"><select style={inputSt} value={form.situacion_impositiva} onChange={e => set('situacion_impositiva', e.target.value)}>{SITUACIONES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></Campo></div>
       <div style={{ background: '#F9F9F9', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', fontSize: 12, marginTop: 12 }}>

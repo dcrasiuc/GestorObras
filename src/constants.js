@@ -61,5 +61,24 @@ export const CONCEPTO_ICONS = {
   varios:       '📦',
 }
 
+// ── Rubros de proveedor ──────────────────────────────────────
+export const RUBROS = [
+  'Materiales de construcción',
+  'Ferretería',
+  'Electricidad',
+  'Plomería / Sanitaria',
+  'Pintura',
+  'Carpintería / Aberturas',
+  'Vidriería',
+  'Equipos y maquinaria',
+  'Transporte / Logística',
+  'Mano de obra',
+  'Profesionales / Estudios',
+  'Hormigón / Premoldeados',
+  'Hierro / Acero',
+  'Cerámicos / Revestimientos',
+  'Varios',
+]
+
 // ── IVA ──────────────────────────────────────────────────────
 export const IVA = 0.21
