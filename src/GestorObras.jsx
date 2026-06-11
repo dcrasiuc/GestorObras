@@ -1015,12 +1015,15 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
           if (uploadData) imageUrl = supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl
         }).catch(() => {})
 
-      // 3. IA con timeout de 25s
+      // 3. IA con fetch directo + timeout de 25s
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))
-      const { data, error } = await Promise.race([
-        supabase.functions.invoke('analizar-comprobante', { body: { base64, mimeType: file.type, hoy: hoy() } }),
+      const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
+      const respRaw = await Promise.race([
+        fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mimeType: file.type, hoy: hoy() }) }),
         timeout
       ])
+      const data = await respRaw.json()
+      const error = !respRaw.ok ? data : null
       if (!error && data?.content) {
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
