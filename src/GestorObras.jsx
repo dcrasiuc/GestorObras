@@ -54,23 +54,34 @@ function useObras(usuarioId, esAdmin) {
     setLoading(false)
   }, [usuarioId, esAdmin])
   useEffect(() => { cargar() }, [cargar])
-  return { obras, loading, recargar: cargar }
+  // obrasIds: null = admin (sin restricción), array = IDs permitidos para operador
+  // undefined mientras carga (para no filtrar con lista vacía prematuramente)
+  const obrasIds = loading ? undefined : (esAdmin ? null : obras.map(o => o.id))
+  return { obras, loading, recargar: cargar, obrasIds }
 }
 
-function useGastos() {
+function useGastos(obrasIds) {
   const [gastos, setGastos] = useState([])
   const [loading, setLoading] = useState(true)
+  // Usamos la clave serializada para que useCallback reaccione cuando cambian los IDs
+  const idsClave = JSON.stringify(obrasIds)
   const cargar = useCallback(async () => {
+    const ids = JSON.parse(idsClave)
+    // Esperar a que useObras termine de cargar (undefined = todavía cargando)
+    if (ids === undefined) return
     setLoading(true)
     try {
-      const { data, error } = await supabase.from('gastos')
+      let q = supabase.from('gastos')
         .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
         .order('fecha', { ascending: false })
+      // null = admin = todas las obras; array = solo obras autorizadas
+      if (ids !== null) q = q.in('obra_id', ids)
+      const { data, error } = await q
       if (error) { console.error('useGastos error:', error); setGastos([]) }
       else setGastos(data ?? [])
     } catch (e) { console.error('useGastos catch:', e); setGastos([]) }
     setLoading(false)
-  }, [])
+  }, [idsClave])
   useEffect(() => { cargar() }, [cargar])
   return { gastos, loading, recargar: cargar }
 }
@@ -87,8 +98,8 @@ export default function GestorObras({ usuario }) {
   const [onProveedorCreado, setOnProveedorCreado] = useState(null)
 
   const { clientes, proveedores, bancos, recargarListas } = useListas()
-  const { obras, loading: loadingObras, recargar: recargarObras } = useObras(usuario?.id, esAdmin)
-  const { gastos: todosGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos()
+  const { obras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
+  const { gastos: todosGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   const recargarTodo = () => { recargarObras(); recargarGastos() }
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
@@ -1015,11 +1026,12 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
           if (uploadData) imageUrl = supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl
         }).catch(() => {})
 
-      // 3. IA con fetch directo + timeout de 25s
-      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))
+      // 3. IA con fetch directo + timeout de 30s
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000))
       const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
       const respRaw = await Promise.race([
-        fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mimeType: file.type, hoy: hoy() }) }),
+        fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }, body: JSON.stringify({ base64, mimeType: file.type, hoy: hoy() }) }),
         timeout
       ])
       const data = await respRaw.json()
