@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || 'https://gestordeobras.pages.dev',
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
@@ -38,7 +38,9 @@ serve(async (req) => {
         messages: [{
           role: 'user',
           content: [
-            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+            mimeType === 'application/pdf'
+              ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+              : { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
             { type: 'text', text: 'Extraé los datos del comprobante.' }
           ]
         }]

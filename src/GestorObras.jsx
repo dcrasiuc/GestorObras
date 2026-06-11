@@ -1073,10 +1073,10 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
           <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: '#FAFAFA' }}>
             <span style={{ fontSize: 24 }}>🖼️</span>
             <div>
-              <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Elegir desde galería</div>
-              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>JPG, PNG, WEBP</div>
+              <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Elegir desde galería o PDF</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>JPG, PNG, WEBP, PDF</div>
             </div>
-            <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
+            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
           </label>
         </div>
       )}
