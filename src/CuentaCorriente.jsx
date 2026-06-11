@@ -137,7 +137,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
             <p style={{ fontSize: 12, color: C.textMuted, margin: '3px 0 0' }}>Estado general de proveedores</p>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <BtnSecondary onClick={() => abrirModal('foto')}>📷 Remito foto</BtnSecondary>
+            <BtnSecondary onClick={() => abrirModal('foto')}>📎 Remito</BtnSecondary>
             <BtnPrimary onClick={() => abrirModal('remito')}>+ Remito</BtnPrimary>
           </div>
         </div>
@@ -212,7 +212,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
           <p style={{ fontSize: 12, color: C.textMuted, margin: '3px 0 0' }}>{esRI ? 'Responsable Inscripto · Factura A + IVA' : proveedor?.situacion_impositiva === 'monotributo' ? 'Monotributo · Factura C' : 'Cuenta corriente'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <BtnSecondary onClick={() => abrirModal('foto')}>📷 Remito foto</BtnSecondary>
+          <BtnSecondary onClick={() => abrirModal('foto')}>📎 Remito</BtnSecondary>
           <BtnPrimary onClick={() => abrirModal('remito')}>+ Remito</BtnPrimary>
         </div>
       </div>
@@ -550,23 +550,34 @@ function ModalFotoRemito({ proveedorId, proveedores, obras, onClose, onGuardar }
   const [items, setItems] = useState([])
   const [dist, setDist] = useState([])
   const [preview, setPreview] = useState(null)
+  const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const procesarFoto = async (file) => {
-    setPreview(URL.createObjectURL(file))
-    setStep('loading')
-    const ext = file.name.split('.').pop()
-    const { data: uploadData } = await supabase.storage.from('comprobantes').upload(`remitos/${Date.now()}.${ext}`, file)
-    const imageUrl = uploadData ? supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl : ''
-    const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
+    setPreview(URL.createObjectURL(file)); setCurrentFile(file); setStep('loading')
+    let imageUrl = ''
     try {
-      const { data, error } = await supabase.functions.invoke('analizar-comprobante', {
-        body: {
-          base64, mimeType: file.type, hoy: hoy(),
-          instruccion: 'Este documento puede ser un REMITO o una FACTURA. Detectá el tipo. Para remitos extraé: nro_remito, fecha, proveedor, monto_neto (neto sin IVA, 0 si no tiene precio), items (array con descripcion, cantidad, unidad, precio_unitario, subtotal). Responde SOLO JSON con campos: tipo (remito|factura), nro_remito, fecha, proveedor, monto_neto, items.'
-        }
-      })
-      if (!error && data?.content) {
+      // 1. Base64 primero (local, no depende de red)
+      const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
+
+      // 2. Storage en paralelo (sin bloquear la IA)
+      const ext = file.name.split('.').pop()
+      supabase.storage.from('comprobantes').upload(`remitos/${Date.now()}.${ext}`, file)
+        .then(({ data: uploadData }) => {
+          if (uploadData) imageUrl = supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl
+        }).catch(() => {})
+
+      // 3. IA con fetch directo + timeout de 30s
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000))
+      const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+      const instruccion = 'Este documento puede ser un REMITO o una FACTURA. Detectá el tipo. Para remitos extraé: nro_remito, fecha, proveedor, monto_neto (neto sin IVA, 0 si no tiene precio), items (array con descripcion, cantidad, unidad, precio_unitario, subtotal). Responde SOLO JSON con campos: tipo (remito|factura), nro_remito, fecha, proveedor, monto_neto, items.'
+      const respRaw = await Promise.race([
+        fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }, body: JSON.stringify({ base64, mimeType: file.type, hoy: hoy(), instruccion }) }),
+        timeout
+      ])
+      const data = await respRaw.json()
+      if (respRaw.ok && data?.content) {
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
         const matchProv = proveedores.find(p => p.nombre.toLowerCase().includes((parsed.proveedor || '').toLowerCase()))
@@ -582,24 +593,44 @@ function ModalFotoRemito({ proveedorId, proveedores, obras, onClose, onGuardar }
         if (parsed.items?.length > 0) setItems(parsed.items)
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
+        toast('IA no disponible — completá los datos manualmente')
       }
-    } catch { setForm(f => ({ ...f, imagen_url: imageUrl })) }
-    setStep('review')
+    } catch (e) {
+      setForm(f => ({ ...f, imagen_url: imageUrl }))
+      toast(e?.message === 'timeout' ? 'IA tardó demasiado — completá los datos manualmente' : 'Error al analizar — completá los datos manualmente')
+    } finally {
+      setStep('review')
+    }
   }
 
   return (
-    <Modal title="Cargar remito por foto" onClose={onClose} onGuardar={step === 'review' ? () => onGuardar(form, items.filter(it => it.descripcion), dist) : null} guardarLabel="Guardar remito" ancho={560}>
+    <Modal title="Cargar remito" onClose={onClose} onGuardar={step === 'review' ? () => onGuardar(form, items.filter(it => it.descripcion), dist) : null} guardarLabel="Guardar remito" ancho={560}>
       {step === 'upload' && (
-        <label style={{ display: 'block', border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: '32px 24px', textAlign: 'center', cursor: 'pointer', background: '#FAFAFA' }}>
-          <div style={{ fontSize: 36, marginBottom: 10 }}>📷</div>
-          <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Subir foto del remito</div>
-          <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>JPG, PNG, WEBP</div>
-          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
-        </label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px solid ${C.purple}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: C.purpleDim }}>
+            <span style={{ fontSize: 24 }}>📸</span>
+            <div>
+              <div style={{ fontSize: 14, color: C.purple, fontWeight: 600 }}>Tomar foto con cámara</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>Abre la cámara directamente</div>
+            </div>
+            <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: '#FAFAFA' }}>
+            <span style={{ fontSize: 24 }}>🖼️📄</span>
+            <div>
+              <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Elegir foto o PDF</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>Imagen o PDF del remito</div>
+            </div>
+            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
+          </label>
+        </div>
       )}
       {step === 'loading' && (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>
-          {preview && <img src={preview} alt="" style={{ maxHeight: 120, borderRadius: 8, marginBottom: 16, opacity: 0.6 }} />}
+          {preview && (currentFile?.type === 'application/pdf'
+            ? <div style={{ fontSize: 48, marginBottom: 16 }}>📄</div>
+            : <img src={preview} alt="" style={{ maxHeight: 120, borderRadius: 8, marginBottom: 16, opacity: 0.6 }} />
+          )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             <div style={{ width: 16, height: 16, border: `2px solid ${C.purple}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             <span style={{ fontSize: 13, color: C.textMuted }}>Analizando con IA...</span>
@@ -608,7 +639,10 @@ function ModalFotoRemito({ proveedorId, proveedores, obras, onClose, onGuardar }
       )}
       {step === 'review' && (
         <div>
-          {preview && <img src={preview} alt="" style={{ maxHeight: 80, borderRadius: 6, marginBottom: 12, display: 'block' }} />}
+          {preview && (currentFile?.type === 'application/pdf'
+            ? <div style={{ fontSize: 36, marginBottom: 12 }}>📄</div>
+            : <img src={preview} alt="" style={{ maxHeight: 80, borderRadius: 6, marginBottom: 12, display: 'block' }} />
+          )}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: C.purpleDim, color: C.purple, fontSize: 11, borderRadius: 99, marginBottom: 14, fontWeight: 600 }}>✨ Revisá los datos antes de guardar</div>
           {form.observaciones && <div style={{ background: '#FFF8ED', border: `1px solid #FFDCAA`, borderRadius: 8, padding: '8px 12px', fontSize: 12, color: C.orange, marginBottom: 12 }}>{form.observaciones}</div>}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
