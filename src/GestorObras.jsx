@@ -1015,10 +1015,11 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
   const [step, setStep] = useState('upload')
   const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '' })
   const [preview, setPreview] = useState(null)
+  const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const procesarFoto = async (file) => {
-    setPreview(URL.createObjectURL(file)); setStep('loading')
+    setPreview(URL.createObjectURL(file)); setCurrentFile(file); setStep('loading')
     let imageUrl = ''
     try {
       // 1. Base64 primero (local, no depende de red)
@@ -1076,10 +1077,10 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
             <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
           </label>
           <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: '#FAFAFA' }}>
-            <span style={{ fontSize: 24 }}>🖼️</span>
+            <span style={{ fontSize: 24 }}>🖼️📄</span>
             <div>
-              <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Elegir desde galería o PDF</div>
-              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>JPG, PNG, WEBP, PDF</div>
+              <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Elegir foto o PDF</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>Imagen o PDF del comprobante</div>
             </div>
             <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
           </label>
@@ -1087,7 +1088,10 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
       )}
       {step === 'loading' && (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>
-          {preview && <img src={preview} alt="" style={{ maxHeight: 120, borderRadius: 8, marginBottom: 16, opacity: 0.6 }} />}
+          {preview && (currentFile?.type === 'application/pdf'
+            ? <div style={{ fontSize: 48, marginBottom: 16 }}>📄</div>
+            : <img src={preview} alt="" style={{ maxHeight: 120, borderRadius: 8, marginBottom: 16, opacity: 0.6 }} />
+          )}}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             <div style={{ width: 16, height: 16, border: `2px solid ${C.purple}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             <span style={{ fontSize: 13, color: C.textMuted }}>Analizando con IA...</span>
