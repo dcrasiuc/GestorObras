@@ -1005,11 +1005,17 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
     setPreview(URL.createObjectURL(file)); setStep('loading')
     let imageUrl = ''
     try {
-      const ext = file.name.split('.').pop()
-      const { data: uploadData } = await supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
-      imageUrl = uploadData ? supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl : ''
+      // 1. Base64 primero (local, no depende de red)
       const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
-      // Timeout de 25s para que no quede girando si la función no responde
+
+      // 2. Storage en paralelo (sin bloquear la IA)
+      const ext = file.name.split('.').pop()
+      supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
+        .then(({ data: uploadData }) => {
+          if (uploadData) imageUrl = supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl
+        }).catch(() => {})
+
+      // 3. IA con timeout de 25s
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))
       const { data, error } = await Promise.race([
         supabase.functions.invoke('analizar-comprobante', { body: { base64, mimeType: file.type, hoy: hoy() } }),
@@ -1040,12 +1046,24 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
   return (
     <Modal title="Cargar comprobante" onClose={onClose} onGuardar={step === 'review' ? () => onGuardar({ ...form, proveedor_id: form.proveedor_id || null, monto: parseFloat(form.monto) || 0 }) : null} guardarLabel="Guardar gasto">
       {step === 'upload' && (
-        <label style={{ display: 'block', border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: '32px 24px', textAlign: 'center', cursor: 'pointer', background: '#FAFAFA' }}>
-          <div style={{ fontSize: 36, marginBottom: 10 }}>📷</div>
-          <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Tocá para subir foto del comprobante</div>
-          <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>JPG, PNG, WEBP</div>
-          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
-        </label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px solid ${C.purple}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: C.purpleDim }}>
+            <span style={{ fontSize: 24 }}>📸</span>
+            <div>
+              <div style={{ fontSize: 14, color: C.purple, fontWeight: 600 }}>Tomar foto con cámara</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>Abre la cámara directamente</div>
+            </div>
+            <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: '#FAFAFA' }}>
+            <span style={{ fontSize: 24 }}>🖼️</span>
+            <div>
+              <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Elegir desde galería</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>JPG, PNG, WEBP</div>
+            </div>
+            <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files[0] && procesarFoto(e.target.files[0])} />
+          </label>
+        </div>
       )}
       {step === 'loading' && (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>
