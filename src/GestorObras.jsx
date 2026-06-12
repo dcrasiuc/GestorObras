@@ -112,7 +112,15 @@ export default function GestorObras({ usuario }) {
     }
   }, [panel, loadingObras, obras.length, pendingModal])
   const cerrarModal = () => { setModal(null); setItemEditando(null) }
-  const handleLogout = async () => { await supabase.auth.signOut() }
+  const handleLogout = async () => {
+    try {
+      const t = new Promise((_, rej) => setTimeout(() => rej(), 5000))
+      await Promise.race([supabase.auth.signOut(), t])
+    } catch {
+      // Si cuelga la red, cerrar sesión localmente igual
+      await supabase.auth.signOut({ scope: 'local' })
+    }
+  }
 
   useEffect(() => {
     document.body.style.margin = '0'
@@ -302,21 +310,25 @@ export default function GestorObras({ usuario }) {
       {modal === 'gasto' && obras.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
-          if (!d.monto || d.monto <= 0) return window._toast?.('Ingresá un monto válido')
+          if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
           const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante }
-          const res = id ? await supabase.from('gastos').update(payload).eq('id', id) : await supabase.from('gastos').insert([payload])
-          if (res.error) console.error('Error:', res.error.message)
-          else { cerrarModal(); recargarTodo(); setPanel('gastos') }
+          const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Sin respuesta del servidor. Verificá tu conexión.')), 15000))
+          const res = id
+            ? await Promise.race([supabase.from('gastos').update(payload).eq('id', id), timeout])
+            : await Promise.race([supabase.from('gastos').insert([payload]), timeout])
+          if (res.error) throw new Error(res.error.message)
+          cerrarModal(); recargarTodo(); setPanel('gastos')
         }}
       />}
 
       {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
-          const { error } = await supabase.from('gastos').insert([d])
-          if (error) console.error('Error:', error.message)
-          else { cerrarModal(); recargarTodo() }
+          const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Sin respuesta del servidor. Verificá tu conexión.')), 15000))
+          const { error } = await Promise.race([supabase.from('gastos').insert([d]), timeout])
+          if (error) throw new Error(error.message)
+          cerrarModal(); recargarTodo()
         }}
       />}
 
@@ -1303,14 +1315,22 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
 
 // ── UI Genérico ───────────────────────────────────────────────
 function Modal({ title, children, onClose, onGuardar, guardarLabel = 'Guardar', zIndex = 200 }) {
+  const [saving, setSaving] = useState(false)
+  const [errMsg, setErrMsg] = useState('')
+  const handleGuardar = async () => {
+    if (!onGuardar || saving) return
+    setSaving(true); setErrMsg('')
+    try { await onGuardar() } catch(e) { setErrMsg(e?.message || 'Error al guardar') } finally { setSaving(false) }
+  }
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.2)', zIndex, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.12)' }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 18 }}>{title}</h3>
         {children}
+        {errMsg && <div style={{ marginTop: 10, padding: '8px 12px', background: '#FFF0F0', border: '1px solid #FFCCCC', borderRadius: 8, fontSize: 12, color: '#C62828' }}>⚠ {errMsg}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
           <button style={{ padding: '8px 16px', background: 'transparent', color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }} onClick={onClose}>Cancelar</button>
-          {onGuardar && <button style={{ padding: '8px 20px', background: C.purple, color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }} onClick={onGuardar}>{guardarLabel}</button>}
+          {onGuardar && <button disabled={saving} style={{ padding: '8px 20px', background: saving ? C.textFaint : C.purple, color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, cursor: saving ? 'default' : 'pointer', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }} onClick={handleGuardar}>{saving ? 'Guardando...' : guardarLabel}</button>}
         </div>
       </div>
     </div>
