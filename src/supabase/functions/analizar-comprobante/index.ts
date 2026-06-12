@@ -11,7 +11,58 @@ serve(async (req) => {
   }
 
   try {
-    const { base64, mimeType, hoy } = await req.json()
+    const body = await req.json()
+
+    // ── Modo DB Write: proxy de escrituras para mobile ────────
+    // El mobile no puede hacer POST directo a Supabase REST, pero sí a esta función
+    if (body.table) {
+      const { table, method, payload, filter, returning } = body
+      const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+      const authHeader = req.headers.get('Authorization') || `Bearer ${anonKey}`
+
+      let url = `${supabaseUrl}/rest/v1/${table}`
+      if (filter) url += `?${filter}`
+
+      const dbBody = payload != null
+        ? JSON.stringify(method === 'PATCH' ? payload : (Array.isArray(payload) ? payload : [payload]))
+        : undefined
+
+      const dbResp = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+          'Authorization': authHeader,
+          'Prefer': returning ? 'return=representation' : 'return=minimal',
+        },
+        body: dbBody,
+      })
+
+      if (!dbResp.ok) {
+        let msg = `HTTP ${dbResp.status}`
+        try { const e = await dbResp.json(); msg = e.message || e.hint || e.details || msg } catch {}
+        return new Response(JSON.stringify({ error: msg }), {
+          status: dbResp.status,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      if (returning) {
+        const rows = await dbResp.json()
+        const row = Array.isArray(rows) ? rows[0] : rows
+        return new Response(JSON.stringify({ data: row }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // ── Modo IA: análisis de comprobante ──────────────────────
+    const { base64, mimeType, hoy } = body
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
 
     if (!apiKey) {

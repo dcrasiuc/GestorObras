@@ -139,10 +139,12 @@ export default function GestorObras({ usuario }) {
 
   const guardarProveedor = async (datos) => {
     const { nombre, cuit, rubro, situacion_impositiva } = datos
-    await dbWrite('POST', 'proveedores', { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva })
+    // returning:true → recibe el row con id directo, sin SELECT extra
+    const nuevoProv = await dbWrite('POST', 'proveedores',
+      { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva },
+      null, true)
     await recargarListas()
-    const { data: listData } = await supabase.from('proveedores').select('*').eq('nombre', nombre.trim()).single()
-    if (onProveedorCreado) onProveedorCreado(listData ?? { nombre: nombre.trim(), situacion_impositiva })
+    if (onProveedorCreado) onProveedorCreado(nuevoProv)
     setProveedorPendiente(null)
     setOnProveedorCreado(null)
   }
@@ -272,7 +274,10 @@ export default function GestorObras({ usuario }) {
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async id => { if (window.confirm('¿Eliminar este gasto?')) { await supabase.from('gastos').delete().eq('id', id); recargarTodo() } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
-            {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)} />}
+            {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
+              onEliminarCliente={async c => { if (!window.confirm(`¿Eliminar cliente "${c.nombre}"?`)) return; await dbWrite('DELETE', 'clientes', null, `id=eq.${c.id}`); recargarListas() }}
+              onEliminarProveedor={async p => { if (!window.confirm(`¿Eliminar proveedor "${p.nombre}"?`)) return; await dbWrite('DELETE', 'proveedores', null, `id=eq.${p.id}`); recargarListas() }}
+            />}
             {panel === 'admin'     && esAdmin && <PanelAdmin bancos={bancos} recargarListas={recargarListas} />}
             {panel === 'mas'       && <PanelMas esAdmin={esAdmin} onContactos={() => setPanel('contactos')} onAdmin={() => setPanel('admin')} onLogout={handleLogout} usuario={usuario} />}
           </div>

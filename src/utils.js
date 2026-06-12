@@ -4,7 +4,9 @@ const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 // Edge Function que hace de proxy para escrituras — el mobile llama a Cloudflare
 // y Cloudflare escribe en Supabase server-side (evita el bloqueo de POST en mobile)
-const DB_WRITE_URL = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/db-write'
+// Reutilizamos analizar-comprobante (ya deployada y funcional en mobile)
+// Si viene { table } en el body → modo write proxy; si viene { base64 } → modo IA
+const DB_WRITE_URL = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
 
 // Lee el JWT de localStorage sin hacer network
 function getTokenSync() {
