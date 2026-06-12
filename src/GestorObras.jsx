@@ -109,19 +109,25 @@ export default function GestorObras({ usuario }) {
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   const recargarTodo = () => { recargarObras(); recargarGastos() }
 
-  // Realtime: auto-actualiza cuando otro dispositivo guarda cambios
+  // Realtime: auto-actualiza cuando otro dispositivo guarda o borra datos
   useEffect(() => {
-    let timer
+    let timerG, timerO, timerL
     const ch = supabase.channel('sync-multi-device')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gastos' }, () => {
-        clearTimeout(timer); timer = setTimeout(recargarGastos, 800)
+        clearTimeout(timerG); timerG = setTimeout(recargarGastos, 800)
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'obras' }, () => {
-        clearTimeout(timer); timer = setTimeout(recargarObras, 800)
+        clearTimeout(timerO); timerO = setTimeout(recargarObras, 800)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clientes' }, () => {
+        clearTimeout(timerL); timerL = setTimeout(recargarListas, 800)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'proveedores' }, () => {
+        clearTimeout(timerL); timerL = setTimeout(recargarListas, 800)
       })
       .subscribe()
-    return () => { supabase.removeChannel(ch); clearTimeout(timer) }
-  }, [recargarGastos, recargarObras])
+    return () => { supabase.removeChannel(ch); clearTimeout(timerG); clearTimeout(timerO); clearTimeout(timerL) }
+  }, [recargarGastos, recargarObras, recargarListas])
 
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
 
