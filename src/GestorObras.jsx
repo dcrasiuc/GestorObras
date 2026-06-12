@@ -29,6 +29,8 @@ function useObras(usuarioId, esAdmin) {
   const [loading, setLoading] = useState(true)
   const cargar = useCallback(async () => {
     setLoading(true)
+    // Failsafe: si Supabase no responde en 12s, liberar el spinner
+    const failsafe = setTimeout(() => setLoading(false), 12000)
     try {
       if (esAdmin) {
         // Admin ve todas las obras
@@ -42,7 +44,7 @@ function useObras(usuarioId, esAdmin) {
           .select('obra_id')
           .eq('usuario_id', usuarioId)
         const ids = (asignadas ?? []).map(a => a.obra_id)
-        if (ids.length === 0) { setObras([]); setLoading(false); return }
+        if (ids.length === 0) { setObras([]); clearTimeout(failsafe); setLoading(false); return }
         const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).order('nombre')
         if (error) console.error('useObras error:', error)
         else setObras(data ?? [])
@@ -51,6 +53,7 @@ function useObras(usuarioId, esAdmin) {
       console.error('useObras exception:', e)
       setObras([])
     }
+    clearTimeout(failsafe)
     setLoading(false)
   }, [usuarioId, esAdmin])
   useEffect(() => { cargar() }, [cargar])
@@ -70,6 +73,8 @@ function useGastos(obrasIds) {
     // Esperar a que useObras termine de cargar (undefined = todavía cargando)
     if (ids === undefined) return
     setLoading(true)
+    // Failsafe: si Supabase no responde en 12s, liberar el spinner
+    const failsafe = setTimeout(() => setLoading(false), 12000)
     try {
       let q = supabase.from('gastos')
         .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
@@ -80,6 +85,7 @@ function useGastos(obrasIds) {
       if (error) { console.error('useGastos error:', error); setGastos([]) }
       else setGastos(data ?? [])
     } catch (e) { console.error('useGastos catch:', e); setGastos([]) }
+    clearTimeout(failsafe)
     setLoading(false)
   }, [idsClave])
   useEffect(() => { cargar() }, [cargar])
@@ -102,6 +108,21 @@ export default function GestorObras({ usuario }) {
   const { gastos: todosGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   const recargarTodo = () => { recargarObras(); recargarGastos() }
+
+  // Realtime: auto-actualiza cuando otro dispositivo guarda cambios
+  useEffect(() => {
+    let timer
+    const ch = supabase.channel('sync-multi-device')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gastos' }, () => {
+        clearTimeout(timer); timer = setTimeout(recargarGastos, 800)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'obras' }, () => {
+        clearTimeout(timer); timer = setTimeout(recargarObras, 800)
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(ch); clearTimeout(timer) }
+  }, [recargarGastos, recargarObras])
+
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
 
   // Abre modal pendiente cuando el panel cambia y las obras ya cargaron
@@ -271,7 +292,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async id => { if (window.confirm('¿Eliminar este gasto?')) { await supabase.from('gastos').delete().eq('id', id); recargarTodo() } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async id => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${id}`); recargarTodo() } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
