@@ -112,14 +112,13 @@ export default function GestorObras({ usuario }) {
     }
   }, [panel, loadingObras, obras.length, pendingModal])
   const cerrarModal = () => { setModal(null); setItemEditando(null) }
-  const handleLogout = async () => {
-    try {
-      const t = new Promise((_, rej) => setTimeout(() => rej(), 5000))
-      await Promise.race([supabase.auth.signOut(), t])
-    } catch {
-      // Si cuelga la red, cerrar sesión localmente igual
-      await supabase.auth.signOut({ scope: 'local' })
-    }
+  const handleLogout = () => {
+    // Cerrar sesión local inmediatamente (sin network)
+    localStorage.removeItem('seate-auth')
+    // Notificar a onAuthStateChange para que React actualice el estado
+    supabase.auth.signOut({ scope: 'local' }).catch(() => {})
+    // Invalidar token en servidor en background (puede fallar sin problema)
+    supabase.auth.signOut({ scope: 'global' }).catch(() => {})
   }
 
   useEffect(() => {

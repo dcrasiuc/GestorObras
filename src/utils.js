@@ -1,5 +1,4 @@
 import { SITUACIONES, TIPOS_COMPROBANTE } from './constants'
-import { supabase } from './supabaseClient'
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -13,9 +12,24 @@ const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
  * @param {string|null} filter  ej: "id=eq.123" (se pone en query string)
  * @param {boolean} returning  si true devuelve la fila insertada/actualizada
  */
+// Lee el JWT directamente de localStorage — sin network, sin posibles cuelgues de getSession()
+function getTokenSync() {
+  try {
+    const raw = localStorage.getItem('seate-auth')
+    if (!raw) return SUPA_KEY
+    const parsed = JSON.parse(raw)
+    // Supabase v2 guarda { access_token, ... } o { currentSession: { access_token } }
+    return parsed?.access_token
+      || parsed?.currentSession?.access_token
+      || parsed?.session?.access_token
+      || SUPA_KEY
+  } catch {
+    return SUPA_KEY
+  }
+}
+
 export async function dbWrite(method, table, payload, filter = null, returning = false) {
-  const { data: { session } } = await supabase.auth.getSession()
-  const token = session?.access_token || SUPA_KEY
+  const token = getTokenSync()
   let url = `${SUPA_URL}/rest/v1/${table}`
   if (filter) url += `?${filter}`
   const resp = await fetch(url, {
