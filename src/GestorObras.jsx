@@ -1117,7 +1117,8 @@ function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
     if (!form.nombre?.trim()) { setErrorMsg('El nombre es obligatorio'); return }
     setSaving(true); setErrorMsg('')
     try {
-      await onGuardar(form)
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Sin respuesta del servidor. Verificá tu conexión e intentá de nuevo.')), 12000))
+      await Promise.race([onGuardar(form), timeout])
     } catch (e) {
       setErrorMsg(e?.message || 'Error al guardar')
       setSaving(false)
