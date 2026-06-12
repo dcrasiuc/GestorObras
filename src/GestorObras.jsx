@@ -166,12 +166,24 @@ export default function GestorObras({ usuario }) {
 
   const guardarProveedor = async (datos) => {
     const { nombre, cuit, rubro, situacion_impositiva } = datos
-    // returning:true → recibe el row con id directo, sin SELECT extra
-    const nuevoProv = await dbWrite('POST', 'proveedores',
-      { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva },
-      null, true)
+    let nuevoProv = null
+    try {
+      // returning:true → recibe el row con id directo
+      nuevoProv = await dbWrite('POST', 'proveedores',
+        { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva },
+        null, true)
+    } catch (e) {
+      // El write pudo haberse creado igual — lo buscamos por nombre como fallback
+      console.warn('guardarProveedor dbWrite error, buscando por nombre:', e.message)
+    }
     await recargarListas()
-    if (onProveedorCreado) onProveedorCreado(nuevoProv)
+    // Si no vino el row del write, buscarlo en Supabase por nombre
+    if (!nuevoProv?.id) {
+      const { data } = await supabase.from('proveedores').select('*').eq('nombre', nombre.trim()).single()
+      nuevoProv = data
+    }
+    if (onProveedorCreado && nuevoProv) onProveedorCreado(nuevoProv)
+    else if (!nuevoProv) throw new Error('Proveedor guardado pero no se pudo recuperar. Vinculalo manualmente.')
     setProveedorPendiente(null)
     setOnProveedorCreado(null)
   }
@@ -1095,7 +1107,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
         let tipo = 'factura_a', iva = true
         if (matchProv) { const sit = getSituacion(matchProv.situacion_impositiva); tipo = sit.comprobante; iva = sit.iva }
         setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
-        if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) })
+        if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) })
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
         if (error) window._toast?.('IA no disponible — completá los datos manualmente')
