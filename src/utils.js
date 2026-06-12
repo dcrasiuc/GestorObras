@@ -1,60 +1,46 @@
 import { SITUACIONES, TIPOS_COMPROBANTE } from './constants'
 
-const SUPA_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-/**
- * Escritura directa a Supabase via fetch (bypasea el cliente JS para evitar
- * bugs de auth en mobile). Usa el JWT del usuario logueado.
- * @param {'POST'|'PATCH'|'DELETE'} method
- * @param {string} table  nombre de la tabla
- * @param {object|null} payload  datos a enviar (null para DELETE)
- * @param {string|null} filter  ej: "id=eq.123" (se pone en query string)
- * @param {boolean} returning  si true devuelve la fila insertada/actualizada
- */
-// Lee el JWT directamente de localStorage — sin network, sin posibles cuelgues de getSession()
+// Edge Function que hace de proxy para escrituras — el mobile llama a Cloudflare
+// y Cloudflare escribe en Supabase server-side (evita el bloqueo de POST en mobile)
+const DB_WRITE_URL = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/db-write'
+
+// Lee el JWT de localStorage sin hacer network
 function getTokenSync() {
   try {
-    const raw = localStorage.getItem('seate-auth')
-    if (!raw) return SUPA_KEY
-    const parsed = JSON.parse(raw)
-    // Supabase v2 guarda { access_token, ... } o { currentSession: { access_token } }
+    const parsed = JSON.parse(localStorage.getItem('seate-auth') || '{}')
     return parsed?.access_token
       || parsed?.currentSession?.access_token
       || parsed?.session?.access_token
       || SUPA_KEY
-  } catch {
-    return SUPA_KEY
-  }
+  } catch { return SUPA_KEY }
 }
 
+/**
+ * Escribe en Supabase a través de la Edge Function db-write.
+ * El request va mobile → Cloudflare → Supabase (evita bloqueo de POST en mobile).
+ */
 export async function dbWrite(method, table, payload, filter = null, returning = false) {
   const token = getTokenSync()
-  let url = `${SUPA_URL}/rest/v1/${table}`
-  if (filter) url += `?${filter}`
-  const resp = await fetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPA_KEY,
-      'Authorization': `Bearer ${token}`,
-      'Prefer': returning ? 'return=representation' : 'return=minimal',
-    },
-    // PATCH espera objeto plano; POST acepta array; DELETE no lleva body
-    body: payload != null ? JSON.stringify(
-      method === 'PATCH' ? payload : (Array.isArray(payload) ? payload : [payload])
-    ) : undefined,
-  })
-  if (!resp.ok) {
-    let msg = `HTTP ${resp.status}`
-    try { const e = await resp.json(); msg = e.message || e.hint || e.details || msg } catch {}
-    throw new Error(msg)
-  }
-  if (returning) {
-    const rows = await resp.json()
-    return Array.isArray(rows) ? rows[0] : rows
-  }
-  return null
+  const timeout = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error('Sin respuesta del servidor. Verificá tu conexión.')), 20000)
+  )
+  const respRaw = await Promise.race([
+    fetch(DB_WRITE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPA_KEY,
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ table, method, payload, filter, returning }),
+    }),
+    timeout,
+  ])
+  const result = await respRaw.json()
+  if (!respRaw.ok || result?.error) throw new Error(result?.error || `HTTP ${respRaw.status}`)
+  return returning ? result.data : null
 }
 
 // ── Formateo de números ──────────────────────────────────────
