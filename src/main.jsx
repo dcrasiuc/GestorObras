@@ -9,41 +9,30 @@ async function cargarPerfil(userId) {
   return data
 }
 
-// Lee la sesión de localStorage sin hacer network (evita cuelgues en mobile)
-function getSessionSync() {
-  try {
-    const raw = localStorage.getItem('seate-auth')
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    return parsed?.currentSession || parsed?.session || (parsed?.access_token ? parsed : null)
-  } catch { return null }
-}
-
 function App() {
   const [usuario, setUsuario] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Failsafe: si después de 8s sigue en loading, liberar igual
+    // Failsafe: si getSession() o cargarPerfil() se cuelgan en mobile,
+    // liberar la pantalla de carga después de 8s
     const failsafe = setTimeout(() => setLoading(false), 8000)
 
-    // Intentar cargar sesión desde localStorage (instantáneo, sin network)
-    const sesionLocal = getSessionSync()
-    if (sesionLocal?.user) {
-      // Entrar inmediatamente con los datos locales
-      setUsuario({ ...sesionLocal.user, perfil: null })
-      setLoading(false)
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       clearTimeout(failsafe)
-      // Cargar perfil en background
-      cargarPerfil(sesionLocal.user.id).then(perfil => {
-        if (perfil) setUsuario(u => u ? { ...u, perfil } : u)
-      }).catch(() => {})
-    }
+      if (session?.user) {
+        const perfil = await cargarPerfil(session.user.id).catch(() => null)
+        setUsuario({ ...session.user, perfil })
+      }
+      setLoading(false)
+    }).catch(() => {
+      clearTimeout(failsafe)
+      setLoading(false)
+    })
 
     // onAuthStateChange maneja login, logout y renovación de token
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      clearTimeout(failsafe)
-      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+      if (event === 'SIGNED_IN' && session?.user) {
         const perfil = await cargarPerfil(session.user.id).catch(() => null)
         setUsuario({ ...session.user, perfil })
         setLoading(false)
@@ -54,7 +43,7 @@ function App() {
       }
       if (event === 'TOKEN_REFRESHED' && session?.user) {
         const perfil = await cargarPerfil(session.user.id).catch(() => null)
-        setUsuario(u => u ? { ...u, perfil } : u)
+        setUsuario(u => ({ ...u, perfil }))
       }
     })
 
