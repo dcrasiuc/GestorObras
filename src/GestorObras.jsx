@@ -747,19 +747,19 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
 }
 
 // ── Panel Contactos ───────────────────────────────────────────
-function PanelContactos({ clientes, proveedores, onNuevoCliente, onNuevoProveedor, onEditarCliente, onEditarProveedor }) {
+function PanelContactos({ clientes, proveedores, onNuevoCliente, onNuevoProveedor, onEditarCliente, onEditarProveedor, onEliminarCliente, onEliminarProveedor }) {
   return (
     <div>
       <PageTitle titulo="Contactos" sub="Clientes y proveedores" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginTop: 20 }}>
-        <ContactoCol titulo="Clientes" items={clientes} onNuevo={onNuevoCliente} onEditar={onEditarCliente} btnLabel="+ Cliente" renderSub={c => [c.telefono, c.email].filter(Boolean).join(' · ')} />
-        <ContactoCol titulo="Proveedores" items={proveedores} onNuevo={onNuevoProveedor} onEditar={onEditarProveedor} btnLabel="+ Proveedor" outline renderSub={p => { const sit = getSituacion(p.situacion_impositiva); return [sit.label, p.cuit && `CUIT: ${p.cuit}`].filter(Boolean).join(' · ') }} />
+        <ContactoCol titulo="Clientes" items={clientes} onNuevo={onNuevoCliente} onEditar={onEditarCliente} onEliminar={onEliminarCliente} btnLabel="+ Cliente" renderSub={c => [c.telefono, c.email].filter(Boolean).join(' · ')} />
+        <ContactoCol titulo="Proveedores" items={proveedores} onNuevo={onNuevoProveedor} onEditar={onEditarProveedor} onEliminar={onEliminarProveedor} btnLabel="+ Proveedor" outline renderSub={p => { const sit = getSituacion(p.situacion_impositiva); return [sit.label, p.cuit && `CUIT: ${p.cuit}`].filter(Boolean).join(' · ') }} />
       </div>
     </div>
   )
 }
 
-function ContactoCol({ titulo, items, onNuevo, onEditar, btnLabel, outline, renderSub }) {
+function ContactoCol({ titulo, items, onNuevo, onEditar, onEliminar, btnLabel, outline, renderSub }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -774,7 +774,10 @@ function ContactoCol({ titulo, items, onNuevo, onEditar, btnLabel, outline, rend
               <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{item.nombre}</div>
               {renderSub(item) && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{renderSub(item)}</div>}
             </div>
-            {onEditar && <button style={btnIconSt} onClick={() => onEditar(item)}>✏️</button>}
+            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+              {onEditar && <button style={btnIconSt} onClick={() => onEditar(item)}>✏️</button>}
+              {onEliminar && <button style={{ ...btnIconSt, color: C.red ?? '#C62828' }} onClick={() => onEliminar(item)}>🗑️</button>}
+            </div>
           </div>
         ))}
       </div>
