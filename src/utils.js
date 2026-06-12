@@ -1,4 +1,47 @@
 import { SITUACIONES, TIPOS_COMPROBANTE } from './constants'
+import { supabase } from './supabaseClient'
+
+const SUPA_URL = import.meta.env.VITE_SUPABASE_URL
+const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+/**
+ * Escritura directa a Supabase via fetch (bypasea el cliente JS para evitar
+ * bugs de auth en mobile). Usa el JWT del usuario logueado.
+ * @param {'POST'|'PATCH'|'DELETE'} method
+ * @param {string} table  nombre de la tabla
+ * @param {object|null} payload  datos a enviar (null para DELETE)
+ * @param {string|null} filter  ej: "id=eq.123" (se pone en query string)
+ * @param {boolean} returning  si true devuelve la fila insertada/actualizada
+ */
+export async function dbWrite(method, table, payload, filter = null, returning = false) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token || SUPA_KEY
+  let url = `${SUPA_URL}/rest/v1/${table}`
+  if (filter) url += `?${filter}`
+  const resp = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPA_KEY,
+      'Authorization': `Bearer ${token}`,
+      'Prefer': returning ? 'return=representation' : 'return=minimal',
+    },
+    // PATCH espera objeto plano; POST acepta array; DELETE no lleva body
+    body: payload != null ? JSON.stringify(
+      method === 'PATCH' ? payload : (Array.isArray(payload) ? payload : [payload])
+    ) : undefined,
+  })
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`
+    try { const e = await resp.json(); msg = e.message || e.hint || e.details || msg } catch {}
+    throw new Error(msg)
+  }
+  if (returning) {
+    const rows = await resp.json()
+    return Array.isArray(rows) ? rows[0] : rows
+  }
+  return null
+}
 
 // ── Formateo de números ──────────────────────────────────────
 export const fmt = (n) =>

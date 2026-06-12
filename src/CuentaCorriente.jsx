@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import { C, MEDIOS_PAGO, IVA } from './constants'
-import { fmt, hoy } from './utils'
+import { fmt, hoy, dbWrite } from './utils'
 import { toast } from './toast'
 
 // ── Hooks ────────────────────────────────────────────────────
@@ -185,15 +185,15 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
 
         {/* Modales desde vista general */}
         {modal === 'remito' && <ModalRemito proveedorId={null} proveedores={proveedores} obras={obras} onClose={cerrarModal} onGuardar={async (datos, items, dist) => {
-          const { data } = await supabase.from('remitos').insert([{ proveedor_id: datos.proveedor_id, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }]).select().single()
-          if (items.length > 0) await supabase.from('remito_items').insert(items.map(it => ({ ...it, remito_id: data.id })))
-          if (dist.length > 0) await supabase.from('comprobante_obras').insert(dist.map(d => ({ tipo: 'remito', referencia_id: data.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
+          const row = await dbWrite('POST', 'remitos', { proveedor_id: datos.proveedor_id, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }, null, true)
+          if (items.length > 0) await dbWrite('POST', 'remito_items', items.map(it => ({ ...it, remito_id: row.id })))
+          if (dist.length > 0) await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: row.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
           cerrarModal(); recargarResumen()
         }} />}
         {modal === 'foto' && <ModalFotoRemito proveedorId={null} proveedores={proveedores} obras={obras} onClose={cerrarModal} onGuardar={async (datos, items, dist) => {
-          const { data } = await supabase.from('remitos').insert([{ proveedor_id: datos.proveedor_id, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente', imagen_url: datos.imagen_url }]).select().single()
-          if (items.length > 0) await supabase.from('remito_items').insert(items.map(it => ({ ...it, remito_id: data.id })))
-          if (dist.length > 0) await supabase.from('comprobante_obras').insert(dist.map(d => ({ tipo: 'remito', referencia_id: data.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
+          const row = await dbWrite('POST', 'remitos', { proveedor_id: datos.proveedor_id, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente', imagen_url: datos.imagen_url }, null, true)
+          if (items.length > 0) await dbWrite('POST', 'remito_items', items.map(it => ({ ...it, remito_id: row.id })))
+          if (dist.length > 0) await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: row.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
           cerrarModal(); recargarResumen()
         }} />}
       </div>
@@ -312,16 +312,16 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
           onGuardar={async (datos, items, dist) => {
             let remitoId = datos.id
             if (remitoId) {
-              await supabase.from('remitos').update({ fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: datos.monto_neto, observaciones: datos.observaciones }).eq('id', remitoId)
-              await supabase.from('remito_items').delete().eq('remito_id', remitoId)
+              await dbWrite('PATCH', 'remitos', { fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: datos.monto_neto, observaciones: datos.observaciones }, `id=eq.${remitoId}`)
+              await dbWrite('DELETE', 'remito_items', null, `remito_id=eq.${remitoId}`)
             } else {
-              const { data } = await supabase.from('remitos').insert([{ proveedor_id: proveedorId, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }]).select().single()
-              remitoId = data.id
+              const row = await dbWrite('POST', 'remitos', { proveedor_id: proveedorId, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }, null, true)
+              remitoId = row.id
             }
-            if (items.length > 0) await supabase.from('remito_items').insert(items.map(it => ({ ...it, remito_id: remitoId })))
+            if (items.length > 0) await dbWrite('POST', 'remito_items', items.map(it => ({ ...it, remito_id: remitoId })))
             if (dist.length > 0) {
-              await supabase.from('comprobante_obras').delete().eq('referencia_id', remitoId).eq('tipo', 'remito')
-              await supabase.from('comprobante_obras').insert(dist.map(d => ({ tipo: 'remito', referencia_id: remitoId, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
+              await dbWrite('DELETE', 'comprobante_obras', null, `referencia_id=eq.${remitoId}&tipo=eq.remito`)
+              await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: remitoId, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
             }
             cerrarModal(); recargarRemitos()
           }}
@@ -331,9 +331,9 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
       {modal === 'foto' && (
         <ModalFotoRemito proveedorId={proveedorId} proveedores={proveedores} obras={obras} onClose={cerrarModal}
           onGuardar={async (datos, items, dist) => {
-            const { data } = await supabase.from('remitos').insert([{ proveedor_id: datos.proveedor_id || proveedorId, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente', imagen_url: datos.imagen_url }]).select().single()
-            if (items.length > 0) await supabase.from('remito_items').insert(items.map(it => ({ ...it, remito_id: data.id })))
-            if (dist.length > 0) await supabase.from('comprobante_obras').insert(dist.map(d => ({ tipo: 'remito', referencia_id: data.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
+            const row = await dbWrite('POST', 'remitos', { proveedor_id: datos.proveedor_id || proveedorId, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente', imagen_url: datos.imagen_url }, null, true)
+            if (items.length > 0) await dbWrite('POST', 'remito_items', items.map(it => ({ ...it, remito_id: row.id })))
+            if (dist.length > 0) await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: row.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
             if (datos.proveedor_id && datos.proveedor_id !== proveedorId) setProveedorId(datos.proveedor_id)
             cerrarModal(); recargarRemitos()
           }}
@@ -343,8 +343,8 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
       {modal === 'distribuir' && (
         <ModalDistribuir remito={itemEditando} obras={obras} esRI={esRI} onClose={cerrarModal}
           onGuardar={async (dist) => {
-            await supabase.from('comprobante_obras').delete().eq('referencia_id', itemEditando.id).eq('tipo', 'remito')
-            await supabase.from('comprobante_obras').insert(dist.map(d => ({ tipo: 'remito', referencia_id: itemEditando.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
+            await dbWrite('DELETE', 'comprobante_obras', null, `referencia_id=eq.${itemEditando.id}&tipo=eq.remito`)
+            await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: itemEditando.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
             cerrarModal(); recargarRemitos()
           }}
         />
@@ -353,9 +353,9 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
       {modal === 'pagarCC' && (
         <ModalPagarCC proveedor={proveedor} remitos={remitosP} bancos={bancos} esRI={esRI} onClose={cerrarModal}
           onGuardar={async (pago, remitoIds, montosAplicados) => {
-            const { data } = await supabase.from('cc_pagos').insert([{ ...pago, proveedor_id: proveedorId, creado_por: usuario?.id }]).select().single()
-            await supabase.from('cc_pago_items').insert(remitoIds.map((rid, i) => ({ pago_id: data.id, tipo: 'remito', referencia_id: rid, monto_aplicado: montosAplicados[i] })))
-            await supabase.from('remitos').update({ estado: 'cancelado' }).in('id', remitoIds)
+            const row = await dbWrite('POST', 'cc_pagos', { ...pago, proveedor_id: proveedorId, creado_por: usuario?.id }, null, true)
+            await dbWrite('POST', 'cc_pago_items', remitoIds.map((rid, i) => ({ pago_id: row.id, tipo: 'remito', referencia_id: rid, monto_aplicado: montosAplicados[i] })))
+            await dbWrite('PATCH', 'remitos', { estado: 'cancelado' }, `id=in.(${remitoIds.join(',')})`)
             cerrarModal(); recargarRemitos(); recargarPagos()
           }}
         />

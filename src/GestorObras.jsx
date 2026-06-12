@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
 import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS } from './constants'
-import { fmt, fmtK, hoy, getSituacion, getTipoLabel } from './utils'
+import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite } from './utils'
 import './toast'
 
 // ── Hooks ────────────────────────────────────────────────────
@@ -140,11 +140,7 @@ export default function GestorObras({ usuario }) {
 
   const guardarProveedor = async (datos) => {
     const { nombre, cuit, rubro, situacion_impositiva } = datos
-    // Insert sin .select() para evitar hang en RLS
-    const { error } = await supabase.from('proveedores')
-      .insert([{ nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva }])
-    if (error) throw new Error(error.message || 'Error al guardar en Supabase')
-    // Recargar lista y buscar el nuevo proveedor por nombre
+    await dbWrite('POST', 'proveedores', { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva })
     await recargarListas()
     const { data: listData } = await supabase.from('proveedores').select('*').eq('nombre', nombre.trim()).single()
     if (onProveedorCreado) onProveedorCreado(listData ?? { nombre: nombre.trim(), situacion_impositiva })
@@ -313,11 +309,7 @@ export default function GestorObras({ usuario }) {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
           const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante }
-          const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Sin respuesta del servidor. Verificá tu conexión.')), 15000))
-          const res = id
-            ? await Promise.race([supabase.from('gastos').update(payload).eq('id', id), timeout])
-            : await Promise.race([supabase.from('gastos').insert([payload]), timeout])
-          if (res.error) throw new Error(res.error.message)
+          await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null)
           cerrarModal(); recargarTodo(); setPanel('gastos')
         }}
       />}
@@ -325,9 +317,7 @@ export default function GestorObras({ usuario }) {
       {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
-          const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Sin respuesta del servidor. Verificá tu conexión.')), 15000))
-          const { error } = await Promise.race([supabase.from('gastos').insert([d]), timeout])
-          if (error) throw new Error(error.message)
+          await dbWrite('POST', 'gastos', d)
           cerrarModal(); recargarTodo()
         }}
       />}
