@@ -334,8 +334,18 @@ export default function GestorObras({ usuario }) {
         cerrarModal(); recargarGastos()
       }} />}
 
-      {modal === 'cliente'   && <ModalCliente   itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return window._toast?.('Nombre obligatorio'); const { id, nombre, telefono, email } = d; const res = id ? await supabase.from('clientes').update({ nombre, telefono, email }).eq('id', id) : await supabase.from('clientes').insert([{ nombre, telefono, email }]); if (res.error) console.error('Error:', res.error.message); else { cerrarModal(); recargarListas() } }} />}
-      {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => { if (!d.nombre) return window._toast?.('Nombre obligatorio'); const { id, nombre, cuit, rubro, situacion_impositiva } = d; const res = id ? await supabase.from('proveedores').update({ nombre, cuit, rubro, situacion_impositiva }).eq('id', id) : await supabase.from('proveedores').insert([{ nombre, cuit, rubro, situacion_impositiva }]); if (res.error) console.error('Error:', res.error.message); else { cerrarModal(); recargarListas() } }} />}
+      {modal === 'cliente'   && <ModalCliente   itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => {
+        if (!d.nombre) throw new Error('Nombre obligatorio')
+        const { id, nombre, telefono, email } = d
+        await dbWrite(id ? 'PATCH' : 'POST', 'clientes', { nombre, telefono, email }, id ? `id=eq.${id}` : null)
+        cerrarModal(); recargarListas()
+      }} />}
+      {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => {
+        if (!d.nombre) throw new Error('Nombre obligatorio')
+        const { id, nombre, cuit, rubro, situacion_impositiva } = d
+        await dbWrite(id ? 'PATCH' : 'POST', 'proveedores', { nombre, cuit, rubro, situacion_impositiva }, id ? `id=eq.${id}` : null)
+        cerrarModal(); recargarListas()
+      }} />}
       {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} zIndex={300} />}
     </>
   )
