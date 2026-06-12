@@ -132,12 +132,14 @@ export default function GestorObras({ usuario }) {
 
   const guardarProveedor = async (datos) => {
     const { nombre, cuit, rubro, situacion_impositiva } = datos
-    const { data, error } = await supabase.from('proveedores')
+    // Insert sin .select() para evitar hang en RLS
+    const { error } = await supabase.from('proveedores')
       .insert([{ nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva }])
-      .select().single()
     if (error) throw new Error(error.message || 'Error al guardar en Supabase')
+    // Recargar lista y buscar el nuevo proveedor por nombre
     await recargarListas()
-    if (onProveedorCreado) onProveedorCreado(data)
+    const { data: listData } = await supabase.from('proveedores').select('*').eq('nombre', nombre.trim()).single()
+    if (onProveedorCreado) onProveedorCreado(listData ?? { nombre: nombre.trim(), situacion_impositiva })
     setProveedorPendiente(null)
     setOnProveedorCreado(null)
   }
