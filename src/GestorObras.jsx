@@ -390,10 +390,12 @@ export default function GestorObras({ usuario }) {
 
       {modal === 'pago' && esAdmin && <ModalPago gasto={itemEditando} bancos={bancos} onClose={cerrarModal} onGuardar={async d => {
         const payload = { ...d, gasto_id: itemEditando.id, creado_por: usuario.id }
-        const { error } = await supabase.from('pagos').insert([payload])
-        if (error) { console.error('Error:', error.message); return }
-        await supabase.from('gastos').update({ pagado: true }).eq('id', itemEditando.id)
-        cerrarModal(); recargarGastos()
+        // Vía dbWrite (Edge Function): la escritura directa a Supabase se cuelga en mobile
+        const savedPago = await dbWrite('POST', 'pagos', payload, null, true)
+        await dbWrite('PATCH', 'gastos', { pagado: true }, `id=eq.${itemEditando.id}`)
+        // Optimista: marcar el gasto como pagado y sumar el pago en memoria
+        setGastos(prev => prev.map(g => g.id === itemEditando.id ? { ...g, pagado: true, pagos: [...(g.pagos || []), { ...payload, id: savedPago?.id }] } : g))
+        cerrarModal(); recargarGastos(false)
       }} />}
 
       {modal === 'cliente'   && <ModalCliente   itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => {
@@ -1225,15 +1227,15 @@ function ModalGasto({ itemEdit, obras, proveedores, obraIdDefecto, onClose, onGu
   return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => onGuardar(form)}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} /></Modal>
 }
 
-// ── Helpers de archivo (compresión de imágenes antes de enviar a la IA) ──
+// ── Helpers de archivo (compresión de imágenes antes de subir) ──
 function leerBase64(file) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(String(e.target.result).split(',')[1]); r.readAsDataURL(file) })
 }
 
-// Redimensiona la imagen (lado largo máx) y la exporta como JPEG comprimido.
+// Redimensiona la imagen (lado largo máx) y devuelve el canvas listo para exportar.
 // Reduce drásticamente el peso → más rápido en mobile y menos timeouts. La IA no pierde
 // precisión porque igual reescala internamente a ~1568px.
-async function comprimirImagen(file, maxLado = 1600, calidad = 0.7) {
+async function _canvasComprimido(file, maxLado = 1600) {
   const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(e.target.result); r.readAsDataURL(file) })
   const img = await new Promise((res, rej) => { const i = new Image(); i.onerror = rej; i.onload = () => res(i); i.src = dataUrl })
   let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height
@@ -1244,8 +1246,19 @@ async function comprimirImagen(file, maxLado = 1600, calidad = 0.7) {
   const canvas = document.createElement('canvas')
   canvas.width = w; canvas.height = h
   canvas.getContext('2d').drawImage(img, 0, 0, w, h)
-  const jpeg = canvas.toDataURL('image/jpeg', calidad)
-  return { base64: jpeg.split(',')[1], mimeType: 'image/jpeg' }
+  return canvas
+}
+
+// Para enviar a la IA (base64)
+async function comprimirImagen(file, maxLado = 1600, calidad = 0.7) {
+  const canvas = await _canvasComprimido(file, maxLado)
+  return { base64: canvas.toDataURL('image/jpeg', calidad).split(',')[1], mimeType: 'image/jpeg' }
+}
+
+// Para subir al storage (Blob)
+async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.7) {
+  const canvas = await _canvasComprimido(file, maxLado)
+  return await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob null')), 'image/jpeg', calidad))
 }
 
 function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
@@ -1477,12 +1490,26 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
 
   const subirComprobante = async (file) => {
     setSubiendo(true)
-    const ext = file.name.split('.').pop()
-    const path = `pagos/${Date.now()}.${ext}`
-    const { data, error } = await supabase.storage.from('comprobantes-pagos').upload(path, file)
-    if (error) { console.error('Error al subir:', error.message); setSubiendo(false); return }
-    const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
-    set('comprobante_url', url); setArchivoNombre(file.name); setSubiendo(false)
+    try {
+      let blob = file, ext = (file.name.split('.').pop() || 'jpg')
+      if (file.type === 'application/pdf') {
+        if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); setSubiendo(false); return }
+      } else {
+        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch { /* si falla, sube el original */ }
+      }
+      const path = `pagos/${Date.now()}.${ext}`
+      // Timeout: en mobile la subida directa puede colgarse; así no traba el modal
+      const subir = supabase.storage.from('comprobantes-pagos').upload(path, blob)
+      const res = await Promise.race([subir, new Promise(r => setTimeout(() => r({ _timeout: true }), 15000))])
+      if (res?._timeout) { window._toast?.('La subida tardó demasiado. Confirmá el pago e intentá adjuntar después.'); setSubiendo(false); return }
+      if (res?.error) { console.error('Error al subir:', res.error.message); window._toast?.('No se pudo subir el comprobante'); setSubiendo(false); return }
+      const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+      set('comprobante_url', url); setArchivoNombre(file.name)
+    } catch (e) {
+      console.error('subirComprobante:', e); window._toast?.('No se pudo subir el comprobante')
+    } finally {
+      setSubiendo(false)
+    }
   }
 
   return (
