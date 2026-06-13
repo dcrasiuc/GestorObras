@@ -193,7 +193,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
 
         {/* Modales desde vista general */}
         {modal === 'remito' && <ModalRemito proveedorId={null} proveedores={proveedores} obras={obras} onClose={cerrarModal} onGuardar={async (datos, items, dist) => {
-          const row = await dbWrite('POST', 'remitos', { proveedor_id: datos.proveedor_id, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }, null, true)
+          const row = await dbWrite('POST', 'remitos', { proveedor_id: datos.proveedor_id || null, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }, null, true)
           if (items.length > 0) await dbWrite('POST', 'remito_items', items.map(it => ({ ...it, remito_id: row.id })))
           if (dist.length > 0) await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: row.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
           cerrarModal(); recargarResumen()
@@ -316,14 +316,14 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
 
       {/* MODALES */}
       {(modal === 'remito' || modal === 'editarRemito') && (
-        <ModalRemito itemEdit={itemEditando} proveedorId={proveedorId} obras={obras} onClose={cerrarModal}
+        <ModalRemito itemEdit={itemEditando} proveedorId={proveedorId} proveedores={proveedores} obras={obras} onClose={cerrarModal}
           onGuardar={async (datos, items, dist) => {
             let remitoId = datos.id
             if (remitoId) {
-              await dbWrite('PATCH', 'remitos', { fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: datos.monto_neto, observaciones: datos.observaciones }, `id=eq.${remitoId}`)
+              await dbWrite('PATCH', 'remitos', { proveedor_id: datos.proveedor_id || proveedorId, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: datos.monto_neto, observaciones: datos.observaciones }, `id=eq.${remitoId}`)
               await dbWrite('DELETE', 'remito_items', null, `remito_id=eq.${remitoId}`)
             } else {
-              const row = await dbWrite('POST', 'remitos', { proveedor_id: proveedorId, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }, null, true)
+              const row = await dbWrite('POST', 'remitos', { proveedor_id: datos.proveedor_id || proveedorId, fecha: datos.fecha, nro_remito: datos.nro_remito, monto_neto: parseFloat(datos.monto_neto) || 0, observaciones: datos.observaciones, estado: 'pendiente' }, null, true)
               remitoId = row.id
             }
             if (items.length > 0) await dbWrite('POST', 'remito_items', items.map(it => ({ ...it, remito_id: remitoId })))
@@ -497,8 +497,8 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
 }
 
 // ── Modal Remito (manual) ─────────────────────────────────────
-function ModalRemito({ itemEdit, proveedorId, obras, onClose, onGuardar }) {
-  const [form, setForm] = useState(itemEdit ? { ...itemEdit } : { fecha: hoy(), nro_remito: '', monto_neto: '', observaciones: '' })
+function ModalRemito({ itemEdit, proveedorId, proveedores = [], obras, onClose, onGuardar }) {
+  const [form, setForm] = useState(itemEdit ? { ...itemEdit } : { proveedor_id: proveedorId || '', fecha: hoy(), nro_remito: '', monto_neto: '', observaciones: '' })
   const [items, setItems] = useState(itemEdit?.remito_items ?? [])
   const [dist, setDist] = useState(itemEdit?.comprobante_obras ?? [])
   const [tieneImporte, setTieneImporte] = useState(itemEdit ? (itemEdit.monto_neto > 0) : true)
@@ -520,8 +520,14 @@ function ModalRemito({ itemEdit, proveedorId, obras, onClose, onGuardar }) {
   const totalItems = items.reduce((s, it) => s + (parseFloat(it.subtotal) || 0), 0)
 
   return (
-    <Modal title={itemEdit ? 'Editar Remito' : 'Nuevo Remito'} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto_neto: tieneImporte ? form.monto_neto : 0 }, items.filter(it => it.descripcion), dist)} ancho={560}>
+    <Modal title={itemEdit ? 'Editar Remito' : 'Nuevo Remito'} onClose={onClose} onGuardar={() => { if (!form.proveedor_id) { toast('Seleccioná un proveedor'); return } onGuardar({ ...form, monto_neto: tieneImporte ? form.monto_neto : 0 }, items.filter(it => it.descripcion), dist) }} ancho={560}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Campo label="Proveedor" style={{ gridColumn: '1/-1' }}>
+          <select style={inputSt} value={form.proveedor_id || ''} onChange={e => set('proveedor_id', e.target.value)}>
+            <option value="">Seleccionar proveedor...</option>
+            {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+        </Campo>
         <Campo label="Fecha"><input style={inputSt} type="date" value={form.fecha} onChange={e => set('fecha', e.target.value)} /></Campo>
         <Campo label="Nro. remito"><input style={inputSt} value={form.nro_remito} onChange={e => set('nro_remito', e.target.value)} placeholder="R 0001-00001234" /></Campo>
       </div>
@@ -635,7 +641,7 @@ function ModalFotoRemito({ proveedorId, proveedores, obras, onClose, onGuardar }
   }
 
   return (
-    <Modal title="Cargar remito" onClose={onClose} onGuardar={step === 'review' ? () => onGuardar(form, items.filter(it => it.descripcion), dist) : null} guardarLabel="Guardar remito" ancho={560}>
+    <Modal title="Cargar remito" onClose={onClose} onGuardar={step === 'review' ? () => { if (!form.proveedor_id) { toast('Seleccioná un proveedor'); return } onGuardar(form, items.filter(it => it.descripcion), dist) } : null} guardarLabel="Guardar remito" ancho={560}>
       {step === 'upload' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px solid ${C.purple}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: C.purpleDim }}>
