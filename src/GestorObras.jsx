@@ -803,8 +803,92 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
               )
             })}
           </div>
+          <GraficoTemporalRubros gastos={gastos} />
         </>
       )}
+    </div>
+  )
+}
+
+// ── Gráfico temporal por rubro ────────────────────────────────
+function GraficoTemporalRubros({ gastos }) {
+  const meses = {}
+  gastos.forEach(g => {
+    if (!g.fecha || !g.monto) return
+    const mes = g.fecha.slice(0, 7)
+    if (!meses[mes]) meses[mes] = {}
+    const c = g.concepto || 'varios'
+    meses[mes][c] = (meses[mes][c] ?? 0) + (g.monto ?? 0)
+  })
+  const mesKeys = Object.keys(meses).sort()
+  if (mesKeys.length < 2) return null
+
+  const totales = mesKeys.map(m => CONCEPTOS.reduce((s, c) => s + (meses[m][c] ?? 0), 0))
+  const maxTotal = Math.max(...totales, 1)
+  const BAR_W = 36, GAP = 10, H = 150, PAD_L = 52, PAD_B = 32
+
+  const fmtY = v => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : v >= 1000 ? `${Math.round(v/1000)}k` : String(v)
+
+  const svgW = PAD_L + mesKeys.length * (BAR_W + GAP) + GAP
+
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '18px 20px', marginTop: 14 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Evolución mensual por rubro</div>
+      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <svg width={svgW} height={H + PAD_B} style={{ display: 'block', minWidth: '100%' }}>
+          {/* Líneas de referencia Y */}
+          {[0, 0.25, 0.5, 0.75, 1].map(pct => {
+            const y = H - pct * H
+            return (
+              <g key={pct}>
+                <line x1={PAD_L} y1={y} x2={svgW} y2={y} stroke={C.border} strokeWidth={pct === 0 ? 1.5 : 0.5} strokeDasharray={pct === 0 ? '' : '3,3'} />
+                {pct > 0 && <text x={PAD_L - 4} y={y + 4} textAnchor="end" fontSize={9} fill="#AAAAAA">{fmtY(maxTotal * pct)}</text>}
+              </g>
+            )
+          })}
+          {/* Barras apiladas */}
+          {mesKeys.map((mes, i) => {
+            const x = PAD_L + GAP / 2 + i * (BAR_W + GAP)
+            let acum = 0
+            const segs = CONCEPTOS.map(c => {
+              const val = meses[mes][c] ?? 0
+              const h = (val / maxTotal) * H
+              const y = H - acum - h
+              acum += h
+              return { c, val, h, y }
+            }).filter(s => s.val > 0)
+
+            const [mesNum, anio] = [mes.slice(5, 7), mes.slice(2, 4)]
+            const MESES_CORTOS = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+            return (
+              <g key={mes}>
+                {segs.map((s, si) => (
+                  <rect
+                    key={s.c}
+                    x={x} y={s.y}
+                    width={BAR_W} height={Math.max(s.h, 1)}
+                    fill={CONCEPTO_COLORS[s.c][1]}
+                    rx={si === segs.length - 1 ? 3 : 0}
+                    ry={si === segs.length - 1 ? 3 : 0}
+                  />
+                ))}
+                <text x={x + BAR_W / 2} y={H + 14} textAnchor="middle" fontSize={10} fill="#888888">{MESES_CORTOS[parseInt(mesNum)]}</text>
+                <text x={x + BAR_W / 2} y={H + 26} textAnchor="middle" fontSize={9} fill="#BBBBBB">{anio}</text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+      {/* Leyenda */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', marginTop: 12 }}>
+        {CONCEPTOS.map(c => (
+          <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 2, background: CONCEPTO_COLORS[c][1], flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: C.textMuted }}>{CONCEPTO_LABELS[c]}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
