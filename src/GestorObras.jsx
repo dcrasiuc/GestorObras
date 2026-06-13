@@ -66,7 +66,7 @@ function useGastos(obrasIds) {
   // Usamos la clave serializada para que useCallback reaccione cuando cambian los IDs
   const idsClave = JSON.stringify(obrasIds)
   const cargar = useCallback(async (showLoading = true) => {
-    const ids = JSON.parse(idsClave)
+    const ids = idsClave === undefined ? undefined : JSON.parse(idsClave)
     if (ids === undefined) return
     if (showLoading) setLoading(true)
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
@@ -101,6 +101,10 @@ export default function GestorObras({ usuario }) {
   const { obras, setObras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
   const { gastos: todosGastos, setGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
+  // Totales por obra calculados desde estado local (se actualizan sin esperar reload)
+  const creditoFiscalPorObra = todosGastos.reduce((acc, g) => { if (g.discrimina_iva) acc[g.obra_id] = (acc[g.obra_id] || 0) + Math.round(g.monto * IVA / (1 + IVA)); return acc }, {})
+  const totalPorObra = todosGastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + (parseFloat(g.monto) || 0); return acc }, {})
+  const cantPorObra = todosGastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + 1; return acc }, {})
   // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
   const recargarTodo = (silent = false) => { recargarObras(!silent); recargarGastos(!silent) }
 
@@ -304,7 +308,7 @@ export default function GestorObras({ usuario }) {
         <div className="main-content" style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 20px', width: '100%' }}>
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
-            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={gastos.reduce((acc, g) => { if (g.discrimina_iva) acc[g.obra_id] = (acc[g.obra_id] || 0) + Math.round(g.monto * IVA / (1 + IVA)); return acc }, {})} totalPorObra={gastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + (parseFloat(g.monto) || 0); return acc }, {})} cantPorObra={gastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + 1; return acc }, {})} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
+            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
@@ -495,6 +499,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
       <div style={{ marginBottom: 24 }}>
         {obrasActivas.length === 0 ? <EmptyState texto="No hay obras activas" /> : obrasActivas.slice(0, 3).map(o => {
           const pct = o.presupuesto > 0 ? Math.min(100, Math.round((o.total_gastado / o.presupuesto) * 100)) : 0
+          const cantGastos = gastos.filter(g => g.obra_id === o.id).length
           return (
             <div key={o.id} className="card-hover" style={{ ...cardSt, padding: '14px 16px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }} onClick={() => onVerGastos(o.id)}>
               <div style={{ width: 3, height: 48, background: C.purple, borderRadius: 99, flexShrink: 0 }} />
@@ -512,7 +517,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(o.total_gastado)}</div>
-                <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{cantGastos} gastos</div>
+                <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{o.cant_gastos} gastos</div>
               </div>
             </div>
           )
