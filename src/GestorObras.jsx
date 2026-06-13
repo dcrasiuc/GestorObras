@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
-import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS } from './constants'
+import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite } from './utils'
 import './toast'
 
@@ -304,7 +304,7 @@ export default function GestorObras({ usuario }) {
         <div className="main-content" style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 20px', width: '100%' }}>
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
-            {panel === 'obras'     && <PanelObras obras={obras} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
+            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={gastos.reduce((acc, g) => { if (g.discrimina_iva) acc[g.obra_id] = (acc[g.obra_id] || 0) + Math.round(g.monto * IVA / (1 + IVA)); return acc }, {})} totalPorObra={gastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + (parseFloat(g.monto) || 0); return acc }, {})} cantPorObra={gastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + 1; return acc }, {})} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
@@ -336,13 +336,18 @@ export default function GestorObras({ usuario }) {
         if (!d.nombre) return window._toast?.('El nombre es obligatorio')
         const { id, nombre, cliente_id, estado, presupuesto } = d
         const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0 }
-        const res = id ? await supabase.from('obras').update(payload).eq('id', id) : await supabase.from('obras').insert([payload])
-        if (res.error) console.error('Error:', res.error.message)
-        else { cerrarModal(); recargarObras() }
+        if (id) {
+          await dbWrite('PATCH', 'obras', payload, `id=eq.${id}`)
+          setObras(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o))
+        } else {
+          const saved = await dbWrite('POST', 'obras', payload, null, true)
+          if (saved?.id) setObras(prev => [...prev, { ...payload, id: saved.id, total_gastado: 0, cant_gastos: 0 }])
+        }
+        cerrarModal(); recargarObras(true)
       }} />}
 
       {modal === 'gasto' && obras.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
-        onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
+        onNuevoProveedor={(nombre, cb, cuitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '' }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
@@ -362,7 +367,7 @@ export default function GestorObras({ usuario }) {
       />}
 
       {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
-        onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
+        onNuevoProveedor={(nombre, cb, cuitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '' }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           const saved = await dbWrite('POST', 'gastos', d, null, true)
           // Actualización optimista
@@ -457,6 +462,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
             { label: 'Pagado',         value: `$ ${fmt(pagado)}`,      sub: `${totalGastos > 0 ? Math.round(pagado/totalGastos*100) : 0}%` },
             { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${gastosActivas.filter(g=>!g.pagado).length} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
+            { label: 'Crédito fiscal IVA', value: `$ ${fmt(gastosActivas.filter(g => g.discrimina_iva).reduce((s, g) => s + Math.round(g.monto * IVA / (1 + IVA)), 0))}`, sub: `${gastosActivas.filter(g => g.discrimina_iva).length} fact. A/B` },
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{s.label}</div>
@@ -506,7 +512,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(o.total_gastado)}</div>
-                <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{o.cant_gastos} gastos</div>
+                <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{cantGastos} gastos</div>
               </div>
             </div>
           )
@@ -577,7 +583,7 @@ function PanelMas({ esAdmin, onContactos, onAdmin, onLogout, usuario }) {
 }
 
 // ── Panel Obras ───────────────────────────────────────────────
-function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar }) {
+function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {} }) {
   const [filtroEstado, setFiltroEstado] = useState('activa')
   const obrasFiltradas = filtroEstado === 'todas' ? obras : obras.filter(o => o.estado === filtroEstado)
   const FILTROS = [
@@ -601,8 +607,10 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar })
       {loading ? <Spinner /> : obrasFiltradas.length === 0 ? <EmptyState texto={`No hay obras ${filtroEstado === 'todas' ? 'registradas' : filtroEstado + 's'}`} /> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
           {obrasFiltradas.map(o => {
-            const pct = o.presupuesto > 0 ? Math.min(100, Math.round((o.total_gastado / o.presupuesto) * 100)) : 0
-            const sobrep = o.presupuesto > 0 && o.total_gastado > o.presupuesto
+            const totalGastado = totalPorObra[o.id] ?? o.total_gastado ?? 0
+            const cantGastos = cantPorObra[o.id] ?? o.cant_gastos ?? 0
+            const pct = o.presupuesto > 0 ? Math.min(100, Math.round((totalGastado / o.presupuesto) * 100)) : 0
+            const sobrep = o.presupuesto > 0 && totalGastado > o.presupuesto
             return (
               <div key={o.id} className="card-hover" style={{ ...cardSt, padding: 0, overflow: 'hidden' }} onClick={() => onVerGastos(o.id)}>
                 <div style={{ display: 'flex' }}>
@@ -611,8 +619,11 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar })
                     <button style={{ position: 'absolute', top: 12, right: 12, ...btnIconSt }} onClick={e => { e.stopPropagation(); onEditar(o) }}>✏️</button>
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 32 }}>{o.nombre}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 14 }}>{o.cliente || 'Sin cliente'}</div>
-                    <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(o.total_gastado)}</div>
-                    <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: o.presupuesto > 0 ? 10 : 12 }}>{o.cant_gastos} gasto{o.cant_gastos !== 1 ? 's' : ''}</div>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(totalGastado)}</div>
+                    <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: creditoFiscalPorObra[o.id] > 0 ? 4 : (o.presupuesto > 0 ? 10 : 12) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
+                    {creditoFiscalPorObra[o.id] > 0 && (
+                      <div style={{ fontSize: 11, color: C.green, fontWeight: 600, background: C.greenDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>IVA crédito fiscal: $ {fmt(creditoFiscalPorObra[o.id])}</div>
+                    )}
                     {o.presupuesto > 0 && (
                       <div style={{ marginBottom: 12 }}>
                         <div style={{ height: 3, background: C.borderFaint, borderRadius: 99, overflow: 'hidden', marginBottom: 4 }}>
@@ -1207,7 +1218,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
         if (!tipo && matchProv) { const sit = getSituacion(matchProv.situacion_impositiva); tipo = sit.comprobante; iva = sit.iva }
         if (!tipo) { tipo = 'factura_a'; iva = true }
         setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
-        if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) })
+        if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) }, parsed.cuit || null)
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
         if (error) window._toast?.('IA no disponible — completá los datos manualmente')
@@ -1267,7 +1278,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
 }
 
 function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
-  const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
+  const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: datosIniciales?.cuit || '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
   const [saving, setSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
