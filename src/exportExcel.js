@@ -8,7 +8,8 @@ const labelConcepto = c => CONCEPTO_LABELS[c] ?? c ?? ''
 const labelComprobante = t => (TIPOS_COMPROBANTE.find(x => x.value === t)?.label) ?? t ?? ''
 const labelMedio = m => (MEDIOS_PAGO.find(x => x.value === m)?.label) ?? m ?? ''
 const num = v => Math.round((parseFloat(v) || 0) * 100) / 100
-const creditoFiscal = g => g.discrimina_iva ? Math.round((num(g.monto)) * IVA / (1 + IVA)) : 0
+// Crédito fiscal: SOLO Factura A (debe estar a nombre de SEATE SRL, CUIT 30715138022)
+const creditoFiscal = g => g.tipo_comprobante === 'factura_a' ? Math.round((num(g.monto)) * IVA / (1 + IVA)) : 0
 
 // Ajusta el ancho de columnas según el contenido
 function autoAnchos(rows) {

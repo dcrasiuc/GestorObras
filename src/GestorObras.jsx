@@ -103,7 +103,8 @@ export default function GestorObras({ usuario }) {
   const { gastos: todosGastos, setGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   // Totales por obra calculados desde estado local (se actualizan sin esperar reload)
-  const creditoFiscalPorObra = todosGastos.reduce((acc, g) => { if (g.discrimina_iva) acc[g.obra_id] = (acc[g.obra_id] || 0) + Math.round(g.monto * IVA / (1 + IVA)); return acc }, {})
+  // Crédito fiscal: SOLO Factura A (debe estar a nombre de SEATE SRL, CUIT 30715138022)
+  const creditoFiscalPorObra = todosGastos.reduce((acc, g) => { if (g.tipo_comprobante === 'factura_a') acc[g.obra_id] = (acc[g.obra_id] || 0) + Math.round(g.monto * IVA / (1 + IVA)); return acc }, {})
   const totalPorObra = todosGastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + (parseFloat(g.monto) || 0); return acc }, {})
   const cantPorObra = todosGastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + 1; return acc }, {})
   // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
@@ -352,7 +353,7 @@ export default function GestorObras({ usuario }) {
       }} />}
 
       {modal === 'gasto' && obras.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
-        onNuevoProveedor={(nombre, cb, cuitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '' }); setOnProveedorCreado(() => cb) }}
+        onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
@@ -372,7 +373,7 @@ export default function GestorObras({ usuario }) {
       />}
 
       {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
-        onNuevoProveedor={(nombre, cb, cuitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '' }); setOnProveedorCreado(() => cb) }}
+        onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           const saved = await dbWrite('POST', 'gastos', d, null, true)
           // Actualización optimista
@@ -472,7 +473,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
             { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${cantImpagas} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
             // Crédito fiscal IVA: solo visible para administradores
-            ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(gastosActivas.filter(g => g.discrimina_iva).reduce((s, g) => s + Math.round(g.monto * IVA / (1 + IVA)), 0))}`, sub: `${gastosActivas.filter(g => g.discrimina_iva).length} fact. A/B` }] : []),
+            ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(gastosActivas.filter(g => g.tipo_comprobante === 'factura_a').reduce((s, g) => s + Math.round(g.monto * IVA / (1 + IVA)), 0))}`, sub: `${gastosActivas.filter(g => g.tipo_comprobante === 'factura_a').length} fact. A` }] : []),
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{s.label}</div>
@@ -1232,16 +1233,16 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
   const procesarFoto = async (file) => {
     setPreview(URL.createObjectURL(file)); setCurrentFile(file); setStep('loading')
     let imageUrl = ''
+    let subida = Promise.resolve('')
     try {
       // 1. Base64 primero (local, no depende de red)
       const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
 
-      // 2. Storage en paralelo (sin bloquear la IA)
+      // 2. Storage en paralelo a la IA (pero la ESPERAMOS antes de guardar la URL)
       const ext = file.name.split('.').pop()
-      supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
-        .then(({ data: uploadData }) => {
-          if (uploadData) imageUrl = supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl
-        }).catch(() => {})
+      subida = supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
+        .then(({ data: uploadData }) => uploadData ? supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl : '')
+        .catch(() => '')
 
       // 3. IA con fetch directo + timeout de 30s
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000))
@@ -1253,6 +1254,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
       ])
       const data = await respRaw.json()
       const error = !respRaw.ok ? data : null
+      imageUrl = await subida   // esperar a que termine la subida (clave en mobile/red lenta)
       if (!error && data?.content) {
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
@@ -1263,14 +1265,17 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
         let iva = tipo ? (TIPOS_COMPROBANTE.find(t => t.value === tipo)?.iva ?? true) : true
         if (!tipo && matchProv) { const sit = getSituacion(matchProv.situacion_impositiva); tipo = sit.comprobante; iva = sit.iva }
         if (!tipo) { tipo = 'factura_a'; iva = true }
+        // Inferir situación impositiva del proveedor según la letra del comprobante
+        const sitIA = tipo === 'factura_c' ? 'monotributo' : (tipo === 'factura_a' || tipo === 'factura_b') ? 'responsable_inscripto' : null
         setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
-        if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) }, parsed.cuit || null)
+        if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) }, parsed.cuit || null, sitIA)
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
         if (error) window._toast?.('IA no disponible — completá los datos manualmente')
       }
     } catch (e) {
       console.error('procesarFoto error:', e)
+      imageUrl = await subida.catch(() => '')   // igual esperamos la subida aunque la IA falle
       setForm(f => ({ ...f, imagen_url: imageUrl }))
       window._toast?.(e?.message === 'timeout' ? 'IA tardó demasiado — completá los datos manualmente' : 'Error al analizar la imagen — completá los datos manualmente')
     } finally {
@@ -1324,7 +1329,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
 }
 
 function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
-  const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: datosIniciales?.cuit || '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
+  const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: datosIniciales?.cuit || '', rubro: '', situacion_impositiva: datosIniciales?.situacion_impositiva || 'responsable_inscripto' })
   const [saving, setSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
