@@ -427,7 +427,8 @@ function MobileHeaderStats({ obras, gastos }) {
   const idsActivas = new Set(obras.filter(o => o.estado === 'activa').map(o => o.id))
   const gastosActivas = gastos.filter(g => idsActivas.has(g.obra_id))
   const totalGastos = gastosActivas.reduce((s, g) => s + (g.monto ?? 0), 0)
-  const pendiente = gastosActivas.filter(g => !g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
+  // Pendiente incluye impagas de obras cerradas (deuda pendiente)
+  const pendiente = gastos.filter(g => !g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
     <div>
       <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>Total gastado</div>
@@ -447,7 +448,10 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
   const gastosActivas = gastos.filter(g => idsActivas.has(g.obra_id))
   const totalGastos = gastosActivas.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastosActivas.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
-  const pendiente = totalGastos - pagado
+  // Pendiente incluye TODAS las facturas impagas, incluso de obras pausadas/finalizadas (deuda pendiente)
+  const impagas = gastos.filter(g => !g.pagado)
+  const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
+  const cantImpagas = impagas.length
   const ultimosGastos = gastosActivas.slice(0, 5)
 
   return (
@@ -464,9 +468,10 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
           {[
             { label: 'Total gastos',   value: `$ ${fmt(totalGastos)}`, sub: `${gastosActivas.length} comprobantes` },
             { label: 'Pagado',         value: `$ ${fmt(pagado)}`,      sub: `${totalGastos > 0 ? Math.round(pagado/totalGastos*100) : 0}%` },
-            { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${gastosActivas.filter(g=>!g.pagado).length} facturas`, alert: pendiente > 0 },
+            { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${cantImpagas} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
-            { label: 'Crédito fiscal IVA', value: `$ ${fmt(gastosActivas.filter(g => g.discrimina_iva).reduce((s, g) => s + Math.round(g.monto * IVA / (1 + IVA)), 0))}`, sub: `${gastosActivas.filter(g => g.discrimina_iva).length} fact. A/B` },
+            // Crédito fiscal IVA: solo visible para administradores
+            ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(gastosActivas.filter(g => g.discrimina_iva).reduce((s, g) => s + Math.round(g.monto * IVA / (1 + IVA)), 0))}`, sub: `${gastosActivas.filter(g => g.discrimina_iva).length} fact. A/B` }] : []),
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{s.label}</div>
@@ -487,7 +492,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Pendiente</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: pendiente > 0 ? '#D0021B' : C.textFaint, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(pendiente)}</div>
-          <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{gastosActivas.filter(g=>!g.pagado).length} facturas</div>
+          <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{cantImpagas} facturas</div>
         </div>
       </div>
 
@@ -625,8 +630,8 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 32 }}>{o.nombre}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 14 }}>{o.cliente || 'Sin cliente'}</div>
                     <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(totalGastado)}</div>
-                    <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: creditoFiscalPorObra[o.id] > 0 ? 4 : (o.presupuesto > 0 ? 10 : 12) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
-                    {creditoFiscalPorObra[o.id] > 0 && (
+                    <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: (esAdmin && creditoFiscalPorObra[o.id] > 0) ? 4 : (o.presupuesto > 0 ? 10 : 12) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
+                    {esAdmin && creditoFiscalPorObra[o.id] > 0 && (
                       <div style={{ fontSize: 11, color: C.green, fontWeight: 600, background: C.greenDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>IVA crédito fiscal: $ {fmt(creditoFiscalPorObra[o.id])}</div>
                     )}
                     {o.presupuesto > 0 && (
@@ -664,6 +669,9 @@ function PanelGastos({ obras, gastos: gastosRaw, loading, filtroObraId, setFiltr
   }, [filtroObraId, obras, setFiltroObraId])
   const total = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
+  // Pendiente incluye TODAS las impagas (también de obras cerradas) como aviso de deuda
+  const impagas = gastosRaw.filter(g => !g.pagado)
+  const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
     <div>
       <PageHeader titulo="Gastos" sub={`Total: $ ${fmt(total)}`}>
@@ -673,12 +681,12 @@ function PanelGastos({ obras, gastos: gastosRaw, loading, filtroObraId, setFiltr
         </div>
       </PageHeader>
 
-      {gastos.length > 0 && (
+      {(gastos.length > 0 || pendiente > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
           {[
             { label: 'Total', value: `$ ${fmt(total)}`, color: C.text },
             { label: 'Pagado', value: `$ ${fmt(pagado)}`, color: C.green },
-            { label: 'Pendiente', value: `$ ${fmt(total - pagado)}`, color: total - pagado > 0 ? '#D0021B' : C.textFaint },
+            { label: 'Pendiente', value: `$ ${fmt(pendiente)}`, color: pendiente > 0 ? '#D0021B' : C.textFaint },
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px' }}>
               <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>{s.label}</div>
@@ -791,6 +799,11 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
     : todosGastosInforme.filter(g => idsActivasInforme.has(g.obra_id))
   const total = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
+  // Pendiente incluye impagas de obras cerradas (deuda): si hay obra seleccionada, solo la suya
+  const impagas = obraIdEfectivo
+    ? todosGastosInforme.filter(g => g.obra_id === obraIdEfectivo && !g.pagado)
+    : todosGastosInforme.filter(g => !g.pagado)
+  const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
   const porConcepto = {}
   CONCEPTOS.forEach(c => { porConcepto[c] = gastos.filter(g => g.concepto === c).reduce((s, g) => s + (g.monto ?? 0), 0) })
   const maxVal = Math.max(...Object.values(porConcepto), 1)
@@ -809,7 +822,7 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
             {[
               { label: 'Total gastos',  value: `$ ${fmt(total)}`,          sub: `${gastos.length} comprobantes` },
               { label: 'Pagado',        value: `$ ${fmt(pagado)}`,          sub: `${total > 0 ? Math.round(pagado/total*100) : 0}%` },
-              { label: 'Pendiente',     value: `$ ${fmt(total - pagado)}`,  sub: `${gastos.filter(g=>!g.pagado).length} facturas`, alert: (total - pagado) > 0 },
+              { label: 'Pendiente',     value: `$ ${fmt(pendiente)}`,       sub: `${impagas.length} facturas`, alert: pendiente > 0 },
               { label: 'Obras activas', value: obras.filter(o => o.estado === 'activa').length, sub: `de ${obras.length} total` },
             ].map(s => (
               <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
