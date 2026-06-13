@@ -448,7 +448,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
   const totalGastos = gastosActivas.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastosActivas.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   const pendiente = totalGastos - pagado
-  const ultimosGastos = gastos.slice(0, 5)
+  const ultimosGastos = gastosActivas.slice(0, 5)
 
   return (
     <div>
@@ -653,7 +653,15 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
 }
 
 // ── Panel Gastos ──────────────────────────────────────────────
-function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar }) {
+function PanelGastos({ obras, gastos: gastosRaw, loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar }) {
+  // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
+  const obrasActivas = obras.filter(o => o.estado === 'activa')
+  const idsActivas = new Set(obrasActivas.map(o => o.id))
+  const gastos = gastosRaw.filter(g => idsActivas.has(g.obra_id))
+  // Si el filtro apunta a una obra que dejó de estar activa, lo reseteamos
+  useEffect(() => {
+    if (filtroObraId && !obras.some(o => o.id === filtroObraId && o.estado === 'activa')) setFiltroObraId('')
+  }, [filtroObraId, obras, setFiltroObraId])
   const total = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
@@ -682,7 +690,7 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
 
       <select value={filtroObraId} onChange={e => setFiltroObraId(e.target.value)} style={{ ...inputSt, marginBottom: 16, maxWidth: 320 }}>
         <option value="">Todas las obras</option>
-        {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+        {obrasActivas.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
       </select>
 
       {loading ? <Spinner /> : gastos.length === 0 ? <EmptyState texto="No hay gastos registrados" /> : (
