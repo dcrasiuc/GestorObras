@@ -812,79 +812,83 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
 
 // ── Gráfico temporal por rubro ────────────────────────────────
 function GraficoTemporalRubros({ gastos }) {
-  const meses = {}
+  const getLunes = dateStr => {
+    const d = new Date(dateStr + 'T12:00:00')
+    const dow = d.getDay()
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+    return d.toISOString().slice(0, 10)
+  }
+
+  const semanas = {}
   gastos.forEach(g => {
     if (!g.fecha || !g.monto) return
-    const mes = g.fecha.slice(0, 7)
-    if (!meses[mes]) meses[mes] = {}
+    const s = getLunes(g.fecha)
+    if (!semanas[s]) semanas[s] = {}
     const c = g.concepto || 'varios'
-    meses[mes][c] = (meses[mes][c] ?? 0) + (g.monto ?? 0)
+    semanas[s][c] = (semanas[s][c] ?? 0) + (g.monto ?? 0)
   })
-  const mesKeys = Object.keys(meses).sort()
-  if (mesKeys.length === 0) return null
+  const semKeys = Object.keys(semanas).sort()
+  if (semKeys.length === 0) return null
 
-  const totales = mesKeys.map(m => CONCEPTOS.reduce((s, c) => s + (meses[m][c] ?? 0), 0))
-  const maxTotal = Math.max(...totales, 1)
-  const BAR_W = 36, GAP = 10, H = 150, PAD_L = 52, PAD_B = 32
-
+  const maxVal = Math.max(...CONCEPTOS.flatMap(c => semKeys.map(s => semanas[s][c] ?? 0)), 1)
   const fmtY = v => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : v >= 1000 ? `${Math.round(v/1000)}k` : String(v)
+  const fmtSem = dateStr => { const [,m,d] = dateStr.split('-'); return `${d}/${m}` }
 
-  const svgW = PAD_L + mesKeys.length * (BAR_W + GAP) + GAP
+  const H = 150, PAD_L = 52, PAD_B = 32, PAD_T = 8
+  const STEP = 52
+  const svgW = PAD_L + (semKeys.length - 1) * STEP + 24
+
+  const xOf = i => PAD_L + i * STEP
+  const yOf = val => PAD_T + H - (val / maxVal) * H
+
+  const rubrosActivos = CONCEPTOS.filter(c => semKeys.some(s => (semanas[s][c] ?? 0) > 0))
 
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '18px 20px', marginTop: 14 }}>
-      <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Evolución mensual por rubro</div>
+      <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Evolución semanal por rubro</div>
       <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        <svg width={svgW} height={H + PAD_B} style={{ display: 'block', minWidth: '100%' }}>
+        <svg width={Math.max(svgW, 300)} height={H + PAD_T + PAD_B} style={{ display: 'block' }}>
           {/* Líneas de referencia Y */}
           {[0, 0.25, 0.5, 0.75, 1].map(pct => {
-            const y = H - pct * H
+            const y = PAD_T + H - pct * H
             return (
               <g key={pct}>
-                <line x1={PAD_L} y1={y} x2={svgW} y2={y} stroke={C.border} strokeWidth={pct === 0 ? 1.5 : 0.5} strokeDasharray={pct === 0 ? '' : '3,3'} />
-                {pct > 0 && <text x={PAD_L - 4} y={y + 4} textAnchor="end" fontSize={9} fill="#AAAAAA">{fmtY(maxTotal * pct)}</text>}
+                <line x1={PAD_L} y1={y} x2={Math.max(svgW, 300) - 8} y2={y} stroke={C.border} strokeWidth={pct === 0 ? 1.5 : 0.5} strokeDasharray={pct === 0 ? '' : '3,3'} />
+                {pct > 0 && <text x={PAD_L - 4} y={y + 4} textAnchor="end" fontSize={9} fill="#AAAAAA">{fmtY(maxVal * pct)}</text>}
               </g>
             )
           })}
-          {/* Barras apiladas */}
-          {mesKeys.map((mes, i) => {
-            const x = PAD_L + GAP / 2 + i * (BAR_W + GAP)
-            let acum = 0
-            const segs = CONCEPTOS.map(c => {
-              const val = meses[mes][c] ?? 0
-              const h = (val / maxTotal) * H
-              const y = H - acum - h
-              acum += h
-              return { c, val, h, y }
-            }).filter(s => s.val > 0)
 
-            const [mesNum, anio] = [mes.slice(5, 7), mes.slice(2, 4)]
-            const MESES_CORTOS = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-
+          {/* Líneas por rubro */}
+          {rubrosActivos.map(c => {
+            const color = CONCEPTO_COLORS[c][1]
+            const puntos = semKeys.map((s, i) => [xOf(i), yOf(semanas[s][c] ?? 0)])
+            const path = puntos.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x},${y}`).join(' ')
             return (
-              <g key={mes}>
-                {segs.map((s, si) => (
-                  <rect
-                    key={s.c}
-                    x={x} y={s.y}
-                    width={BAR_W} height={Math.max(s.h, 1)}
-                    fill={CONCEPTO_COLORS[s.c][1]}
-                    rx={si === segs.length - 1 ? 3 : 0}
-                    ry={si === segs.length - 1 ? 3 : 0}
-                  />
+              <g key={c}>
+                <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                {puntos.map(([x, y], i) => (
+                  <circle key={i} cx={x} cy={y} r={3} fill={color} stroke="#fff" strokeWidth={1.5} />
                 ))}
-                <text x={x + BAR_W / 2} y={H + 14} textAnchor="middle" fontSize={10} fill="#888888">{MESES_CORTOS[parseInt(mesNum)]}</text>
-                <text x={x + BAR_W / 2} y={H + 26} textAnchor="middle" fontSize={9} fill="#BBBBBB">{anio}</text>
               </g>
+            )
+          })}
+
+          {/* Etiquetas eje X — una cada 2 semanas si hay muchas */}
+          {semKeys.map((s, i) => {
+            if (semKeys.length > 8 && i % 2 !== 0) return null
+            return (
+              <text key={s} x={xOf(i)} y={PAD_T + H + 18} textAnchor="middle" fontSize={9} fill="#888888">{fmtSem(s)}</text>
             )
           })}
         </svg>
       </div>
+
       {/* Leyenda */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', marginTop: 12 }}>
-        {CONCEPTOS.map(c => (
+        {rubrosActivos.map(c => (
           <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <div style={{ width: 10, height: 10, borderRadius: 2, background: CONCEPTO_COLORS[c][1], flexShrink: 0 }} />
+            <div style={{ width: 16, height: 2.5, borderRadius: 99, background: CONCEPTO_COLORS[c][1], flexShrink: 0 }} />
             <span style={{ fontSize: 11, color: C.textMuted }}>{CONCEPTO_LABELS[c]}</span>
           </div>
         ))}
