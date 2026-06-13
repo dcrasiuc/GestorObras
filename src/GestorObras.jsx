@@ -21,7 +21,7 @@ function useListas() {
     if (!resB.error) setBancos(resB.data)
   }, [])
   useEffect(() => { cargar() }, [cargar])
-  return { clientes, proveedores, bancos, recargarListas: cargar }
+  return { clientes, proveedores, bancos, recargarListas: cargar, setProveedores }
 }
 
 function useObras(usuarioId, esAdmin) {
@@ -83,7 +83,7 @@ function useGastos(obrasIds) {
     if (showLoading) setLoading(false)
   }, [idsClave])
   useEffect(() => { cargar() }, [cargar])
-  return { gastos, loading, recargar: cargar }
+  return { gastos, setGastos, loading, recargar: cargar }
 }
 
 // ── App ───────────────────────────────────────────────────────
@@ -97,9 +97,9 @@ export default function GestorObras({ usuario }) {
   const [proveedorPendiente, setProveedorPendiente] = useState(null)
   const [onProveedorCreado, setOnProveedorCreado] = useState(null)
 
-  const { clientes, proveedores, bancos, recargarListas } = useListas()
+  const { clientes, proveedores, bancos, recargarListas, setProveedores } = useListas()
   const { obras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
-  const { gastos: todosGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
+  const { gastos: todosGastos, setGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
   const recargarTodo = (silent = false) => { recargarObras(!silent); recargarGastos(!silent) }
@@ -163,22 +163,22 @@ export default function GestorObras({ usuario }) {
     const { nombre, cuit, rubro, situacion_impositiva } = datos
     let nuevoProv = null
     try {
-      // returning:true → recibe el row con id directo
       nuevoProv = await dbWrite('POST', 'proveedores',
         { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva },
         null, true)
     } catch (e) {
-      // El write pudo haberse creado igual — lo buscamos por nombre como fallback
       console.warn('guardarProveedor dbWrite error, buscando por nombre:', e.message)
     }
-    await recargarListas()
-    // Si no vino el row del write, buscarlo en Supabase por nombre
+    // Fallback: buscar por nombre si no vino el row
     if (!nuevoProv?.id) {
       const { data } = await supabase.from('proveedores').select('*').eq('nombre', nombre.trim()).single()
       nuevoProv = data
     }
-    if (onProveedorCreado && nuevoProv) onProveedorCreado(nuevoProv)
-    else if (!nuevoProv) throw new Error('Proveedor guardado pero no se pudo recuperar. Vinculalo manualmente.')
+    if (!nuevoProv) throw new Error('Proveedor guardado pero no se pudo recuperar. Vinculalo manualmente.')
+    // Actualización optimista: agregar al estado local SIN esperar recargarListas
+    setProveedores(prev => prev.find(p => p.id === nuevoProv.id) ? prev : [...prev, nuevoProv])
+    recargarListas() // refresca en background
+    if (onProveedorCreado) onProveedorCreado(nuevoProv)
     setProveedorPendiente(null)
     setOnProveedorCreado(null)
   }
@@ -347,7 +347,16 @@ export default function GestorObras({ usuario }) {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
           const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante }
-          await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null)
+          const esNuevo = !id
+          const saved = await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null, esNuevo)
+          // Actualización optimista: reflejar en UI sin esperar reload
+          const obraObj = obras.find(o => o.id === obra_id)
+          const provObj = proveedores.find(p => p.id === (proveedor_id || null))
+          if (esNuevo && saved?.id) {
+            setGastos(prev => [{ ...payload, id: saved.id, obras: obraObj ? { nombre: obraObj.nombre } : null, proveedores: provObj ? { nombre: provObj.nombre, situacion_impositiva: provObj.situacion_impositiva } : null, pagos: [] }, ...prev])
+          } else if (!esNuevo) {
+            setGastos(prev => prev.map(g => g.id === id ? { ...g, ...payload, obras: obraObj ? { nombre: obraObj.nombre } : g.obras, proveedores: provObj ? { nombre: provObj.nombre, situacion_impositiva: provObj.situacion_impositiva } : g.proveedores } : g))
+          }
           cerrarModal(); recargarTodo(true); setPanel('gastos')
         }}
       />}
@@ -355,7 +364,13 @@ export default function GestorObras({ usuario }) {
       {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
-          await dbWrite('POST', 'gastos', d)
+          const saved = await dbWrite('POST', 'gastos', d, null, true)
+          // Actualización optimista
+          const obraObj = obras.find(o => o.id === d.obra_id)
+          const provObj = proveedores.find(p => p.id === d.proveedor_id)
+          if (saved?.id) {
+            setGastos(prev => [{ ...d, id: saved.id, obras: obraObj ? { nombre: obraObj.nombre } : null, proveedores: provObj ? { nombre: provObj.nombre, situacion_impositiva: provObj.situacion_impositiva } : null, pagos: [] }, ...prev])
+          }
           cerrarModal(); recargarTodo(true)
         }}
       />}
