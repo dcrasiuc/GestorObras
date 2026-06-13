@@ -1225,6 +1225,29 @@ function ModalGasto({ itemEdit, obras, proveedores, obraIdDefecto, onClose, onGu
   return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => onGuardar(form)}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} /></Modal>
 }
 
+// ── Helpers de archivo (compresión de imágenes antes de enviar a la IA) ──
+function leerBase64(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(String(e.target.result).split(',')[1]); r.readAsDataURL(file) })
+}
+
+// Redimensiona la imagen (lado largo máx) y la exporta como JPEG comprimido.
+// Reduce drásticamente el peso → más rápido en mobile y menos timeouts. La IA no pierde
+// precisión porque igual reescala internamente a ~1568px.
+async function comprimirImagen(file, maxLado = 1600, calidad = 0.7) {
+  const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(e.target.result); r.readAsDataURL(file) })
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onerror = rej; i.onload = () => res(i); i.src = dataUrl })
+  let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height
+  if (w > maxLado || h > maxLado) {
+    if (w >= h) { h = Math.round(h * maxLado / w); w = maxLado }
+    else { w = Math.round(w * maxLado / h); h = maxLado }
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = w; canvas.height = h
+  canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+  const jpeg = canvas.toDataURL('image/jpeg', calidad)
+  return { base64: jpeg.split(',')[1], mimeType: 'image/jpeg' }
+}
+
 function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [step, setStep] = useState('upload')
   const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0 })
@@ -1236,8 +1259,17 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
     setPreview(URL.createObjectURL(file)); setCurrentFile(file); setStep('loading')
     let imageUrl = ''
     try {
-      // 1. Base64 (local, no depende de red)
-      const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
+      // 1. Preparar archivo: comprimir imágenes (más rápido en mobile, evita timeouts).
+      //    PDF se manda tal cual, con tope de tamaño para no pegar contra los límites.
+      let base64, mimeType
+      if (file.type === 'application/pdf') {
+        if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB). Subí uno más liviano.'); setStep('upload'); return }
+        base64 = await leerBase64(file)
+        mimeType = 'application/pdf'
+      } else {
+        try { ({ base64, mimeType } = await comprimirImagen(file)) }
+        catch { base64 = await leerBase64(file); mimeType = file.type }   // si falla la compresión, mandamos el original
+      }
 
       // 2. La subida al storage la hace la Edge Function (server-to-server, confiable en mobile)
       //    y nos devuelve la URL en la respuesta. Ya NO subimos directo desde el cliente,
@@ -1248,7 +1280,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
       const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
       const respRaw = await Promise.race([
-        fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }, body: JSON.stringify({ base64, mimeType: file.type, hoy: hoy() }) }),
+        fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }, body: JSON.stringify({ base64, mimeType, hoy: hoy() }) }),
         timeout
       ])
       const data = await respRaw.json()
