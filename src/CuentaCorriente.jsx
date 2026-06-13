@@ -270,8 +270,9 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
                     onDistribuir={() => abrirModal('distribuir', r)}
                     onVincularFactura={() => abrirModal('vincularFactura', r)}
                     onEliminar={async () => {
-                      if (!window.confirm('¿Eliminar este remito?')) return
-                      await supabase.from('remitos').delete().eq('id', r.id)
+                      if (!window.confirm('¿Anular este remito? Se elimina de la cuenta corriente.')) return
+                      // Vía dbWrite: el delete directo se cuelga en mobile
+                      await dbWrite('DELETE', 'remitos', null, `id=eq.${r.id}`)
                       recargarRemitos()
                     }}
                   />
@@ -434,6 +435,14 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
             })}
           </div>
         )}
+
+        {/* Acciones rápidas (siempre visibles, sin expandir) */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+          {remito.estado === 'pendiente' && <button style={{ ...btnSt, color: C.purple, background: C.purpleDim, borderColor: C.border }} onClick={onVincularFactura}>🔗 Vincular factura</button>}
+          {remito.estado === 'facturado' && <button style={{ ...btnSt, color: C.purple, background: C.purpleDim, borderColor: C.border }} onClick={onVincularFactura}>✏️ Editar factura</button>}
+          {esAdmin && <button style={btnSt} onClick={onEditar}>✏️ Editar</button>}
+          {esAdmin && remito.estado === 'pendiente' && <button style={{ ...btnSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={onEliminar}>✕ Anular</button>}
+        </div>
       </div>
 
       {/* Detalle expandido */}
@@ -481,14 +490,10 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
             </div>
           )}
 
-          {/* Acciones */}
+          {/* Acciones secundarias */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {remito.imagen_url && <a href={remito.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>📎 Ver remito</a>}
             <button style={btnSt} onClick={onDistribuir}>🏗️ Distribuir obras</button>
-            {remito.estado === 'pendiente' && <button style={{ ...btnSt, color: C.purple, background: C.purpleDim, borderColor: C.border }} onClick={onVincularFactura}>🔗 Vincular factura</button>}
-            {remito.estado === 'facturado' && <button style={{ ...btnSt, color: C.purple, background: C.purpleDim, borderColor: C.border }} onClick={onVincularFactura}>✏️ Editar factura</button>}
-            {esAdmin && <button style={btnSt} onClick={onEditar}>✏️ Editar</button>}
-            {esAdmin && remito.estado === 'pendiente' && <button style={{ ...btnSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={onEliminar}>✕ Eliminar</button>}
           </div>
         </div>
       )}
