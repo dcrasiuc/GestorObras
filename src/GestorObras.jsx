@@ -27,34 +27,31 @@ function useListas() {
 function useObras(usuarioId, esAdmin) {
   const [obras, setObras] = useState([])
   const [loading, setLoading] = useState(true)
-  const cargar = useCallback(async () => {
-    setLoading(true)
-    // Failsafe: si Supabase no responde en 12s, liberar el spinner
-    const failsafe = setTimeout(() => setLoading(false), 12000)
+  // showLoading=false → refresca en background sin blanquear la lista (post-save)
+  const cargar = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
+    const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
       if (esAdmin) {
-        // Admin ve todas las obras
         const { data, error } = await supabase.from('obras_resumen').select('*').order('nombre')
         if (error) console.error('useObras admin error:', error)
         else setObras(data ?? [])
       } else {
-        // Operador ve solo sus obras asignadas
         const { data: asignadas } = await supabase
           .from('obra_usuarios')
           .select('obra_id')
           .eq('usuario_id', usuarioId)
         const ids = (asignadas ?? []).map(a => a.obra_id)
-        if (ids.length === 0) { setObras([]); clearTimeout(failsafe); setLoading(false); return }
+        if (ids.length === 0) { setObras([]); if (failsafe) clearTimeout(failsafe); if (showLoading) setLoading(false); return }
         const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).order('nombre')
         if (error) console.error('useObras error:', error)
         else setObras(data ?? [])
       }
     } catch (e) {
       console.error('useObras exception:', e)
-      setObras([])
     }
-    clearTimeout(failsafe)
-    setLoading(false)
+    if (failsafe) clearTimeout(failsafe)
+    if (showLoading) setLoading(false)
   }, [usuarioId, esAdmin])
   useEffect(() => { cargar() }, [cargar])
   // obrasIds: null = admin (sin restricción), array = IDs permitidos para operador
@@ -68,25 +65,22 @@ function useGastos(obrasIds) {
   const [loading, setLoading] = useState(true)
   // Usamos la clave serializada para que useCallback reaccione cuando cambian los IDs
   const idsClave = JSON.stringify(obrasIds)
-  const cargar = useCallback(async () => {
+  const cargar = useCallback(async (showLoading = true) => {
     const ids = JSON.parse(idsClave)
-    // Esperar a que useObras termine de cargar (undefined = todavía cargando)
     if (ids === undefined) return
-    setLoading(true)
-    // Failsafe: si Supabase no responde en 12s, liberar el spinner
-    const failsafe = setTimeout(() => setLoading(false), 12000)
+    if (showLoading) setLoading(true)
+    const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
       let q = supabase.from('gastos')
         .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
         .order('fecha', { ascending: false })
-      // null = admin = todas las obras; array = solo obras autorizadas
       if (ids !== null) q = q.in('obra_id', ids)
       const { data, error } = await q
-      if (error) { console.error('useGastos error:', error); setGastos([]) }
+      if (error) { console.error('useGastos error:', error) }
       else setGastos(data ?? [])
-    } catch (e) { console.error('useGastos catch:', e); setGastos([]) }
-    clearTimeout(failsafe)
-    setLoading(false)
+    } catch (e) { console.error('useGastos catch:', e) }
+    if (failsafe) clearTimeout(failsafe)
+    if (showLoading) setLoading(false)
   }, [idsClave])
   useEffect(() => { cargar() }, [cargar])
   return { gastos, loading, recargar: cargar }
@@ -107,7 +101,8 @@ export default function GestorObras({ usuario }) {
   const { obras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
   const { gastos: todosGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
-  const recargarTodo = () => { recargarObras(); recargarGastos() }
+  // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
+  const recargarTodo = (silent = false) => { recargarObras(!silent); recargarGastos(!silent) }
 
   // Realtime: auto-actualiza cuando otro dispositivo guarda o borra datos
   useEffect(() => {
@@ -310,7 +305,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async id => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${id}`); recargarTodo() } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async id => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${id}`); recargarTodo(true) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
@@ -353,7 +348,7 @@ export default function GestorObras({ usuario }) {
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
           const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante }
           await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null)
-          cerrarModal(); recargarTodo(); setPanel('gastos')
+          cerrarModal(); recargarTodo(true); setPanel('gastos')
         }}
       />}
 
@@ -361,7 +356,7 @@ export default function GestorObras({ usuario }) {
         onNuevoProveedor={(nombre, cb) => { setProveedorPendiente({ nombre }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           await dbWrite('POST', 'gastos', d)
-          cerrarModal(); recargarTodo()
+          cerrarModal(); recargarTodo(true)
         }}
       />}
 
