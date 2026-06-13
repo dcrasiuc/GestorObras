@@ -584,51 +584,87 @@ function ModalFotoRemito({ proveedorId, proveedores, obras, onClose, onGuardar }
   const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
+  const comprimirImagen = (file) => new Promise(res => {
+    if (!file.type.startsWith('image/') || file.size < 1.5 * 1024 * 1024) { res(file); return }
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const MAX = 1600
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+      canvas.toBlob(
+        blob => res(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })),
+        'image/jpeg', 0.82
+      )
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); res(file) }
+    img.src = url
+  })
+
   const procesarFoto = async (file) => {
     setPreview(URL.createObjectURL(file)); setCurrentFile(file); setStep('loading')
-    let imageUrl = ''
+    file = await comprimirImagen(file)
     try {
-      // 1. Base64 primero (local, no depende de red)
-      const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
-
-      // 2. Storage en paralelo (sin bloquear la IA)
-      const ext = file.name.split('.').pop()
-      supabase.storage.from('comprobantes').upload(`remitos/${Date.now()}.${ext}`, file)
-        .then(({ data: uploadData }) => {
-          if (uploadData) imageUrl = supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl
-        }).catch(() => {})
-
-      // 3. IA con fetch directo + timeout de 30s
-      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000))
       const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+      const ext = file.name.split('.').pop()
       const instruccion = 'Este documento puede ser un REMITO o una FACTURA. Detectá el tipo. Para remitos extraé: nro_remito, fecha, proveedor, monto_neto (neto sin IVA, 0 si no tiene precio), items (array con descripcion, cantidad, unidad, precio_unitario, subtotal). Responde SOLO JSON con campos: tipo (remito|factura), nro_remito, fecha, proveedor, monto_neto, items.'
-      const respRaw = await Promise.race([
-        fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }, body: JSON.stringify({ base64, mimeType: file.type, hoy: hoy(), instruccion }) }),
-        timeout
+
+      // 1. Base64 (local, sin red)
+      const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
+
+      // 2. Upload + IA en paralelo, esperamos ambos
+      const isPdf = file.type === 'application/pdf'
+      const uploadTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error('upload-timeout')), 30000))
+      const aiTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), isPdf ? 50000 : 30000))
+      const [uploadRes, aiRes] = await Promise.allSettled([
+        Promise.race([
+          supabase.storage.from('comprobantes').upload(`remitos/${Date.now()}.${ext}`, file),
+          uploadTimeout
+        ]),
+        Promise.race([
+          fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }, body: JSON.stringify({ base64, mimeType: file.type, hoy: hoy(), instruccion }) }),
+          aiTimeout
+        ])
       ])
-      const data = await respRaw.json()
-      if (respRaw.ok && data?.content) {
-        const text = data.content.map(i => i.text || '').join('')
-        const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
-        const matchProv = proveedores.find(p => p.nombre.toLowerCase().includes((parsed.proveedor || '').toLowerCase()))
-        setForm(f => ({
-          ...f,
-          proveedor_id: matchProv ? matchProv.id : f.proveedor_id,
-          fecha: parsed.fecha || hoy(),
-          nro_remito: parsed.nro_remito || '',
-          monto_neto: parsed.monto_neto || '',
-          observaciones: parsed.tipo === 'factura' ? '⚠ La IA detectó que esto podría ser una FACTURA, no un remito.' : '',
-          imagen_url: imageUrl,
-        }))
-        if (parsed.items?.length > 0) setItems(parsed.items)
+
+      let imageUrl = ''
+      if (uploadRes.status === 'fulfilled' && uploadRes.value?.data) {
+        imageUrl = supabase.storage.from('comprobantes').getPublicUrl(uploadRes.value.data.path).data.publicUrl
+      }
+
+      if (aiRes.status === 'fulfilled') {
+        const respRaw = aiRes.value
+        const data = await respRaw.json()
+        if (respRaw.ok && data?.content) {
+          const text = data.content.map(i => i.text || '').join('')
+          const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
+          const matchProv = proveedores.find(p => p.nombre.toLowerCase().includes((parsed.proveedor || '').toLowerCase()))
+          setForm(f => ({
+            ...f,
+            proveedor_id: matchProv ? matchProv.id : f.proveedor_id,
+            fecha: parsed.fecha || hoy(),
+            nro_remito: parsed.nro_remito || '',
+            monto_neto: parsed.monto_neto || '',
+            observaciones: parsed.tipo === 'factura' ? '⚠ La IA detectó que esto podría ser una FACTURA, no un remito.' : '',
+            imagen_url: imageUrl,
+          }))
+          if (parsed.items?.length > 0) setItems(parsed.items)
+        } else {
+          setForm(f => ({ ...f, imagen_url: imageUrl }))
+          toast('IA no disponible — completá los datos manualmente')
+        }
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
-        toast('IA no disponible — completá los datos manualmente')
+        toast(aiRes.reason?.message === 'timeout' ? 'IA tardó demasiado — completá los datos manualmente' : 'Error al analizar — completá los datos manualmente')
       }
     } catch (e) {
-      setForm(f => ({ ...f, imagen_url: imageUrl }))
-      toast(e?.message === 'timeout' ? 'IA tardó demasiado — completá los datos manualmente' : 'Error al analizar — completá los datos manualmente')
+      setForm(f => ({ ...f, imagen_url: '' }))
+      toast('Error al procesar el archivo')
     } finally {
       setStep('review')
     }
@@ -1001,11 +1037,3 @@ function BtnSecondary({ children, onClick }) {
 function Spinner() {
   return <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}><div style={{ width: 24, height: 24, border: `2px solid ${C.border}`, borderTopColor: C.purple, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /></div>
 }
-
-function EmptyState({ texto }) {
-  return <div style={{ textAlign: 'center', padding: '48px 20px', color: C.textFaint, fontSize: 13 }}>{texto}</div>
-}
-
-const inputSt = { width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: "'Outfit', sans-serif", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.text, boxSizing: 'border-box', outline: 'none', colorScheme: 'light' }
-const labelSt = { fontSize: 10, fontWeight: 600, color: C.textFaint, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.08em' }
-const btnSt = { padding: '5px 10px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 7, color: C.textMuted, cursor: 'pointer', fontSize: 12, fontFamily: "'Outfit', sans-serif" }
