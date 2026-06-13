@@ -8,8 +8,10 @@ const labelConcepto = c => CONCEPTO_LABELS[c] ?? c ?? ''
 const labelComprobante = t => (TIPOS_COMPROBANTE.find(x => x.value === t)?.label) ?? t ?? ''
 const labelMedio = m => (MEDIOS_PAGO.find(x => x.value === m)?.label) ?? m ?? ''
 const num = v => Math.round((parseFloat(v) || 0) * 100) / 100
-// Crédito fiscal: SOLO Factura A (debe estar a nombre de SEATE SRL, CUIT 30715138022)
-const creditoFiscal = g => g.tipo_comprobante === 'factura_a' ? Math.round((num(g.monto)) * IVA / (1 + IVA)) : 0
+// Crédito fiscal: SOLO Factura A a nombre de SEATE (CUIT 30715138022). Usa IVA real si está.
+const creditoFiscal = g => (g.tipo_comprobante === 'factura_a' && g.a_nombre_seate)
+  ? (num(g.iva_monto) > 0 ? Math.round(num(g.iva_monto)) : Math.round(num(g.monto) * IVA / (1 + IVA)))
+  : 0
 
 // Ajusta el ancho de columnas según el contenido
 function autoAnchos(rows) {
@@ -35,6 +37,7 @@ export function exportarExcel(obras = [], gastos = [], bancos = []) {
       'Nº Comprobante': g.nro_comprobante ?? '',
       'Descripción': g.descripcion ?? '',
       'Monto': num(g.monto),
+      'A nombre SEATE': g.tipo_comprobante === 'factura_a' ? (g.a_nombre_seate ? 'Sí' : 'No') : '',
       'Crédito fiscal IVA': creditoFiscal(g),
       'Estado': g.pagado ? 'Pagado' : 'Pendiente',
     }))

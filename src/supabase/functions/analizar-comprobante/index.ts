@@ -73,6 +73,35 @@ serve(async (req) => {
       })
     }
 
+    // ── Subida de imagen al storage (server-to-server, confiable desde mobile) ──
+    // Corre en paralelo a la IA y devolvemos la URL pública en la respuesta.
+    const subirImagen = async (): Promise<string> => {
+      try {
+        if (!base64) return ''
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+        const storageKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY')!
+        const ext = (mimeType || '').includes('pdf') ? 'pdf' : ((mimeType || 'image/jpeg').split('/')[1] || 'jpg')
+        const key = `comprobantes/${Date.now()}.${ext}`
+        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+        const up = await fetch(`${supabaseUrl}/storage/v1/object/comprobantes/${key}`, {
+          method: 'POST',
+          headers: {
+            'apikey': storageKey,
+            'Authorization': `Bearer ${storageKey}`,
+            'Content-Type': mimeType || 'application/octet-stream',
+            'x-upsert': 'true',
+          },
+          body: bytes,
+        })
+        if (!up.ok) { console.error('Storage upload error:', up.status, await up.text()); return '' }
+        return `${supabaseUrl}/storage/v1/object/public/comprobantes/${key}`
+      } catch (e) {
+        console.error('subirImagen exception:', e.message)
+        return ''
+      }
+    }
+    const imagenPromise = subirImagen()
+
     console.log('Llamando Anthropic, mimeType:', mimeType, 'base64 length:', base64?.length)
 
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -85,7 +114,7 @@ serve(async (req) => {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 600,
-        system: `Extraés datos de comprobantes para una app de gestión de obras de construcción. Respondé SOLO con JSON válido sin texto extra ni backticks. Campos: fecha (YYYY-MM-DD, si no hay usá ${hoy}), proveedor (nombre del emisor), cuit (CUIT o CUIL del emisor tal como aparece en el documento — solo dígitos sin guiones, ej: "20123456789", null si no se ve), nro_comprobante (número tal como aparece en el documento, ej: "0001-00012345", null si no se ve), tipo_comprobante (mirá el encabezado del documento y respondé: "factura_a" si dice FACTURA A o Tipo A, "factura_b" si dice FACTURA B o Tipo B, "factura_c" si dice FACTURA C o Tipo C, "recibo" si dice RECIBO, "ticket" si dice TICKET o TIQUE, null si no podés determinarlo con certeza), concepto (uno de: materiales, mano-obra, equipos, subcontratos, varios — inferilo del contenido), monto (número total del comprobante sin símbolo de moneda), descripcion (1 frase breve del contenido).`,
+        system: `Extraés datos de comprobantes para una app de gestión de obras de construcción. Respondé SOLO con JSON válido sin texto extra ni backticks. Campos: fecha (YYYY-MM-DD, si no hay usá ${hoy}), proveedor (nombre del emisor), cuit (CUIT o CUIL del emisor tal como aparece en el documento — solo dígitos sin guiones, ej: "20123456789", null si no se ve), receptor (nombre o razón social del CLIENTE/comprador a quien se emite el comprobante, null si no se ve), cuit_receptor (CUIT del CLIENTE/comprador/receptor — solo dígitos sin guiones, null si no se ve), nro_comprobante (número tal como aparece en el documento, ej: "0001-00012345", null si no se ve), tipo_comprobante (mirá el encabezado del documento y respondé: "factura_a" si dice FACTURA A o Tipo A, "factura_b" si dice FACTURA B o Tipo B, "factura_c" si dice FACTURA C o Tipo C, "recibo" si dice RECIBO, "ticket" si dice TICKET o TIQUE, null si no podés determinarlo con certeza), concepto (uno de: materiales, mano-obra, equipos, subcontratos, varios — inferilo del contenido), monto (número total del comprobante sin símbolo de moneda), iva_monto (importe de IVA discriminado en el comprobante, solo el número sin símbolo, null si no está discriminado), descripcion (1 frase breve del contenido).`,
         messages: [{
           role: 'user',
           content: [
@@ -101,15 +130,17 @@ serve(async (req) => {
     const data = await resp.json()
     console.log('Anthropic status:', resp.status, 'response type:', data?.type)
 
+    const imagen_url = await imagenPromise
+
     if (!resp.ok || data?.type === 'error') {
       console.error('Anthropic error:', JSON.stringify(data?.error))
-      return new Response(JSON.stringify({ error: data?.error?.message || 'Error Anthropic', detail: data }), {
+      return new Response(JSON.stringify({ error: data?.error?.message || 'Error Anthropic', detail: data, imagen_url }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 502,
       })
     }
 
-    return new Response(JSON.stringify(data), {
+    return new Response(JSON.stringify({ ...data, imagen_url }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (error) {

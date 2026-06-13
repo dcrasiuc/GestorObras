@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
-import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA } from './constants'
+import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite } from './utils'
 import { exportarExcel } from './exportExcel'
 import './toast'
@@ -103,8 +103,8 @@ export default function GestorObras({ usuario }) {
   const { gastos: todosGastos, setGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   // Totales por obra calculados desde estado local (se actualizan sin esperar reload)
-  // Crédito fiscal: SOLO Factura A (debe estar a nombre de SEATE SRL, CUIT 30715138022)
-  const creditoFiscalPorObra = todosGastos.reduce((acc, g) => { if (g.tipo_comprobante === 'factura_a') acc[g.obra_id] = (acc[g.obra_id] || 0) + Math.round(g.monto * IVA / (1 + IVA)); return acc }, {})
+  // Crédito fiscal: SOLO Factura A a nombre de SEATE (CUIT 30715138022). Usa IVA real si la IA lo detectó.
+  const creditoFiscalPorObra = todosGastos.reduce((acc, g) => { if (g.tipo_comprobante === 'factura_a' && g.a_nombre_seate) acc[g.obra_id] = (acc[g.obra_id] || 0) + (g.iva_monto > 0 ? Math.round(g.iva_monto) : Math.round(g.monto * IVA / (1 + IVA))); return acc }, {})
   const totalPorObra = todosGastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + (parseFloat(g.monto) || 0); return acc }, {})
   const cantPorObra = todosGastos.reduce((acc, g) => { acc[g.obra_id] = (acc[g.obra_id] || 0) + 1; return acc }, {})
   // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
@@ -356,8 +356,9 @@ export default function GestorObras({ usuario }) {
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
-          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante } = d
-          const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante }
+          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto } = d
+          // a_nombre_seate solo aplica a Factura A
+          const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0 }
           const esNuevo = !id
           const saved = await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null, esNuevo)
           // Actualización optimista: reflejar en UI sin esperar reload
@@ -375,6 +376,7 @@ export default function GestorObras({ usuario }) {
       {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
+          d = { ...d, a_nombre_seate: d.tipo_comprobante === 'factura_a' ? !!d.a_nombre_seate : false, iva_monto: parseFloat(d.iva_monto) || 0 }
           const saved = await dbWrite('POST', 'gastos', d, null, true)
           // Actualización optimista
           const obraObj = obras.find(o => o.id === d.obra_id)
@@ -473,7 +475,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
             { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${cantImpagas} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
             // Crédito fiscal IVA: solo visible para administradores
-            ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(gastosActivas.filter(g => g.tipo_comprobante === 'factura_a').reduce((s, g) => s + Math.round(g.monto * IVA / (1 + IVA)), 0))}`, sub: `${gastosActivas.filter(g => g.tipo_comprobante === 'factura_a').length} fact. A` }] : []),
+            ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(gastosActivas.filter(g => g.tipo_comprobante === 'factura_a' && g.a_nombre_seate).reduce((s, g) => s + (g.iva_monto > 0 ? Math.round(g.iva_monto) : Math.round(g.monto * IVA / (1 + IVA))), 0))}`, sub: `${gastosActivas.filter(g => g.tipo_comprobante === 'factura_a' && g.a_nombre_seate).length} fact. A SEATE` }] : []),
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{s.label}</div>
@@ -1218,14 +1220,14 @@ function PanelAdmin({ bancos, recargarListas }) {
 
 // ── Modales ───────────────────────────────────────────────────
 function ModalGasto({ itemEdit, obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
-  const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '' })
+  const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: true, iva_monto: 0 })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => onGuardar(form)}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} /></Modal>
 }
 
 function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [step, setStep] = useState('upload')
-  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '' })
+  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0 })
   const [preview, setPreview] = useState(null)
   const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -1233,18 +1235,15 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
   const procesarFoto = async (file) => {
     setPreview(URL.createObjectURL(file)); setCurrentFile(file); setStep('loading')
     let imageUrl = ''
-    let subida = Promise.resolve('')
     try {
-      // 1. Base64 primero (local, no depende de red)
+      // 1. Base64 (local, no depende de red)
       const base64 = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result.split(',')[1]); r.readAsDataURL(file) })
 
-      // 2. Storage en paralelo a la IA (pero la ESPERAMOS antes de guardar la URL)
-      const ext = file.name.split('.').pop()
-      subida = supabase.storage.from('comprobantes').upload(`comprobantes/${Date.now()}.${ext}`, file)
-        .then(({ data: uploadData }) => uploadData ? supabase.storage.from('comprobantes').getPublicUrl(uploadData.path).data.publicUrl : '')
-        .catch(() => '')
+      // 2. La subida al storage la hace la Edge Function (server-to-server, confiable en mobile)
+      //    y nos devuelve la URL en la respuesta. Ya NO subimos directo desde el cliente,
+      //    porque en mobile esa subida directa se colgaba y trababa toda la pantalla.
 
-      // 3. IA con fetch directo + timeout de 30s
+      // 3. IA + subida de imagen en la Edge Function, con timeout de 30s
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000))
       const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -1254,7 +1253,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
       ])
       const data = await respRaw.json()
       const error = !respRaw.ok ? data : null
-      imageUrl = await subida   // esperar a que termine la subida (clave en mobile/red lenta)
+      imageUrl = data?.imagen_url || ''   // la Edge Function ya subió la imagen y devolvió la URL
       if (!error && data?.content) {
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
@@ -1267,7 +1266,24 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
         if (!tipo) { tipo = 'factura_a'; iva = true }
         // Inferir situación impositiva del proveedor según la letra del comprobante
         const sitIA = tipo === 'factura_c' ? 'monotributo' : (tipo === 'factura_a' || tipo === 'factura_b') ? 'responsable_inscripto' : null
-        setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva }))
+        // Crédito fiscal: SOLO Factura A a nombre de SEATE. Comparación de CUIT sin guiones/puntos.
+        const soloDigitos = v => String(v ?? '').replace(/\D/g, '')
+        const seateCuit = soloDigitos(SEATE_CUIT)
+        let aNombreSeate = false
+        if (tipo === 'factura_a') {
+          const cuitRec = soloDigitos(parsed.cuit_receptor)
+          const recNombre = String(parsed.receptor || '').toLowerCase()
+          if (cuitRec === seateCuit || recNombre.includes(SEATE_NOMBRE.toLowerCase())) {
+            aNombreSeate = true                       // detectado a nombre de SEATE
+          } else if (cuitRec || recNombre) {
+            aNombreSeate = false                      // detectó otro receptor → no computa
+          } else {
+            // No se pudo leer el receptor: preguntar al usuario
+            aNombreSeate = window.confirm('No se pudo leer a nombre de quién está la Factura A.\n\n¿Está a nombre de SEATE S.R.L. (CUIT 30715138022)?\n\nAceptar = Sí (computa crédito fiscal)\nCancelar = No')
+          }
+        }
+        const ivaMonto = parseFloat(parsed.iva_monto) || 0
+        setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva, a_nombre_seate: aNombreSeate, iva_monto: ivaMonto }))
         if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) }, parsed.cuit || null, sitIA)
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
@@ -1275,7 +1291,6 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
       }
     } catch (e) {
       console.error('procesarFoto error:', e)
-      imageUrl = await subida.catch(() => '')   // igual esperamos la subida aunque la IA falle
       setForm(f => ({ ...f, imagen_url: imageUrl }))
       window._toast?.(e?.message === 'timeout' ? 'IA tardó demasiado — completá los datos manualmente' : 'Error al analizar la imagen — completá los datos manualmente')
     } finally {
@@ -1504,7 +1519,7 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
       <Campo label="Concepto"><select style={inputSt} value={form.concepto} onChange={e => set('concepto', e.target.value)}>{CONCEPTOS.map(c => <option key={c} value={c}>{CONCEPTO_LABELS[c]}</option>)}</select></Campo>
       <Campo label="Monto"><input style={inputSt} type="number" value={form.monto} onChange={e => set('monto', e.target.value)} placeholder="0" /></Campo>
       <Campo label="Tipo de comprobante">
-        <select style={inputSt} value={form.tipo_comprobante || 'factura_a'} onChange={e => { set('tipo_comprobante', e.target.value); const t = TIPOS_COMPROBANTE.find(t => t.value === e.target.value); if (t) set('discrimina_iva', t.iva) }}>
+        <select style={inputSt} value={form.tipo_comprobante || 'factura_a'} onChange={e => { set('tipo_comprobante', e.target.value); const t = TIPOS_COMPROBANTE.find(t => t.value === e.target.value); if (t) set('discrimina_iva', t.iva); if (e.target.value !== 'factura_a') set('a_nombre_seate', false) }}>
           {TIPOS_COMPROBANTE.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
       </Campo>
@@ -1516,6 +1531,15 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
           <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{form.discrimina_iva ? '→ Factura A' : '→ Sin IVA'}</span>
         </label>
       </Campo>
+      {form.tipo_comprobante === 'factura_a' && (
+        <Campo label="Crédito fiscal" style={{ gridColumn: '1/-1' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!form.a_nombre_seate} onChange={e => set('a_nombre_seate', e.target.checked)} style={{ width: 15, height: 15, accentColor: C.purple }} />
+            Factura a nombre de SEATE S.R.L. (CUIT 30715138022)
+            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{form.a_nombre_seate ? '→ computa crédito fiscal' : '→ no computa'}</span>
+          </label>
+        </Campo>
+      )}
       <Campo label="Descripción" style={{ gridColumn: '1/-1' }}><textarea style={{ ...inputSt, minHeight: 64, resize: 'vertical' }} value={form.descripcion || ''} onChange={e => set('descripcion', e.target.value)} /></Campo>
     </div>
   )

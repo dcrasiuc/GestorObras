@@ -82,3 +82,8 @@ export const RUBROS = [
 
 // ── IVA ──────────────────────────────────────────────────────
 export const IVA = 0.21
+
+// ── Empresa (para crédito fiscal) ────────────────────────────
+// El crédito fiscal solo se computa con Factura A a nombre de SEATE S.R.L.
+export const SEATE_CUIT = '30715138022'
+export const SEATE_NOMBRE = 'SEATE'
