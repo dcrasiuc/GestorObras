@@ -415,8 +415,10 @@ function SeateHex({ size = 20, color = '#7B4DB5' }) {
 // ── Mobile header stats ───────────────────────────────────────
 function MobileHeaderStats({ obras, gastos }) {
   const obrasActivas = obras.filter(o => o.estado === 'activa').length
-  const totalGastos = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
-  const pendiente = gastos.filter(g => !g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
+  const idsActivas = new Set(obras.filter(o => o.estado === 'activa').map(o => o.id))
+  const gastosActivas = gastos.filter(g => idsActivas.has(g.obra_id))
+  const totalGastos = gastosActivas.reduce((s, g) => s + (g.monto ?? 0), 0)
+  const pendiente = gastosActivas.filter(g => !g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
     <div>
       <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>Total gastado</div>
@@ -432,8 +434,10 @@ function MobileHeaderStats({ obras, gastos }) {
 // ── Panel Inicio ──────────────────────────────────────────────
 function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoGasto, onNuevoFoto }) {
   const obrasActivas = obras.filter(o => o.estado === 'activa')
-  const totalGastos = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
-  const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
+  const idsActivas = new Set(obrasActivas.map(o => o.id))
+  const gastosActivas = gastos.filter(g => idsActivas.has(g.obra_id))
+  const totalGastos = gastosActivas.reduce((s, g) => s + (g.monto ?? 0), 0)
+  const pagado = gastosActivas.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   const pendiente = totalGastos - pagado
   const ultimosGastos = gastos.slice(0, 5)
 
@@ -449,9 +453,9 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
         </PageHeader>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
           {[
-            { label: 'Total gastos',   value: `$ ${fmt(totalGastos)}`, sub: `${gastos.length} comprobantes` },
+            { label: 'Total gastos',   value: `$ ${fmt(totalGastos)}`, sub: `${gastosActivas.length} comprobantes` },
             { label: 'Pagado',         value: `$ ${fmt(pagado)}`,      sub: `${totalGastos > 0 ? Math.round(pagado/totalGastos*100) : 0}%` },
-            { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${gastos.filter(g=>!g.pagado).length} facturas`, alert: pendiente > 0 },
+            { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${gastosActivas.filter(g=>!g.pagado).length} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
@@ -473,7 +477,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Pendiente</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: pendiente > 0 ? '#D0021B' : C.textFaint, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(pendiente)}</div>
-          <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{gastos.filter(g=>!g.pagado).length} facturas</div>
+          <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{gastosActivas.filter(g=>!g.pagado).length} facturas</div>
         </div>
       </div>
 
