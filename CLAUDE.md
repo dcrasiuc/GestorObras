@@ -225,18 +225,27 @@ export const C = {
 
 ## Proceso de deploy
 
-**El build SIEMPRE se hace en la PC del usuario (Windows), no en el sandbox Linux.**  
-(El sandbox tiene binarios Linux, no funciona para rolldown/Vite en este proyecto.)
+**Plataforma:** Cloudflare **Pages** (no Workers)  
+**Trigger:** `workflow_dispatch` — el workflow NO se dispara automáticamente en cada push. Hay que lanzarlo manualmente desde GitHub Actions.
 
+**Pasos:**
+1. Hacer el build y push en la PC Windows (el sandbox Linux no tiene los binarios correctos):
 ```bash
-# En la terminal de Windows (C:\Users\dcras\gestor-obras):
+# En terminal Windows (C:\Users\dcras\gestor-obras):
 npm run build
 git add -A
 git commit -m "descripción del cambio"
-git push
+git push origin main
 ```
+2. Ir a GitHub → Actions → "Deploy to Cloudflare Pages" → **Run workflow** manualmente.
 
-El deploy a Cloudflare Workers se hace automáticamente vía GitHub → Cloudflare Pages/Workers.
+**Variables de entorno** (GitHub Secrets):
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `CLOUDFLARE_API_TOKEN`
+
+**Proyecto Cloudflare Pages:** `gestordeobras`  
+**Workflow:** `.github/workflows/deploy.yml` (usa `cloudflare/pages-action@v1`, directorio `dist`)
 
 ---
 

@@ -57,7 +57,7 @@ function useObras(usuarioId, esAdmin) {
   // obrasIds: null = admin (sin restricción), array = IDs permitidos para operador
   // undefined mientras carga (para no filtrar con lista vacía prematuramente)
   const obrasIds = loading ? undefined : (esAdmin ? null : obras.map(o => o.id))
-  return { obras, loading, recargar: cargar, obrasIds }
+  return { obras, setObras, loading, recargar: cargar, obrasIds }
 }
 
 function useGastos(obrasIds) {
@@ -98,7 +98,7 @@ export default function GestorObras({ usuario }) {
   const [onProveedorCreado, setOnProveedorCreado] = useState(null)
 
   const { clientes, proveedores, bancos, recargarListas, setProveedores } = useListas()
-  const { obras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
+  const { obras, setObras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
   const { gastos: todosGastos, setGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const gastos = filtroObraId ? todosGastos.filter(g => g.obra_id === filtroObraId) : todosGastos
   // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
@@ -305,7 +305,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async id => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${id}`); setGastos(prev => prev.filter(g => g.id !== id)); recargarTodo(true) } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); setObras(prev => prev.map(o => o.id === g.obra_id ? { ...o, total_gastado: (o.total_gastado ?? 0) - (g.monto ?? 0), cant_gastos: Math.max(0, (o.cant_gastos ?? 1) - 1) } : o)); recargarTodo(true) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
@@ -696,7 +696,7 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                       {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                       <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
-                      <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>
+                      <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                     </div>
                   </div>
                 </div>
@@ -736,7 +736,7 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                         {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                         <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
-                        <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g.id)}>✕</button>
+                        <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                       </div>
                     </td>
                   </tr>
