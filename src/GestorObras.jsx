@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
 import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite } from './utils'
+import { exportarExcel } from './exportExcel'
 import './toast'
 
 // ── Hooks ────────────────────────────────────────────────────
@@ -311,7 +312,7 @@ export default function GestorObras({ usuario }) {
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
-            {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} loading={loadingGastos} />}
+            {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
               onEliminarCliente={async c => { if (!window.confirm(`¿Eliminar cliente "${c.nombre}"?`)) return; await dbWrite('DELETE', 'clientes', null, `id=eq.${c.id}`); recargarListas() }}
               onEliminarProveedor={async p => { if (!window.confirm(`¿Eliminar proveedor "${p.nombre}"?`)) return; await dbWrite('DELETE', 'proveedores', null, `id=eq.${p.id}`); recargarListas() }}
@@ -787,8 +788,17 @@ function PanelGastos({ obras, gastos: gastosRaw, loading, filtroObraId, setFiltr
 }
 
 // ── Panel Informe ─────────────────────────────────────────────
-function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
+function PanelInforme({ obras, gastos: todosGastosInforme, bancos = [], esAdmin, loading }) {
   const [obraId, setObraId] = useState('')
+  const exportar = () => {
+    try {
+      exportarExcel(obras, todosGastosInforme, bancos)
+      window._toast?.('Excel generado', 'ok')
+    } catch (e) {
+      console.error('exportarExcel error:', e)
+      window._toast?.('No se pudo generar el Excel', 'error')
+    }
+  }
   // Solo obras activas entran en informes y totales (las pausadas/finalizadas se excluyen)
   const obrasActivasInforme = obras.filter(o => o.estado === 'activa')
   const idsActivasInforme = new Set(obrasActivasInforme.map(o => o.id))
@@ -811,10 +821,13 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22, flexWrap: 'wrap', gap: 10 }}>
         <PageTitle titulo="Informe" sub="Resumen financiero" />
-        <select value={obraIdEfectivo} onChange={e => setObraId(e.target.value)} style={{ ...inputSt, width: 'auto', minWidth: 220 }}>
-          <option value="">Todas las obras activas</option>
-          {obrasActivasInforme.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
-        </select>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select value={obraIdEfectivo} onChange={e => setObraId(e.target.value)} style={{ ...inputSt, width: 'auto', minWidth: 220 }}>
+            <option value="">Todas las obras activas</option>
+            {obrasActivasInforme.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+          </select>
+          {esAdmin && <BtnSecondary onClick={exportar}>📊 Exportar a Excel</BtnSecondary>}
+        </div>
       </div>
       {loading ? <Spinner /> : (
         <>
