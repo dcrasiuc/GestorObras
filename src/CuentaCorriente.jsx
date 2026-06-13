@@ -41,12 +41,18 @@ function useRemitos(proveedorId) {
   const cargar = useCallback(async () => {
     if (!proveedorId) { setRemitos([]); return }
     setLoading(true)
-    const { data } = await supabase
-      .from('remitos')
-      .select('*, remito_items(*), comprobante_obras(*), factura_remitos(gasto_id)')
-      .eq('proveedor_id', proveedorId)
-      .order('fecha', { ascending: false })
-    setRemitos(data ?? [])
+    const failsafe = setTimeout(() => setLoading(false), 12000)
+    try {
+      const { data } = await supabase
+        .from('remitos')
+        .select('*, remito_items(*), comprobante_obras(*), factura_remitos(gasto_id)')
+        .eq('proveedor_id', proveedorId)
+        .order('fecha', { ascending: false })
+      setRemitos(data ?? [])
+    } catch (e) {
+      console.error('useRemitos exception:', e)
+    }
+    clearTimeout(failsafe)
     setLoading(false)
   }, [proveedorId])
   useEffect(() => { cargar() }, [cargar])
@@ -73,6 +79,7 @@ function useResumenCC() {
   const [loading, setLoading] = useState(true)
   const cargar = useCallback(async () => {
     setLoading(true)
+    const failsafe = setTimeout(() => setLoading(false), 12000)
     try {
       const { data, error } = await supabase
         .from('remitos')
@@ -95,6 +102,7 @@ function useResumenCC() {
       console.error('useResumenCC exception:', e)
       setResumen([])
     }
+    clearTimeout(failsafe)
     setLoading(false)
   }, [])
   useEffect(() => { cargar() }, [cargar])
@@ -118,7 +126,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
 
   const proveedor = proveedores.find(p => p.id === proveedorId)
   const esRI = proveedor?.situacion_impositiva === 'responsable_inscripto'
-  const remitosP = remitos.filter(r => r.estado === 'pendiente')
+  const remitosP = remitos.filter(r => r.estado === 'pendiente' || r.estado === 'facturado')
   const saldoPendiente = remitosP.reduce((s, r) => s + (r.monto_neto ?? 0), 0)
   const saldoConIva = esRI ? saldoPendiente * (1 + IVA) : saldoPendiente
 
@@ -219,7 +227,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
 
       {/* Stats del proveedor */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
-        <StatCard label="Remitos pendientes" value={remitosP.length} sub="sin cancelar" />
+        <StatCard label="Sin pagar" value={remitosP.length} sub={`${remitos.filter(r=>r.estado==='facturado').length} facturado${remitos.filter(r=>r.estado==='facturado').length!==1?'s':''}`} />
         <StatCard label="Saldo neto" value={`$ ${fmt(saldoPendiente)}`} sub="sin IVA" />
         {esRI && <StatCard label="Saldo c/ IVA (21%)" value={`$ ${fmt(saldoConIva)}`} sub="estimado con factura A" color={C.orange} />}
       </div>
@@ -237,7 +245,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
         <>
           {/* Stats del proveedor */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
-            <StatCard label="Remitos pendientes" value={remitosP.length} sub="sin cancelar" />
+            <StatCard label="Sin pagar" value={remitosP.length} sub={`${remitos.filter(r=>r.estado==='facturado').length} facturado${remitos.filter(r=>r.estado==='facturado').length!==1?'s':''}`} />
             <StatCard label="Saldo neto" value={`$ ${fmt(saldoPendiente)}`} sub="sin IVA" />
             {esRI && <StatCard label={`Saldo c/ IVA (21%)`} value={`$ ${fmt(saldoConIva)}`} sub="estimado con factura A" color={C.orange} />}
             <StatCard label="Situación fiscal" value={proveedor?.situacion_impositiva === 'responsable_inscripto' ? 'Resp. Inscripto' : proveedor?.situacion_impositiva === 'monotributo' ? 'Monotributo' : 'Otro'} sub={esRI ? 'Factura A + IVA' : 'Factura C'} color={C.purple} />
@@ -254,7 +262,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
 
           {/* Lista remitos */}
           {tab === 'remitos' && (
-            loading ? <Spinner /> : remitos.length === 0 ? <EmptyState texto="No hay remitos para este proveedor" /> : (
+            loadingRemitos ? <Spinner /> : remitos.length === 0 ? <EmptyState texto="No hay remitos para este proveedor" /> : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {remitos.map(r => (
                   <RemitoCard key={r.id} remito={r} obras={obras} esAdmin={esAdmin} esRI={esRI}
@@ -346,6 +354,19 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
             await dbWrite('DELETE', 'comprobante_obras', null, `referencia_id=eq.${itemEditando.id}&tipo=eq.remito`)
             await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: itemEditando.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
             cerrarModal(); recargarRemitos()
+          }}
+        />
+      )}
+
+      {modal === 'vincularFactura' && (
+        <ModalVincularFactura
+          remito={itemEditando}
+          remitosDisponibles={remitos.filter(r => r.estado === 'pendiente')}
+          esRI={esRI}
+          onClose={cerrarModal}
+          onGuardar={async (datos, remitoIds) => {
+            await dbWrite('PATCH', 'remitos', { nro_factura: datos.nro_factura, fecha_factura: datos.fecha_factura, monto_factura: parseFloat(datos.monto_factura) || null, estado: 'facturado' }, `id=in.(${remitoIds.join(',')})`)
+            cerrarModal(); recargarRemitos(); recargarResumen()
           }}
         />
       )}
@@ -451,11 +472,21 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
 
           {remito.observaciones && <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>{remito.observaciones}</div>}
 
+          {/* Factura vinculada */}
+          {remito.nro_factura && (
+            <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12 }}>
+              <div style={{ fontWeight: 600, color: C.purple, marginBottom: 2 }}>🔗 Factura vinculada</div>
+              <div style={{ color: C.text }}>N° {remito.nro_factura}{remito.fecha_factura ? ` · ${remito.fecha_factura}` : ''}</div>
+              {remito.monto_factura > 0 && <div style={{ color: C.textMuted, marginTop: 2 }}>Monto factura: $ {fmt(remito.monto_factura)}</div>}
+            </div>
+          )}
+
           {/* Acciones */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {remito.imagen_url && <a href={remito.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>📎 Ver remito</a>}
             <button style={btnSt} onClick={onDistribuir}>🏗️ Distribuir obras</button>
             {remito.estado === 'pendiente' && <button style={{ ...btnSt, color: C.purple, background: C.purpleDim, borderColor: C.border }} onClick={onVincularFactura}>🔗 Vincular factura</button>}
+            {remito.estado === 'facturado' && <button style={{ ...btnSt, color: C.purple, background: C.purpleDim, borderColor: C.border }} onClick={onVincularFactura}>✏️ Editar factura</button>}
             {esAdmin && <button style={btnSt} onClick={onEditar}>✏️ Editar</button>}
             {esAdmin && remito.estado === 'pendiente' && <button style={{ ...btnSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={onEliminar}>✕ Eliminar</button>}
           </div>
@@ -712,6 +743,80 @@ function ModalDistribuir({ remito, obras, esRI, onClose, onGuardar }) {
   )
 }
 
+// ── Modal Vincular Factura ────────────────────────────────────
+function ModalVincularFactura({ remito, remitosDisponibles, esRI, onClose, onGuardar }) {
+  const [seleccionados, setSeleccionados] = useState([remito.id])
+  const [form, setForm] = useState({
+    nro_factura: remito.nro_factura || '',
+    fecha_factura: remito.fecha_factura || hoy(),
+    monto_factura: remito.monto_factura || '',
+  })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const toggle = (id) => {
+    if (id === remito.id) return // el remito origen siempre incluido
+    setSeleccionados(sel => sel.includes(id) ? sel.filter(s => s !== id) : [...sel, id])
+  }
+
+  const remitosSel = remitosDisponibles.filter(r => seleccionados.includes(r.id))
+  const totalNeto = remitosSel.reduce((s, r) => s + (r.monto_neto ?? 0), 0)
+  const totalConIva = esRI ? totalNeto * 1.21 : totalNeto
+
+  return (
+    <Modal title="Vincular a Factura" onClose={onClose} ancho={500}
+      onGuardar={() => {
+        if (!form.nro_factura.trim()) return toast('Ingresá el número de factura')
+        onGuardar(form, seleccionados)
+      }}
+      guardarLabel="Vincular y marcar como facturado"
+    >
+      {/* Remitos a incluir */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>
+          Remitos que cubre esta factura
+        </div>
+        <div style={{ background: '#FAFAFA', border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+          {remitosDisponibles.map((r, i) => (
+            <label key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: i < remitosDisponibles.length - 1 ? `1px solid ${C.borderFaint}` : 'none', cursor: r.id === remito.id ? 'default' : 'pointer', background: r.id === remito.id ? C.purpleDim : 'transparent' }}>
+              <input type="checkbox" checked={seleccionados.includes(r.id)} onChange={() => toggle(r.id)} disabled={r.id === remito.id} style={{ accentColor: C.purple, width: 15, height: 15 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: r.id === remito.id ? 600 : 400, color: C.text }}>
+                  {r.nro_remito || 'Sin nro.'} — {r.fecha}
+                  {r.id === remito.id && <span style={{ fontSize: 10, color: C.purple, marginLeft: 6 }}>este remito</span>}
+                </div>
+                {r.monto_neto > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>$ {fmt(r.monto_neto)} neto</div>}
+              </div>
+            </label>
+          ))}
+        </div>
+        {totalNeto > 0 && (
+          <div style={{ marginTop: 6, padding: '6px 12px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: C.textMuted }}>Total remitos seleccionados (neto): $ {fmt(totalNeto)}</span>
+            {esRI && <span style={{ color: C.orange }}>c/IVA: $ {fmt(totalConIva)}</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Datos de la factura */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Campo label="Nro. de factura" style={{ gridColumn: '1/-1' }}>
+          <input style={inputSt} value={form.nro_factura} onChange={e => set('nro_factura', e.target.value)} placeholder="A 0001-00001234" />
+        </Campo>
+        <Campo label="Fecha de factura">
+          <input style={inputSt} type="date" value={form.fecha_factura} onChange={e => set('fecha_factura', e.target.value)} />
+        </Campo>
+        <Campo label={`Monto factura${esRI ? ' (c/IVA)' : ''}`}>
+          <input style={inputSt} type="number" value={form.monto_factura} onChange={e => set('monto_factura', e.target.value)} placeholder={totalConIva > 0 ? fmt(totalConIva) : '0'} />
+        </Campo>
+      </div>
+
+      <div style={{ marginTop: 12, padding: '10px 14px', background: '#FFF8ED', border: `1px solid #FFDCAA`, borderRadius: 8, fontSize: 12, color: C.orange }}>
+        ⚠ Los remitos seleccionados pasarán a estado <strong>Facturado</strong> y quedarán pendientes de pago.
+      </div>
+    </Modal>
+  )
+}
+
 // ── Modal Pagar CC ────────────────────────────────────────────
 function ModalPagarCC({ proveedor, remitos, bancos, esRI, onClose, onGuardar }) {
   const [seleccionados, setSeleccionados] = useState(remitos.map(r => r.id))
@@ -749,10 +854,13 @@ function ModalPagarCC({ proveedor, remitos, bancos, esRI, onClose, onGuardar }) 
         <div style={{ fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Remitos a cancelar</div>
         <div style={{ background: '#FAFAFA', border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
           {remitos.map((r, i) => (
-            <label key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: i < remitos.length - 1 ? `1px solid ${C.borderFaint}` : 'none', cursor: 'pointer' }}>
+            <label key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: i < remitos.length - 1 ? `1px solid ${C.borderFaint}` : 'none', cursor: 'pointer', background: r.nro_factura ? C.purpleDim : 'transparent' }}>
               <input type="checkbox" checked={seleccionados.includes(r.id)} onChange={() => toggleRemito(r.id)} style={{ accentColor: C.purple, width: 15, height: 15 }} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{r.nro_remito || 'Sin nro.'} — {r.fecha}</div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: C.text }}>
+                  {r.nro_remito || 'Sin nro.'} — {r.fecha}
+                  {r.nro_factura && <span style={{ fontSize: 10, color: C.purple, marginLeft: 6, fontWeight: 600 }}>🔗 Fac. {r.nro_factura}</span>}
+                </div>
                 {r.monto_neto > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>Neto: $ {fmt(r.monto_neto)}{esRI ? ` → c/IVA: $ ${fmt(r.monto_neto * (1 + IVA))}` : ''}</div>}
               </div>
             </label>
