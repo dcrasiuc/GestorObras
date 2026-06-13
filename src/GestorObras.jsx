@@ -812,40 +812,35 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
 
 // ── Gráfico temporal por rubro ────────────────────────────────
 function GraficoTemporalRubros({ gastos }) {
-  const getLunes = dateStr => {
-    const d = new Date(dateStr + 'T12:00:00')
-    const dow = d.getDay()
-    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
-    return d.toISOString().slice(0, 10)
-  }
-
-  const semanas = {}
+  const dias = {}
   gastos.forEach(g => {
     if (!g.fecha || !g.monto) return
-    const s = getLunes(g.fecha)
-    if (!semanas[s]) semanas[s] = {}
+    if (!dias[g.fecha]) dias[g.fecha] = {}
     const c = g.concepto || 'varios'
-    semanas[s][c] = (semanas[s][c] ?? 0) + (g.monto ?? 0)
+    dias[g.fecha][c] = (dias[g.fecha][c] ?? 0) + (g.monto ?? 0)
   })
-  const semKeys = Object.keys(semanas).sort()
-  if (semKeys.length === 0) return null
+  const diaKeys = Object.keys(dias).sort()
+  if (diaKeys.length === 0) return null
 
-  const maxVal = Math.max(...CONCEPTOS.flatMap(c => semKeys.map(s => semanas[s][c] ?? 0)), 1)
+  const maxVal = Math.max(...CONCEPTOS.flatMap(c => diaKeys.map(d => dias[d][c] ?? 0)), 1)
   const fmtY = v => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : v >= 1000 ? `${Math.round(v/1000)}k` : String(v)
-  const fmtSem = dateStr => { const [,m,d] = dateStr.split('-'); return `${d}/${m}` }
+  const fmtDia = dateStr => { const [,m,d] = dateStr.split('-'); return `${d}/${m}` }
 
-  const H = 150, PAD_L = 52, PAD_B = 32, PAD_T = 8
-  const STEP = 52
-  const svgW = PAD_L + (semKeys.length - 1) * STEP + 24
+  const H = 150, PAD_L = 52, PAD_B = 28, PAD_T = 8
+  const STEP = 40
+  const svgW = PAD_L + (diaKeys.length - 1) * STEP + 24
 
   const xOf = i => PAD_L + i * STEP
   const yOf = val => PAD_T + H - (val / maxVal) * H
 
-  const rubrosActivos = CONCEPTOS.filter(c => semKeys.some(s => (semanas[s][c] ?? 0) > 0))
+  const rubrosActivos = CONCEPTOS.filter(c => diaKeys.some(d => (dias[d][c] ?? 0) > 0))
+
+  // Mostrar etiqueta cada N días para no solapar
+  const cadaN = diaKeys.length <= 7 ? 1 : diaKeys.length <= 20 ? 3 : diaKeys.length <= 60 ? 7 : 14
 
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '18px 20px', marginTop: 14 }}>
-      <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Evolución semanal por rubro</div>
+      <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Evolución diaria por rubro</div>
       <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
         <svg width={Math.max(svgW, 300)} height={H + PAD_T + PAD_B} style={{ display: 'block' }}>
           {/* Líneas de referencia Y */}
@@ -862,23 +857,23 @@ function GraficoTemporalRubros({ gastos }) {
           {/* Líneas por rubro */}
           {rubrosActivos.map(c => {
             const color = CONCEPTO_COLORS[c][1]
-            const puntos = semKeys.map((s, i) => [xOf(i), yOf(semanas[s][c] ?? 0)])
+            const puntos = diaKeys.map((d, i) => [xOf(i), yOf(dias[d][c] ?? 0)])
             const path = puntos.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x},${y}`).join(' ')
             return (
               <g key={c}>
                 <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
                 {puntos.map(([x, y], i) => (
-                  <circle key={i} cx={x} cy={y} r={3} fill={color} stroke="#fff" strokeWidth={1.5} />
+                  <circle key={i} cx={x} cy={y} r={2.5} fill={color} stroke="#fff" strokeWidth={1.5} />
                 ))}
               </g>
             )
           })}
 
-          {/* Etiquetas eje X — una cada 2 semanas si hay muchas */}
-          {semKeys.map((s, i) => {
-            if (semKeys.length > 8 && i % 2 !== 0) return null
+          {/* Etiquetas eje X */}
+          {diaKeys.map((d, i) => {
+            if (i % cadaN !== 0) return null
             return (
-              <text key={s} x={xOf(i)} y={PAD_T + H + 18} textAnchor="middle" fontSize={9} fill="#888888">{fmtSem(s)}</text>
+              <text key={d} x={xOf(i)} y={PAD_T + H + 18} textAnchor="middle" fontSize={9} fill="#888888">{fmtDia(d)}</text>
             )
           })}
         </svg>
