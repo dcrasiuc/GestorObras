@@ -773,7 +773,14 @@ function PanelGastos({ obras, gastos, loading, filtroObraId, setFiltroObraId, es
 // ── Panel Informe ─────────────────────────────────────────────
 function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
   const [obraId, setObraId] = useState('')
-  const gastos = obraId ? todosGastosInforme.filter(g => g.obra_id === obraId) : todosGastosInforme
+  // Solo obras activas entran en informes y totales (las pausadas/finalizadas se excluyen)
+  const obrasActivasInforme = obras.filter(o => o.estado === 'activa')
+  const idsActivasInforme = new Set(obrasActivasInforme.map(o => o.id))
+  // Si la obra seleccionada dejó de estar activa, volvemos a "Todas"
+  const obraIdEfectivo = idsActivasInforme.has(obraId) ? obraId : ''
+  const gastos = obraIdEfectivo
+    ? todosGastosInforme.filter(g => g.obra_id === obraIdEfectivo)
+    : todosGastosInforme.filter(g => idsActivasInforme.has(g.obra_id))
   const total = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   const porConcepto = {}
@@ -783,9 +790,9 @@ function PanelInforme({ obras, gastos: todosGastosInforme, loading }) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22, flexWrap: 'wrap', gap: 10 }}>
         <PageTitle titulo="Informe" sub="Resumen financiero" />
-        <select value={obraId} onChange={e => setObraId(e.target.value)} style={{ ...inputSt, width: 'auto', minWidth: 220 }}>
-          <option value="">Todas las obras</option>
-          {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+        <select value={obraIdEfectivo} onChange={e => setObraId(e.target.value)} style={{ ...inputSt, width: 'auto', minWidth: 220 }}>
+          <option value="">Todas las obras activas</option>
+          {obrasActivasInforme.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
         </select>
       </div>
       {loading ? <Spinner /> : (
