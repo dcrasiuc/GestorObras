@@ -821,7 +821,7 @@ function GraficoTemporalRubros({ gastos }) {
     meses[mes][c] = (meses[mes][c] ?? 0) + (g.monto ?? 0)
   })
   const mesKeys = Object.keys(meses).sort()
-  if (mesKeys.length < 2) return null
+  if (mesKeys.length === 0) return null
 
   const totales = mesKeys.map(m => CONCEPTOS.reduce((s, c) => s + (meses[m][c] ?? 0), 0))
   const maxTotal = Math.max(...totales, 1)
