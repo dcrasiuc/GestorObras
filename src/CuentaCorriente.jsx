@@ -265,7 +265,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
                       if (!window.confirm('¿Anular este remito? Se elimina de la cuenta corriente.')) return
                       // Vía dbWrite: el delete directo se cuelga en mobile
                       await dbWrite('DELETE', 'remitos', null, `id=eq.${r.id}`)
-                      recargarRemitos()
+                      recargarTodo()
                     }}
                   />
                 ))}
@@ -324,7 +324,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
               await dbWrite('DELETE', 'comprobante_obras', null, `referencia_id=eq.${remitoId}&tipo=eq.remito`)
               await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: remitoId, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
             }
-            cerrarModal(); recargarRemitos()
+            cerrarModal(); recargarTodo()
           }}
         />
       )}
@@ -336,7 +336,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
             if (items.length > 0) await dbWrite('POST', 'remito_items', items.map(it => ({ ...it, remito_id: row.id })))
             if (dist.length > 0) await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: row.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
             if (datos.proveedor_id && datos.proveedor_id !== proveedorId) setProveedorId(datos.proveedor_id)
-            cerrarModal(); recargarRemitos()
+            cerrarModal(); recargarTodo()
           }}
         />
       )}
@@ -346,7 +346,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
           onGuardar={async (dist) => {
             await dbWrite('DELETE', 'comprobante_obras', null, `referencia_id=eq.${itemEditando.id}&tipo=eq.remito`)
             await dbWrite('POST', 'comprobante_obras', dist.map(d => ({ tipo: 'remito', referencia_id: itemEditando.id, obra_id: d.obra_id, monto: parseFloat(d.monto) || 0, porcentaje: parseFloat(d.porcentaje) || 0 })))
-            cerrarModal(); recargarRemitos()
+            cerrarModal(); recargarTodo()
           }}
         />
       )}
@@ -359,7 +359,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
           onClose={cerrarModal}
           onGuardar={async (datos, remitoIds) => {
             await dbWrite('PATCH', 'remitos', { nro_factura: datos.nro_factura, fecha_factura: datos.fecha_factura, monto_factura: parseFloat(datos.monto_factura) || null, estado: 'facturado' }, `id=in.(${remitoIds.join(',')})`)
-            cerrarModal(); recargarRemitos(); recargarResumen()
+            cerrarModal(); recargarTodo()
           }}
         />
       )}
@@ -370,7 +370,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
             const row = await dbWrite('POST', 'cc_pagos', { ...pago, proveedor_id: proveedorId, creado_por: usuario?.id }, null, true)
             await dbWrite('POST', 'cc_pago_items', remitoIds.map((rid, i) => ({ pago_id: row.id, tipo: 'remito', referencia_id: rid, monto_aplicado: montosAplicados[i] })))
             await dbWrite('PATCH', 'remitos', { estado: 'cancelado' }, `id=in.(${remitoIds.join(',')})`)
-            cerrarModal(); recargarRemitos(); recargarPagos()
+            cerrarModal(); recargarTodo()
           }}
         />
       )}
