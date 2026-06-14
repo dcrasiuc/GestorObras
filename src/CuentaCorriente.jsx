@@ -45,7 +45,7 @@ function useRemitos(proveedorId) {
     try {
       const { data } = await supabase
         .from('remitos')
-        .select('*, remito_items(*), comprobante_obras(*), factura_remitos(gasto_id)')
+        .select('*, remito_items(*), comprobante_obras(*)')
         .eq('proveedor_id', proveedorId)
         .order('fecha', { ascending: false })
       setRemitos(data ?? [])
