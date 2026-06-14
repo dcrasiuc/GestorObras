@@ -225,22 +225,6 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
         </div>
       </div>
 
-      {/* Stats del proveedor */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
-        <StatCard label="Sin pagar" value={remitosP.length} sub={`${remitos.filter(r=>r.estado==='facturado').length} facturado${remitos.filter(r=>r.estado==='facturado').length!==1?'s':''}`} />
-        <StatCard label="Saldo neto" value={`$ ${fmt(saldoPendiente)}`} sub="sin IVA" />
-        {esRI && <StatCard label="Saldo c/ IVA (21%)" value={`$ ${fmt(saldoConIva)}`} sub="estimado con factura A" color={C.orange} />}
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', marginBottom: 16, width: 'fit-content' }}>
-        {[{ id: 'remitos', label: `Remitos (${remitos.length})` }, { id: 'pagos', label: `Pagos (${pagos.length})` }].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '7px 18px', fontSize: 13, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: tab === t.id ? 600 : 400, background: tab === t.id ? C.purpleDim : C.surface, color: tab === t.id ? C.purple : C.textMuted }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       {!proveedorId ? null : (
         <>
           {/* Stats del proveedor */}
