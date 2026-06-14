@@ -12,6 +12,8 @@ const num = v => Math.round((parseFloat(v) || 0) * 100) / 100
 const creditoFiscal = g => (g.tipo_comprobante === 'factura_a' && g.a_nombre_seate)
   ? (num(g.iva_monto) > 0 ? Math.round(num(g.iva_monto)) : Math.round(num(g.monto) * IVA / (1 + IVA)))
   : 0
+// Imputación por obra: distribución si existe, si no 100% a la obra principal
+const imputObra = g => (g?.distribucion?.length > 0) ? g.distribucion.map(d => ({ obra_id: d.obra_id, monto: num(d.monto) })) : [{ obra_id: g.obra_id, monto: num(g.monto) }]
 
 // Ajusta el ancho de columnas según el contenido
 function autoAnchos(rows) {
@@ -30,7 +32,7 @@ export function exportarExcel(obras = [], gastos = [], bancos = []) {
     .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
     .map(g => ({
       'Fecha': g.fecha ?? '',
-      'Obra': g.obras?.nombre ?? '',
+      'Obra': g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? ''),
       'Proveedor': g.proveedores?.nombre ?? '',
       'Concepto': labelConcepto(g.concepto),
       'Comprobante': labelComprobante(g.tipo_comprobante),
@@ -46,9 +48,19 @@ export function exportarExcel(obras = [], gastos = [], bancos = []) {
   const filasObras = [...obras]
     .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)))
     .map(o => {
-      const gastosObra = gastos.filter(g => g.obra_id === o.id)
-      const totalGastado = gastosObra.reduce((s, g) => s + num(g.monto), 0)
-      const credito = gastosObra.reduce((s, g) => s + creditoFiscal(g), 0)
+      // Sensible a la distribución: cada gasto suma a la obra solo su parte
+      let totalGastado = 0, credito = 0, cant = 0, impago = 0
+      gastos.forEach(g => {
+        const partes = imputObra(g).filter(im => im.obra_id === o.id)
+        if (partes.length === 0) return
+        cant += 1
+        const totalG = num(g.monto), creditoG = creditoFiscal(g)
+        partes.forEach(im => {
+          totalGastado += im.monto
+          if (totalG > 0) credito += Math.round(creditoG * (im.monto / totalG))
+          if (!g.pagado) impago += im.monto
+        })
+      })
       const presupuesto = num(o.presupuesto)
       return {
         'Obra': o.nombre ?? '',
@@ -58,8 +70,8 @@ export function exportarExcel(obras = [], gastos = [], bancos = []) {
         'Total gastado': totalGastado,
         'Saldo presupuesto': presupuesto > 0 ? presupuesto - totalGastado : '',
         '% Avance': presupuesto > 0 ? Math.round(totalGastado / presupuesto * 100) : '',
-        'Cant. gastos': gastosObra.length,
-        'Impago': gastosObra.filter(g => !g.pagado).reduce((s, g) => s + num(g.monto), 0),
+        'Cant. gastos': cant,
+        'Impago': impago,
         'Crédito fiscal IVA': credito,
       }
     })
