@@ -204,7 +204,7 @@ export default function GestorObras({ usuario }) {
         @keyframes spin { to { transform: rotate(360deg); } }
         .card-hover { transition: box-shadow 0.15s, border-color 0.15s; }
         .card-hover:hover { border-color: #D0D0D0 !important; box-shadow: 0 4px 16px rgba(0,0,0,0.06) !important; }
-        .fade-up { animation: fadeUp 0.22s ease forwards; }
+        .fade-up { animation: fadeUp 0.22s ease; }
         /* DESKTOP: topbar nav */
         @media (max-width: 639px) {
           .desktop-only { display: none !important; }

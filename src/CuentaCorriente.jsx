@@ -213,7 +213,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <button onClick={() => setProveedorId(null)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: C.purple, fontSize: 13, fontWeight: 600, fontFamily: "'Outfit', sans-serif", padding: 0, marginBottom: 8 }}>
+          <button onClick={() => setProveedorId(null)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'pointer', color: C.purple, fontSize: 14, fontWeight: 600, fontFamily: "'Outfit', sans-serif", padding: '9px 16px', marginBottom: 10 }}>
             ← Volver
           </button>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>{proveedor?.nombre}</h1>
