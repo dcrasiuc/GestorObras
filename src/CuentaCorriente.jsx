@@ -43,12 +43,20 @@ function useRemitos(proveedorId) {
     setLoading(true)
     const failsafe = setTimeout(() => setLoading(false), 12000)
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('remitos')
-        .select('*, remito_items(*), comprobante_obras(*)')
+        .select('*, remito_items(*)')
         .eq('proveedor_id', proveedorId)
         .order('fecha', { ascending: false })
-      setRemitos(data ?? [])
+      if (error) console.error('useRemitos error:', error)
+      let lista = data ?? []
+      // Distribución por obras: comprobante_obras es polimórfica (sin FK directo), se trae aparte
+      if (lista.length > 0) {
+        const ids = lista.map(r => r.id)
+        const { data: dist } = await supabase.from('comprobante_obras').select('*').eq('tipo', 'remito').in('referencia_id', ids)
+        if (dist) lista = lista.map(r => ({ ...r, comprobante_obras: dist.filter(d => d.referencia_id === r.id) }))
+      }
+      setRemitos(lista)
     } catch (e) {
       console.error('useRemitos exception:', e)
     }
