@@ -5,8 +5,26 @@ import GestorObras from './GestorObras'
 import Login from './Login'
 
 async function cargarPerfil(userId) {
-  const { data } = await supabase.from('usuarios').select('*').eq('id', userId).single()
+  // maybeSingle: data=null cuando NO hay fila (usuario sin aprobar).
+  // Si hay error de red/consulta, devolvemos undefined para NO bloquear a un usuario ya aprobado.
+  const { data, error } = await supabase.from('usuarios').select('*').eq('id', userId).maybeSingle()
+  if (error) return undefined
   return data
+}
+
+function Pendiente({ email, onSalir }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F7F7F7', padding: 20 }}>
+      <div style={{ maxWidth: 380, textAlign: 'center', background: '#fff', border: '1px solid #EBEBEB', borderRadius: 16, padding: '32px 28px', boxShadow: '0 8px 40px rgba(0,0,0,0.06)' }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>⏳</div>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1A1A1A', margin: '0 0 8px', fontFamily: "'Outfit', sans-serif" }}>Cuenta pendiente de aprobación</h2>
+        <p style={{ fontSize: 13, color: '#888', lineHeight: 1.5, margin: '0 0 20px', fontFamily: "'Outfit', sans-serif" }}>
+          Tu cuenta ({email}) ya está creada y espera que un administrador la apruebe. Cuando te habiliten vas a poder ingresar.
+        </p>
+        <button onClick={onSalir} style={{ padding: '10px 20px', background: '#7B4DB5', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>Cerrar sesión</button>
+      </div>
+    </div>
+  )
 }
 
 function App() {
@@ -68,6 +86,8 @@ function App() {
   )
 
   if (!usuario) return <Login />
+  // perfil === null → autenticado pero sin aprobar. (undefined = error de red, lo dejamos pasar)
+  if (usuario.perfil === null) return <Pendiente email={usuario.email} onSalir={() => { localStorage.removeItem('seate-auth'); supabase.auth.signOut({ scope: 'local' }).catch(() => {}); setUsuario(null) }} />
   return <GestorObras usuario={usuario} />
 }
 

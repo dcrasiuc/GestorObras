@@ -911,7 +911,9 @@ function ModalPagarCC({ proveedor, remitos, bancos, esRI, onClose, onGuardar }) 
 
 // ── Distribución obras (componente reutilizable) ──────────────
 function DistribucionObras({ obras, dist, setDist, montoTotal }) {
-  const agregarObra = () => setDist(d => [...d, { obra_id: obras[0]?.id || '', monto: '', porcentaje: '' }])
+  const agregarObra = () => setDist(d => d.length === 0
+    ? [{ obra_id: obras[0]?.id || '', monto: montoTotal > 0 ? String(montoTotal) : '', porcentaje: '100' }]  // primera obra: 100% por defecto
+    : [...d, { obra_id: obras[0]?.id || '', monto: '', porcentaje: '' }])
   const setD = (idx, k, v) => setDist(d => d.map((it, i) => {
     if (i !== idx) return it
     const updated = { ...it, [k]: v }
