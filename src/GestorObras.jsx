@@ -23,6 +23,10 @@ function ivaCreditoImputacion(g, montoImput) {
   if (iva <= 0 || total <= 0) return 0
   return Math.round(iva * (montoImput / total))
 }
+// Imputación de un remito por obra (los remitos no tienen obra_id: solo su distribución)
+function imputacionesRemito(r) {
+  return (r.comprobante_obras || []).map(d => ({ obra_id: d.obra_id, monto: parseFloat(d.monto) || 0 }))
+}
 // Guarda la distribución por obras de un gasto en comprobante_obras (tipo='gasto').
 // Solo guarda si hay 2+ obras; con 1 o ninguna, queda como gasto de una sola obra (obra_id).
 async function guardarDistribGasto(gastoId, distribucion, total) {
@@ -123,6 +127,25 @@ function useGastos(obrasIds) {
   return { gastos, setGastos, loading, recargar: cargar }
 }
 
+// Remitos pendientes (provisorios) para imputar a las obras
+function useRemitosPendientes() {
+  const [remitosPendientes, setRemitosPendientes] = useState([])
+  const cargar = useCallback(async () => {
+    try {
+      const { data } = await supabase.from('remitos').select('*').eq('estado', 'pendiente')
+      let lista = data ?? []
+      if (lista.length > 0) {
+        const ids = lista.map(r => r.id)
+        const { data: dist } = await supabase.from('comprobante_obras').select('*').eq('tipo', 'remito').in('referencia_id', ids)
+        if (dist) lista = lista.map(r => ({ ...r, comprobante_obras: dist.filter(d => d.referencia_id === r.id) }))
+      }
+      setRemitosPendientes(lista)
+    } catch (e) { console.error('useRemitosPendientes:', e) }
+  }, [])
+  useEffect(() => { cargar() }, [cargar])
+  return { remitosPendientes, recargarRemitosPend: cargar }
+}
+
 // ── App ───────────────────────────────────────────────────────
 export default function GestorObras({ usuario }) {
   const esAdmin = usuario?.perfil?.rol === 'admin'
@@ -137,7 +160,11 @@ export default function GestorObras({ usuario }) {
   const { clientes, proveedores, bancos, recargarListas, setProveedores } = useListas()
   const { obras, setObras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
   const { gastos: todosGastos, setGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
+  const { remitosPendientes, recargarRemitosPend } = useRemitosPendientes()
   const gastos = filtroObraId ? todosGastos.filter(g => imputaciones(g).some(im => im.obra_id === filtroObraId)) : todosGastos
+  // Remitos pendientes (provisorios) imputados por obra
+  const remitosPorObra = {}
+  remitosPendientes.forEach(r => imputacionesRemito(r).forEach(im => { remitosPorObra[im.obra_id] = (remitosPorObra[im.obra_id] || 0) + im.monto }))
   // Totales por obra (sensibles a la distribución: un gasto repartido suma a cada obra su parte)
   const creditoFiscalPorObra = {}
   const totalPorObra = {}
@@ -153,11 +180,11 @@ export default function GestorObras({ usuario }) {
     obrasTocadas.forEach(o => { cantPorObra[o] = (cantPorObra[o] || 0) + 1 })
   })
   // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
-  const recargarTodo = (silent = false) => { recargarObras(!silent); recargarGastos(!silent) }
+  const recargarTodo = (silent = false) => { recargarObras(!silent); recargarGastos(!silent); recargarRemitosPend() }
 
   // Realtime: auto-actualiza cuando otro dispositivo guarda o borra datos
   useEffect(() => {
-    let timerG, timerO, timerL
+    let timerG, timerO, timerL, timerR
     const ch = supabase.channel('sync-multi-device')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gastos' }, () => {
         clearTimeout(timerG); timerG = setTimeout(recargarGastos, 800)
@@ -171,9 +198,12 @@ export default function GestorObras({ usuario }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'proveedores' }, () => {
         clearTimeout(timerL); timerL = setTimeout(recargarListas, 800)
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'remitos' }, () => {
+        clearTimeout(timerR); timerR = setTimeout(recargarRemitosPend, 800)
+      })
       .subscribe()
-    return () => { supabase.removeChannel(ch); clearTimeout(timerG); clearTimeout(timerO); clearTimeout(timerL) }
-  }, [recargarGastos, recargarObras, recargarListas])
+    return () => { supabase.removeChannel(ch); clearTimeout(timerG); clearTimeout(timerO); clearTimeout(timerL); clearTimeout(timerR) }
+  }, [recargarGastos, recargarObras, recargarListas, recargarRemitosPend])
 
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
 
@@ -331,7 +361,7 @@ export default function GestorObras({ usuario }) {
                 <button onClick={handleLogout} style={{ padding: '5px 10px', background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 7, fontSize: 11, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>Salir</button>
               </div>
             </div>
-            <MobileHeaderStats obras={obras} gastos={todosGastos} />
+            <MobileHeaderStats obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} />
           </div>
           {/* Quick actions — solo en panel inicio */}
           {panel === 'inicio' && (
@@ -354,11 +384,11 @@ export default function GestorObras({ usuario }) {
         {/* ── CONTENIDO ── */}
         <div className="main-content" style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 20px', width: '100%' }}>
           <div className="fade-up" key={panel}>
-            {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
-            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
+            {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
+            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
-            {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
+            {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
               onEliminarCliente={async c => { if (!window.confirm(`¿Eliminar cliente "${c.nombre}"?`)) return; await dbWrite('DELETE', 'clientes', null, `id=eq.${c.id}`); recargarListas() }}
               onEliminarProveedor={async p => { if (!window.confirm(`¿Eliminar proveedor "${p.nombre}"?`)) return; await dbWrite('DELETE', 'proveedores', null, `id=eq.${p.id}`); recargarListas() }}
@@ -478,40 +508,49 @@ function SeateHex({ size = 20, color = '#7B4DB5' }) {
 }
 
 // ── Mobile header stats ───────────────────────────────────────
-function MobileHeaderStats({ obras, gastos }) {
+function MobileHeaderStats({ obras, gastos, remitosPorObra = {} }) {
   const obrasActivas = obras.filter(o => o.estado === 'activa').length
   const idsActivas = new Set(obras.filter(o => o.estado === 'activa').map(o => o.id))
   // Distribución: cada gasto suma a cada obra su parte. Total = parte en obras activas.
-  let totalGastos = 0, pendiente = 0
+  let totalConfirmado = 0, pendiente = 0
   gastos.forEach(g => imputaciones(g).forEach(im => {
-    if (idsActivas.has(im.obra_id)) totalGastos += im.monto
+    if (idsActivas.has(im.obra_id)) totalConfirmado += im.monto
     if (!g.pagado) pendiente += im.monto   // pendiente = toda la deuda impaga (cualquier obra)
   }))
+  // Remitos provisorios de obras activas (se suman al total)
+  let provisorio = 0
+  Object.entries(remitosPorObra).forEach(([oid, m]) => { if (idsActivas.has(oid)) provisorio += m })
+  const totalGastos = totalConfirmado + provisorio
   return (
     <div>
       <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>Total gastado</div>
       <div style={{ fontSize: 38, fontWeight: 800, color: '#fff', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em', lineHeight: 1 }}>$ {fmt(totalGastos)}</div>
-      <div style={{ display: 'flex', gap: 14, marginTop: 6 }}>
+      <div style={{ display: 'flex', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>🏗️ {obrasActivas} obra{obrasActivas !== 1 ? 's' : ''} activa{obrasActivas !== 1 ? 's' : ''}</span>
         {pendiente > 0 && <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>⏳ {fmtK(pendiente)} pendiente</span>}
+        {provisorio > 0 && <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>📋 {fmtK(provisorio)} en remitos</span>}
       </div>
     </div>
   )
 }
 
 // ── Panel Inicio ──────────────────────────────────────────────
-function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoGasto, onNuevoFoto }) {
+function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos, onVerObras, onNuevoGasto, onNuevoFoto }) {
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
   // Distribución: un gasto cuenta en una obra activa si alguna de sus partes cae ahí
   const gastosActivas = gastos.filter(g => imputaciones(g).some(im => idsActivas.has(im.obra_id)))
-  let totalGastos = 0, pagado = 0, creditoFiscal = 0
+  let totalConfirmado = 0, pagado = 0, creditoFiscal = 0
   gastos.forEach(g => imputaciones(g).forEach(im => {
     if (!idsActivas.has(im.obra_id)) return
-    totalGastos += im.monto
+    totalConfirmado += im.monto
     if (g.pagado) pagado += im.monto
     creditoFiscal += ivaCreditoImputacion(g, im.monto)
   }))
+  // Remitos provisorios de obras activas (se suman al total, con aclaración)
+  let provisorio = 0
+  Object.entries(remitosPorObra).forEach(([oid, m]) => { if (idsActivas.has(oid)) provisorio += m })
+  const totalGastos = totalConfirmado + provisorio
   // Pendiente = toda la deuda impaga (incluso obras cerradas)
   const impagas = gastos.filter(g => !g.pagado)
   let pendiente = 0
@@ -532,8 +571,8 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
         </PageHeader>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
           {[
-            { label: 'Total gastos',   value: `$ ${fmt(totalGastos)}`, sub: `${gastosActivas.length} comprobantes` },
-            { label: 'Pagado',         value: `$ ${fmt(pagado)}`,      sub: `${totalGastos > 0 ? Math.round(pagado/totalGastos*100) : 0}%` },
+            { label: 'Total gastos',   value: `$ ${fmt(totalGastos)}`, sub: provisorio > 0 ? `${gastosActivas.length} comprob. · incluye ${fmtK(provisorio)} provisorio` : `${gastosActivas.length} comprobantes` },
+            { label: 'Pagado',         value: `$ ${fmt(pagado)}`,      sub: `${totalConfirmado > 0 ? Math.round(pagado/totalConfirmado*100) : 0}%` },
             { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${cantImpagas} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
             // Crédito fiscal IVA: solo visible para administradores
@@ -553,7 +592,7 @@ function PanelInicio({ obras, gastos, esAdmin, onVerGastos, onVerObras, onNuevoG
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Pagado</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: C.green, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{fmtK(pagado)}</div>
-          <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{totalGastos > 0 ? Math.round(pagado/totalGastos*100) : 0}% del total</div>
+          <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{totalConfirmado > 0 ? Math.round(pagado/totalConfirmado*100) : 0}% del total</div>
         </div>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Pendiente</div>
@@ -659,7 +698,7 @@ function PanelMas({ esAdmin, onContactos, onAdmin, onLogout, usuario }) {
 }
 
 // ── Panel Obras ───────────────────────────────────────────────
-function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {} }) {
+function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {}, remitosPorObra = {} }) {
   const [filtroEstado, setFiltroEstado] = useState('activa')
   const obrasFiltradas = filtroEstado === 'todas' ? obras : obras.filter(o => o.estado === filtroEstado)
   const FILTROS = [
@@ -683,7 +722,9 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
       {loading ? <Spinner /> : obrasFiltradas.length === 0 ? <EmptyState texto={`No hay obras ${filtroEstado === 'todas' ? 'registradas' : filtroEstado + 's'}`} /> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
           {obrasFiltradas.map(o => {
-            const totalGastado = totalPorObra[o.id] ?? o.total_gastado ?? 0
+            const gastoConfirmado = totalPorObra[o.id] ?? o.total_gastado ?? 0
+            const provis = remitosPorObra[o.id] || 0
+            const totalGastado = gastoConfirmado + provis
             const cantGastos = cantPorObra[o.id] ?? o.cant_gastos ?? 0
             const pct = o.presupuesto > 0 ? Math.min(100, Math.round((totalGastado / o.presupuesto) * 100)) : 0
             const sobrep = o.presupuesto > 0 && totalGastado > o.presupuesto
@@ -696,7 +737,10 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 32 }}>{o.nombre}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 14 }}>{o.cliente || 'Sin cliente'}</div>
                     <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(totalGastado)}</div>
-                    <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: (esAdmin && creditoFiscalPorObra[o.id] > 0) ? 4 : (o.presupuesto > 0 ? 10 : 12) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
+                    <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: provis > 0 ? 4 : ((esAdmin && creditoFiscalPorObra[o.id] > 0) ? 4 : (o.presupuesto > 0 ? 10 : 12)) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
+                    {provis > 0 && (
+                      <div style={{ fontSize: 11, color: C.orange, fontWeight: 600, background: C.orangeDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>📋 Incluye $ {fmt(provis)} en remitos provisorios</div>
+                    )}
                     {esAdmin && creditoFiscalPorObra[o.id] > 0 && (
                       <div style={{ fontSize: 11, color: C.green, fontWeight: 600, background: C.greenDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>IVA crédito fiscal: $ {fmt(creditoFiscalPorObra[o.id])}</div>
                     )}
@@ -853,7 +897,7 @@ function PanelGastos({ obras, gastos: gastosRaw, loading, filtroObraId, setFiltr
 }
 
 // ── Panel Informe ─────────────────────────────────────────────
-function PanelInforme({ obras, gastos: todosGastosInforme, bancos = [], esAdmin, loading }) {
+function PanelInforme({ obras, gastos: todosGastosInforme, remitosPorObra = {}, bancos = [], esAdmin, loading }) {
   const [obraId, setObraId] = useState('')
   const exportar = () => {
     try {
@@ -880,6 +924,9 @@ function PanelInforme({ obras, gastos: todosGastosInforme, bancos = [], esAdmin,
   const pagado = scope.filter(x => x.g.pagado).reduce((s, x) => s + x.monto, 0)
   const pendiente = scope.filter(x => !x.g.pagado).reduce((s, x) => s + x.monto, 0)
   const cantImpagas = new Set(scope.filter(x => !x.g.pagado).map(x => x.g.id)).size
+  // Remitos provisorios dentro del alcance
+  let provisorioInforme = 0
+  Object.entries(remitosPorObra).forEach(([oid, m]) => { if (obraIdEfectivo ? oid === obraIdEfectivo : idsActivasInforme.has(oid)) provisorioInforme += m })
   const porConcepto = {}
   CONCEPTOS.forEach(c => { porConcepto[c] = scope.filter(x => (x.g.concepto || 'varios') === c).reduce((s, x) => s + x.monto, 0) })
   const maxVal = Math.max(...Object.values(porConcepto), 1)
@@ -899,7 +946,7 @@ function PanelInforme({ obras, gastos: todosGastosInforme, bancos = [], esAdmin,
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 20 }}>
             {[
-              { label: 'Total gastos',  value: `$ ${fmt(total)}`,          sub: `${gastos.length} comprobantes` },
+              { label: 'Total gastos',  value: `$ ${fmt(total + provisorioInforme)}`, sub: provisorioInforme > 0 ? `${gastos.length} comprob. · incl. ${fmtK(provisorioInforme)} provisorio` : `${gastos.length} comprobantes` },
               { label: 'Pagado',        value: `$ ${fmt(pagado)}`,          sub: `${total > 0 ? Math.round(pagado/total*100) : 0}%` },
               { label: 'Pendiente',     value: `$ ${fmt(pendiente)}`,       sub: `${cantImpagas} facturas`, alert: pendiente > 0 },
               { label: 'Obras activas', value: obras.filter(o => o.estado === 'activa').length, sub: `de ${obras.length} total` },
