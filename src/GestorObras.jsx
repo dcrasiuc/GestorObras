@@ -18,7 +18,7 @@ function waGastoLink(g) {
   const proveedor = g.proveedores?.nombre ?? 'Sin proveedor'
   const tipo = getTipoLabel(g.tipo_comprobante)
   const nro = g.nro_comprobante ? ' · Nro: ' + g.nro_comprobante : ''
-  const header = g.pagado ? '*PAGADO — SEATE S.R.L.*' : '*PAGO PENDIENTE — SEATE S.R.L.*'
+  const header = g.pagado ? 'PAGADO — SEATE S.R.L.' : 'PAGO PENDIENTE — SEATE S.R.L.'
   let msg = header + '\n'
   msg += '• Obra: ' + obra + '\n'
   msg += '• Proveedor: ' + proveedor + '\n'
@@ -26,8 +26,7 @@ function waGastoLink(g) {
   msg += '• ' + tipo + nro + '\n'
   msg += '• Fecha: ' + g.fecha + '\n'
   if (g.descripcion) msg += '• ' + g.descripcion + '\n'
-  if (g.imagen_url) msg += '• Factura: ' + g.imagen_url + '\n'
-  if (!g.pagado) msg += '_Por favor coordinar el pago._'
+  if (!g.pagado) msg += 'Por favor coordinar el pago.'
   return 'https://wa.me/?text=' + encodeURIComponent(msg)
 }
 
