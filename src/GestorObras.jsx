@@ -18,32 +18,17 @@ function waGastoLink(g) {
   const proveedor = g.proveedores?.nombre ?? 'Sin proveedor'
   const tipo = getTipoLabel(g.tipo_comprobante)
   const nro = g.nro_comprobante ? ' · Nro: ' + g.nro_comprobante : ''
-  let msg = '*Nuevo gasto — SEATE S.R.L.*\n'
+  const header = g.pagado ? '*PAGADO — SEATE S.R.L.*' : '*PAGO PENDIENTE — SEATE S.R.L.*'
+  let msg = header + '\n'
   msg += '• Obra: ' + obra + '\n'
   msg += '• Proveedor: ' + proveedor + '\n'
   msg += '• Monto: $' + fmt(g.monto) + '\n'
   msg += '• ' + tipo + nro + '\n'
   msg += '• Fecha: ' + g.fecha + '\n'
   if (g.descripcion) msg += '• ' + g.descripcion + '\n'
-  if (g.imagen_url) msg += '• Factura: ' + g.imagen_url
+  if (g.imagen_url) msg += '• Factura: ' + g.imagen_url + '\n'
+  if (!g.pagado) msg += '_Por favor coordinar el pago._'
   return 'https://wa.me/?text=' + encodeURIComponent(msg)
-}
-
-function tgGastoLink(g) {
-  const obra = g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')
-  const proveedor = g.proveedores?.nombre ?? 'Sin proveedor'
-  const tipo = getTipoLabel(g.tipo_comprobante)
-  const nro = g.nro_comprobante ? ' · Nro: ' + g.nro_comprobante : ''
-  let msg = '*Nuevo gasto — SEATE S.R.L.*\n'
-  msg += '• Obra: ' + obra + '\n'
-  msg += '• Proveedor: ' + proveedor + '\n'
-  msg += '• Monto: $' + fmt(g.monto) + '\n'
-  msg += '• ' + tipo + nro + '\n'
-  msg += '• Fecha: ' + g.fecha + '\n'
-  if (g.descripcion) msg += '• ' + g.descripcion + '\n'
-  if (g.imagen_url) msg += '• Factura adjunta'
-  const shareUrl = g.imagen_url || 'https://gestordeobras.pages.dev'
-  return 'https://t.me/share/url?url=' + encodeURIComponent(shareUrl) + '&text=' + encodeURIComponent(msg)
 }
 
 function ivaCreditoGasto(g) {
@@ -918,7 +903,6 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                       {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                       <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#1A6B3C' }}>📤</a>
-                      <a href={tgGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por Telegram" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E8F4FD', borderColor: '#90CAF9', color: '#0277BD' }}>✈️</a>
                       <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                       <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                     </div>
@@ -960,7 +944,6 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                         {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                         <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#1A6B3C' }}>📤</a>
-                        <a href={tgGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por Telegram" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E8F4FD', borderColor: '#90CAF9', color: '#0277BD' }}>✈️</a>
                         <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                         <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                       </div>
