@@ -13,6 +13,30 @@ function imputaciones(g) {
   return [{ obra_id: g.obra_id, monto: parseFloat(g.monto) || 0 }]
 }
 // IVA crédito fiscal total del gasto (0 si no corresponde: solo Factura A a nombre de SEATE)
+function waGastoLink(g) {
+  const obra = g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')
+  const proveedor = g.proveedores?.nombre ?? 'Sin proveedor'
+  const tipo = getTipoLabel(g.tipo_comprobante)
+  const nro = g.nro_comprobante ? ` Nro: ${g.nro_comprobante}` : ''
+  const monto = `$ ${fmt(g.monto)}`
+  let msg = `🏗️ *Nuevo gasto cargado*
+`
+  msg += `📋 Obra: ${obra}
+`
+  msg += `🏢 Proveedor: ${proveedor}
+`
+  msg += `💰 Monto: ${monto}
+`
+  msg += `📄 ${tipo}${nro}
+`
+  msg += `📅 Fecha: ${g.fecha}
+`
+  if (g.descripcion) msg += `📝 ${g.descripcion}
+`
+  if (g.imagen_url) msg += `🔗 ${g.imagen_url}`
+  return `https://wa.me/?text=${encodeURIComponent(msg)}`
+}
+
 function ivaCreditoGasto(g) {
   if (!(g.tipo_comprobante === 'factura_a' && g.a_nombre_seate)) return 0
   return g.iva_monto > 0 ? Math.round(g.iva_monto) : Math.round((parseFloat(g.monto) || 0) * IVA / (1 + IVA))
@@ -884,6 +908,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       {esAdmin && !g.pagado && <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>$ Pagar</button>}
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                       {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
+                      <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#1A6B3C' }}>📤</a>
                       <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                       <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                     </div>
@@ -924,6 +949,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                         {esAdmin && !g.pagado && <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>Pagar</button>}
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                         {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
+                        <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#1A6B3C' }}>📤</a>
                         <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                         <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                       </div>
