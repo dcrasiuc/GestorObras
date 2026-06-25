@@ -201,6 +201,9 @@ export default function GestorObras({ usuario }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'remitos' }, () => {
         clearTimeout(timerR); timerR = setTimeout(recargarRemitosPend, 800)
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'obra_usuarios' }, () => {
+        clearTimeout(timerO); timerO = setTimeout(recargarObras, 800)
+      })
       .subscribe()
     return () => { supabase.removeChannel(ch); clearTimeout(timerG); clearTimeout(timerO); clearTimeout(timerL); clearTimeout(timerR) }
   }, [recargarGastos, recargarObras, recargarListas, recargarRemitosPend])
@@ -425,7 +428,11 @@ export default function GestorObras({ usuario }) {
           setObras(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o))
         } else {
           const saved = await dbWrite('POST', 'obras', payload, null, true)
-          if (saved?.id) setObras(prev => [...prev, { ...payload, id: saved.id, total_gastado: 0, cant_gastos: 0 }])
+          if (saved?.id) {
+            setObras(prev => [...prev, { ...payload, id: saved.id, total_gastado: 0, cant_gastos: 0 }])
+            // Auto-asignar al usuario que la crea (solo operadores — admins ven todo)
+            if (!esAdmin && usuario?.id) await dbWrite('POST', 'obra_usuarios', { obra_id: saved.id, usuario_id: usuario.id })
+          }
         }
         cerrarModal(); recargarObras(true)
       }} />}
@@ -1187,11 +1194,13 @@ function PanelAdmin({ bancos, recargarListas }) {
 
   const toggleAsignacion = async (obraId, usuarioId) => {
     const existe = asignaciones.find(a => a.obra_id === obraId && a.usuario_id === usuarioId)
-    if (existe) {
-      await supabase.from('obra_usuarios').delete().eq('obra_id', obraId).eq('usuario_id', usuarioId)
-    } else {
-      await supabase.from('obra_usuarios').insert([{ obra_id: obraId, usuario_id: usuarioId }])
-    }
+    try {
+      if (existe) {
+        await dbWrite('DELETE', 'obra_usuarios', null, `obra_id=eq.${obraId}&usuario_id=eq.${usuarioId}`)
+      } else {
+        await dbWrite('POST', 'obra_usuarios', { obra_id: obraId, usuario_id: usuarioId })
+      }
+    } catch(e) { window._toast?.('Error al guardar asignación: ' + e.message); return }
     cargarTodo()
   }
 
