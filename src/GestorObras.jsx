@@ -17,47 +17,33 @@ function waGastoLink(g) {
   const obra = g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')
   const proveedor = g.proveedores?.nombre ?? 'Sin proveedor'
   const tipo = getTipoLabel(g.tipo_comprobante)
-  const nro = g.nro_comprobante ? ` Nro: ${g.nro_comprobante}` : ''
-  const monto = `$ ${fmt(g.monto)}`
-  let msg = `🏗️ *Nuevo gasto cargado*
-`
-  msg += `📋 Obra: ${obra}
-`
-  msg += `🏢 Proveedor: ${proveedor}
-`
-  msg += `💰 Monto: ${monto}
-`
-  msg += `📄 ${tipo}${nro}
-`
-  msg += `📅 Fecha: ${g.fecha}
-`
-  if (g.descripcion) msg += `📝 ${g.descripcion}
-`
-  if (g.imagen_url) msg += `🔗 ${g.imagen_url}`
-  return `https://wa.me/?text=${encodeURIComponent(msg)}`
+  const nro = g.nro_comprobante ? ' · Nro: ' + g.nro_comprobante : ''
+  let msg = '*Nuevo gasto — SEATE S.R.L.*\n'
+  msg += '• Obra: ' + obra + '\n'
+  msg += '• Proveedor: ' + proveedor + '\n'
+  msg += '• Monto: $' + fmt(g.monto) + '\n'
+  msg += '• ' + tipo + nro + '\n'
+  msg += '• Fecha: ' + g.fecha + '\n'
+  if (g.descripcion) msg += '• ' + g.descripcion + '\n'
+  if (g.imagen_url) msg += '• Factura: ' + g.imagen_url
+  return 'https://wa.me/?text=' + encodeURIComponent(msg)
 }
 
 function tgGastoLink(g) {
   const obra = g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')
   const proveedor = g.proveedores?.nombre ?? 'Sin proveedor'
   const tipo = getTipoLabel(g.tipo_comprobante)
-  const nro = g.nro_comprobante ? ` Nro: ${g.nro_comprobante}` : ''
-  let msg = `🏗️ Nuevo gasto cargado
-`
-  msg += `📋 Obra: ${obra}
-`
-  msg += `🏢 Proveedor: ${proveedor}
-`
-  msg += `💰 Monto: $ ${fmt(g.monto)}
-`
-  msg += `📄 ${tipo}${nro}
-`
-  msg += `📅 Fecha: ${g.fecha}
-`
-  if (g.descripcion) msg += `📝 ${g.descripcion}
-`
+  const nro = g.nro_comprobante ? ' · Nro: ' + g.nro_comprobante : ''
+  let msg = '*Nuevo gasto — SEATE S.R.L.*\n'
+  msg += '• Obra: ' + obra + '\n'
+  msg += '• Proveedor: ' + proveedor + '\n'
+  msg += '• Monto: $' + fmt(g.monto) + '\n'
+  msg += '• ' + tipo + nro + '\n'
+  msg += '• Fecha: ' + g.fecha + '\n'
+  if (g.descripcion) msg += '• ' + g.descripcion + '\n'
+  if (g.imagen_url) msg += '• Factura adjunta'
   const shareUrl = g.imagen_url || 'https://gestordeobras.pages.dev'
-  return `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(msg)}`
+  return 'https://t.me/share/url?url=' + encodeURIComponent(shareUrl) + '&text=' + encodeURIComponent(msg)
 }
 
 function ivaCreditoGasto(g) {
