@@ -610,12 +610,51 @@ function WAIcon({ size = 14 }) {
 }
 
 function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos, onVerObras, onNuevoGasto, onNuevoFoto }) {
+  // ── Filtro de período ──
+  const ahora = new Date()
+  const mesActual = `${ahora.getFullYear()}-${String(ahora.getMonth()+1).padStart(2,'0')}`
+  const [periodo, setPeriodo] = useState('mes')      // 'mes' | 'trimestre' | 'semestre' | 'anio' | 'todo' | 'mes:YYYY-MM'
+  const [mesElegido, setMesElegido] = useState(mesActual)
+
+  // Genera los últimos 18 meses para el selector
+  const mesesDisp = Array.from({ length: 18 }, (_, i) => {
+    const d = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1)
+    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+    const label = d.toLocaleString('es-AR', { month: 'long', year: 'numeric' })
+    return { val, label: label.charAt(0).toUpperCase() + label.slice(1) }
+  })
+
+  const enPeriodo = (fecha) => {
+    if (!fecha) return true
+    if (periodo === 'todo') return true
+    const f = fecha.slice(0, 7) // YYYY-MM
+    const fy = parseInt(fecha.slice(0, 4))
+    const fm = parseInt(fecha.slice(5, 7))
+    const ay = ahora.getFullYear(), am = ahora.getMonth() + 1
+    if (periodo === 'mes') return f === mesActual
+    if (periodo.startsWith('mes:')) return f === periodo.slice(4)
+    if (periodo === 'trimestre') return fy === ay && fm >= am - 2
+    if (periodo === 'semestre') return fy === ay && fm >= am - 5
+    if (periodo === 'anio') return fy === ay
+    return true
+  }
+
+  const labelPeriodo = () => {
+    if (periodo === 'todo') return 'Todo'
+    if (periodo === 'trimestre') return 'Trimestre'
+    if (periodo === 'semestre') return 'Semestre'
+    if (periodo === 'anio') return `Año ${ahora.getFullYear()}`
+    if (periodo.startsWith('mes:')) return mesesDisp.find(m => m.val === periodo.slice(4))?.label ?? ''
+    return mesesDisp[0]?.label ?? ''
+  }
+
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
   // Distribución: un gasto cuenta en una obra activa si alguna de sus partes cae ahí
   const gastosActivas = gastos.filter(g => imputaciones(g).some(im => idsActivas.has(im.obra_id)))
+  const gastosEnPeriodo = gastosActivas.filter(g => enPeriodo(g.fecha))
   let totalConfirmado = 0, pagado = 0, creditoFiscal = 0
-  gastos.forEach(g => imputaciones(g).forEach(im => {
+  gastosEnPeriodo.forEach(g => imputaciones(g).forEach(im => {
     if (!idsActivas.has(im.obra_id)) return
     totalConfirmado += im.monto
     if (g.pagado) pagado += im.monto
@@ -625,24 +664,49 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
   let provisorio = 0
   Object.entries(remitosPorObra).forEach(([oid, m]) => { if (idsActivas.has(oid)) provisorio += m })
   const totalGastos = totalConfirmado + provisorio
-  // Pendiente = toda la deuda impaga (incluso obras cerradas)
-  const impagas = gastos.filter(g => !g.pagado)
+  // Pendiente = toda la deuda impaga (incluso obras cerradas), filtrada por período
+  const impagas = gastosEnPeriodo.filter(g => !g.pagado)
   let pendiente = 0
   impagas.forEach(g => imputaciones(g).forEach(im => { pendiente += im.monto }))
   const cantImpagas = impagas.length
-  const cantCreditoA = gastosActivas.filter(g => ivaCreditoGasto(g) > 0).length
-  const ultimosGastos = gastosActivas.slice(0, 5)
+  const cantCreditoA = gastosEnPeriodo.filter(g => ivaCreditoGasto(g) > 0).length
+  const ultimosGastos = gastosEnPeriodo.slice(0, 5)
+
+  const PERIODOS_RAPIDOS = [
+    { value: 'mes',       label: 'Este mes' },
+    { value: 'trimestre', label: 'Trimestre' },
+    { value: 'semestre',  label: 'Semestre' },
+    { value: 'anio',      label: `Año ${ahora.getFullYear()}` },
+    { value: 'todo',      label: 'Todo' },
+  ]
 
   return (
     <div>
       {/* Stats desktop (en mobile se ve en el header) */}
       <div className="desktop-only" style={{ marginBottom: 20 }}>
-        <PageHeader titulo="Inicio" sub="Resumen general">
+        <PageHeader titulo="Inicio" sub={`Resumen · ${labelPeriodo()}`}>
           <div style={{ display: 'flex', gap: 8 }}>
           <BtnSecondary onClick={onNuevoFoto}>📎 Comprobante</BtnSecondary>
           <BtnPrimary onClick={onNuevoGasto}>+ Gasto</BtnPrimary>
           </div>
         </PageHeader>
+        {/* Selector de período */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+            {PERIODOS_RAPIDOS.map(p => (
+              <button key={p.value} onClick={() => setPeriodo(p.value)}
+                style={{ padding: '6px 12px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: periodo === p.value ? 700 : 400, background: periodo === p.value ? C.purpleDim : C.surface, color: periodo === p.value ? C.purple : C.textMuted, whiteSpace: 'nowrap' }}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <select value={periodo.startsWith('mes:') ? periodo.slice(4) : ''}
+            onChange={e => { if (e.target.value) setPeriodo('mes:' + e.target.value) }}
+            style={{ padding: '6px 10px', borderRadius: 8, border: `1.5px solid ${periodo.startsWith('mes:') ? C.purple : C.border}`, fontSize: 12, color: periodo.startsWith('mes:') ? C.purple : C.textMuted, background: periodo.startsWith('mes:') ? C.purpleDim : C.surface, fontFamily: "'Outfit', sans-serif", cursor: 'pointer' }}>
+            <option value="">Mes anterior...</option>
+            {mesesDisp.slice(1).map(m => <option key={m.val} value={m.val}>{m.label}</option>)}
+          </select>
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
           {[
             { label: 'Total gastos',   value: `$ ${fmt(totalGastos)}`, sub: provisorio > 0 ? `${gastosActivas.length} comprob. · incluye ${fmtK(provisorio)} provisorio` : `${gastosActivas.length} comprobantes` },
@@ -664,6 +728,22 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
       </div>
 
       {/* Mobile stats */}
+      <div className="mobile-only" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
+          {PERIODOS_RAPIDOS.map(p => (
+            <button key={p.value} onClick={() => setPeriodo(p.value)}
+              style={{ padding: '5px 12px', fontSize: 12, cursor: 'pointer', border: `1.5px solid ${periodo === p.value ? C.purple : C.border}`, borderRadius: 99, fontFamily: "'Outfit', sans-serif", fontWeight: periodo === p.value ? 700 : 400, background: periodo === p.value ? C.purpleDim : C.surface, color: periodo === p.value ? C.purple : C.textMuted, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {p.label}
+            </button>
+          ))}
+          <select value={periodo.startsWith('mes:') ? periodo.slice(4) : ''}
+            onChange={e => { if (e.target.value) setPeriodo('mes:' + e.target.value) }}
+            style={{ padding: '5px 8px', borderRadius: 99, border: `1.5px solid ${periodo.startsWith('mes:') ? C.purple : C.border}`, fontSize: 12, color: periodo.startsWith('mes:') ? C.purple : C.textMuted, background: periodo.startsWith('mes:') ? C.purpleDim : C.surface, fontFamily: "'Outfit', sans-serif", flexShrink: 0 }}>
+            <option value="">Mes...</option>
+            {mesesDisp.slice(1).map(m => <option key={m.val} value={m.val}>{m.label}</option>)}
+          </select>
+        </div>
+      </div>
       <div className="mobile-only" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Pagado</div>
