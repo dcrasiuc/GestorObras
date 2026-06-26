@@ -121,7 +121,7 @@ function useGastos(obrasIds) {
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
       let q = supabase.from('gastos')
-        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
+        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta, condicion_pago, redondear_viernes), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
         .order('fecha', { ascending: false })
       if (ids !== null) q = q.in('obra_id', ids)
       const { data, error } = await q
@@ -265,11 +265,11 @@ export default function GestorObras({ usuario }) {
   ]
 
   const guardarProveedor = async (datos) => {
-    const { nombre, cuit, rubro, situacion_impositiva } = datos
+    const { nombre, cuit, rubro, situacion_impositiva, telefono, contacto, nota, cbu, alias_cbu, banco, titular_cuenta, condicion_pago, redondear_viernes } = datos
     let nuevoProv = null
     try {
       nuevoProv = await dbWrite('POST', 'proveedores',
-        { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva },
+        { nombre: nombre.trim(), cuit: cuit?.trim() || null, rubro: rubro || null, situacion_impositiva, telefono: telefono || null, contacto: contacto || null, nota: nota || null, cbu: cbu || null, alias_cbu: alias_cbu || null, banco: banco || null, titular_cuenta: titular_cuenta || null, condicion_pago: condicion_pago || 'contado', redondear_viernes: redondear_viernes !== false },
         null, true)
     } catch (e) {
       console.warn('guardarProveedor dbWrite error, buscando por nombre:', e.message)
@@ -336,7 +336,7 @@ export default function GestorObras({ usuario }) {
               </div>
             </div>
             <nav style={{ display: 'flex', marginLeft: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
-              {['inicio','obras','gastos','cc','informe'].map(id => {
+              {['inicio','obras','gastos','informe','finanzas'].map(id => {
                 const t = TABS.find(t => t.id === id)
                 return (
                   <button key={id} onClick={() => setPanel(id)} style={{
@@ -410,7 +410,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
@@ -507,6 +507,22 @@ export default function GestorObras({ usuario }) {
         cerrarModal(); recargarGastos(false)
       }} />}
 
+      {modal === 'pagoMultiple' && esAdmin && Array.isArray(itemEditando) && (
+        <ModalPagoMultiple
+          gastos={itemEditando}
+          bancos={bancos}
+          onClose={cerrarModal}
+          onGuardar={async d => {
+            for (const g of itemEditando) {
+              const payload = { ...d, gasto_id: g.id, creado_por: usuario.id, monto: g.monto }
+              const savedPago = await dbWrite('POST', 'pagos', payload, null, true)
+              await dbWrite('PATCH', 'gastos', { pagado: true }, `id=eq.${g.id}`)
+              setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: true, pagos: [...(x.pagos || []), { ...payload, id: savedPago?.id }] } : x))
+            }
+            cerrarModal(); recargarGastos(false)
+          }}
+        />
+      )}
       {modal === 'cliente'   && <ModalCliente   itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) throw new Error('Nombre obligatorio')
         const { id, nombre, telefono, email } = d
@@ -867,7 +883,7 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
   )
 }
 
-function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar }) {
+function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple }) {
   // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
@@ -883,6 +899,10 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   }, [filtroObraId, obras, setFiltroObraId])
   const [filtroEstadoGasto, setFiltroEstadoGasto] = useState('')
   const [filtroProveedorId, setFiltroProveedorId] = useState('')
+  const [seleccion, setSeleccion] = useState(new Set())
+  const toggleSel = (id) => setSeleccion(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const gastosSeleccionados = gastosFiltrados.filter(g => seleccion.has(g.id) && !g.pagado)
+  const totalSeleccionado = gastosSeleccionados.reduce((s, g) => s + (g.monto || 0), 0)
   const gastosFiltrados = gastos
     .filter(g => !filtroEstadoGasto || (filtroEstadoGasto === 'pagado' ? g.pagado : !g.pagado))
     .filter(g => !filtroProveedorId || g.proveedor_id === filtroProveedorId)
@@ -955,6 +975,15 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
         </div>
       )}
 
+      {/* Barra de pago múltiple flotante */}
+      {esAdmin && seleccion.size > 0 && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 200, background: C.purple, color: '#fff', borderRadius: 14, padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 8px 32px rgba(123,77,181,0.35)', whiteSpace: 'nowrap' }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{seleccion.size} seleccionado{seleccion.size > 1 ? 's' : ''} · $ {fmt(totalSeleccionado)}</span>
+          <button onClick={() => { onPagarMultiple && onPagarMultiple(gastosSeleccionados); setSeleccion(new Set()) }} style={{ background: '#fff', color: C.purple, border: 'none', borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>💳 Pagar todos</button>
+          <button onClick={() => setSeleccion(new Set())} style={{ background: 'transparent', color: 'rgba(255,255,255,0.7)', border: 'none', fontSize: 16, cursor: 'pointer', padding: 0, lineHeight: 1 }}>✕</button>
+        </div>
+      )}
+
       {loading ? <Spinner /> : gastosFiltrados.length === 0 ? (remitosScope.length === 0 ? <EmptyState texto="Sin gastos con los filtros seleccionados" /> : null) : (
         <>
           {/* MOBILE */}
@@ -962,8 +991,11 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
             {gastosFiltrados.map(g => {
               const [iconBg] = CONCEPTO_COLORS[g.concepto] ?? CONCEPTO_COLORS.varios
               return (
-                <div key={g.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
+                <div key={g.id} style={{ background: seleccion.has(g.id) ? C.purpleDim : C.surface, border: `1.5px solid ${seleccion.has(g.id) ? C.purple : C.border}`, borderRadius: 14, padding: '14px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
+                    {esAdmin && !g.pagado && (
+                      <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, marginTop: 4, flexShrink: 0, width: 16, height: 16, cursor: 'pointer' }} />
+                    )}
                     <div style={{ width: 40, height: 40, borderRadius: 12, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
                       {CONCEPTO_ICONS[g.concepto] ?? '📦'}
                     </div>
@@ -999,13 +1031,13 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
           <div className="desktop-only" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: 86 }} /><col style={{ width: 108 }} /><col style={{ width: 118 }} />
+                <col style={{ width: 36 }} /><col style={{ width: 86 }} /><col style={{ width: 108 }} /><col style={{ width: 118 }} />
                 <col style={{ width: 90 }} /><col style={{ width: 98 }} /><col />
                 <col style={{ width: 110 }} /><col style={{ width: 72 }} /><col style={{ width: 120 }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#FAFAFA' }}>
-                  {['Fecha','Obra','Proveedor','Concepto','Comprobante','Descripción','Monto','Estado',''].map((h,i) => (
+                  {['','Fecha','Obra','Proveedor','Concepto','Comprobante','Descripción','Monto','Estado',''].map((h,i) => (
                     <th key={h+i} style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textAlign: h==='Monto'?'right':'left', padding: '11px 10px', textTransform: 'uppercase', letterSpacing: '0.07em', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -1013,6 +1045,9 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
               <tbody>
                 {gastosFiltrados.map((g, i) => (
                   <tr key={g.id} style={{ borderBottom: i < gastos.length-1 ? `1px solid ${C.borderFaint}` : 'none', background: g.pagado ? '#FAFFFE' : C.surface }}>
+                    <td style={{ ...tdSt, padding: '8px 6px', textAlign: 'center' }}>
+                      {esAdmin && !g.pagado && <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, cursor: 'pointer', width: 15, height: 15 }} />}
+                    </td>
                     <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
                     <td style={tdSt}><span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}</span></td>
                     <td style={{ ...tdSt, fontWeight: 500, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.proveedores?.nombre ?? '—'}</td>
@@ -1896,7 +1931,7 @@ function ModalCliente({ itemEdit, onClose, onGuardar }) {
 }
 
 function ModalProveedor({ itemEdit, onClose, onGuardar }) {
-  const [form, setForm] = useState(itemEdit || { nombre: '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto', telefono: '', contacto: '', nota: '', cbu: '', alias_cbu: '', banco: '', titular_cuenta: '' })
+  const [form, setForm] = useState(itemEdit || { nombre: '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto', telefono: '', contacto: '', nota: '', cbu: '', alias_cbu: '', banco: '', titular_cuenta: '', condicion_pago: 'contado', redondear_viernes: true })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const sit = getSituacion(form.situacion_impositiva)
   return (
@@ -1912,6 +1947,21 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
         <Campo label="Persona de contacto"><input style={inputSt} value={form.contacto || ''} onChange={e => set('contacto', e.target.value)} placeholder="Nombre" /></Campo>
       </div>
       <div style={{ marginTop: 10 }}><Campo label="Notas"><input style={inputSt} value={form.nota || ''} onChange={e => set('nota', e.target.value)} placeholder="Observaciones, condiciones, etc." /></Campo></div>
+      <div style={{ marginTop: 10 }}>
+        <Campo label="Condición de pago habitual">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select style={{ ...inputSt, flex: 1 }} value={form.condicion_pago || 'contado'} onChange={e => set('condicion_pago', e.target.value)}>
+              {CONDICIONES_PAGO.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+            {form.condicion_pago !== 'contado' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: C.textMuted, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={!!form.redondear_viernes} onChange={e => set('redondear_viernes', e.target.checked)} style={{ accentColor: C.purple }} />
+                Al viernes
+              </label>
+            )}
+          </div>
+        </Campo>
+      </div>
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
         <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 10 }}>Datos bancarios</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
@@ -2029,6 +2079,69 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   )
 }
 
+
+// ── Modal Pago Múltiple ───────────────────────────────────────
+function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
+  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', banco_id: '', observaciones: '' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const total = gastos.reduce((s, g) => s + (g.monto || 0), 0)
+  const necesitaBanco = ['transferencia', 'cheque', 'tarjeta'].includes(form.medio_pago)
+  const proveedorNombre = gastos[0]?.proveedores?.nombre
+  const mismoProveedor = gastos.every(g => g.proveedor_id === gastos[0]?.proveedor_id)
+
+  return (
+    <Modal title={`Pagar ${gastos.length} comprobantes`} onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel={`Confirmar pago $ ${fmt(total)}`}>
+      {/* Resumen */}
+      <div style={{ background: C.greenDim, border: `1px solid #B8E6CF`, borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+        <div style={{ fontSize: 11, color: C.green, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>
+          {mismoProveedor && proveedorNombre ? proveedorNombre : `${gastos.length} comprobantes`}
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.green, fontVariantNumeric: 'tabular-nums' }}>{`$ ${fmt(total)}`}</div>
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {gastos.map(g => (
+            <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.textMuted }}>
+              <span>{getTipoLabel(g.tipo_comprobante)}{g.nro_comprobante ? ' · ' + g.nro_comprobante : ''} — {g.fecha}</span>
+              <span style={{ fontWeight: 600, color: C.text }}>{`$ ${fmt(g.monto)}`}</span>
+            </div>
+          ))}
+        </div>
+        {gastos[0]?.proveedores?.alias_cbu && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid #B8E6CF`, fontSize: 11, color: C.green, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontWeight: 700 }}>CBU/Alias:</span>
+            <span>{gastos[0].proveedores.alias_cbu || gastos[0].proveedores.cbu}</span>
+            <button onClick={() => navigator.clipboard.writeText(gastos[0].proveedores.alias_cbu || gastos[0].proveedores.cbu)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, padding: 0 }}>📋</button>
+            {gastos[0].proveedores.telefono && (
+              <a href={'https://wa.me/549' + gastos[0].proveedores.telefono.replace(/\D/g,'').replace(/^0/,'')} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#25D366', textDecoration: 'none', fontWeight: 700 }}>
+                <WAIcon size={13} /> WA
+              </a>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Campo label="Fecha de pago"><input style={inputSt} type="date" value={form.fecha_pago} onChange={e => set('fecha_pago', e.target.value)} /></Campo>
+        <Campo label="Medio de pago">
+          <select style={inputSt} value={form.medio_pago} onChange={e => set('medio_pago', e.target.value)}>
+            {(MEDIOS_PAGO || []).map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </Campo>
+        {necesitaBanco && (
+          <Campo label="Banco" style={{ gridColumn: '1/-1' }}>
+            <select style={inputSt} value={form.banco_id} onChange={e => set('banco_id', e.target.value)}>
+              <option value="">— Seleccionar banco —</option>
+              {(bancos || []).map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+            </select>
+          </Campo>
+        )}
+        <Campo label="Observaciones" style={{ gridColumn: '1/-1' }}>
+          <input style={inputSt} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} placeholder="Referencia de transferencia, etc." />
+        </Campo>
+      </div>
+    </Modal>
+  )
+}
+
 // ── FormGasto ─────────────────────────────────────────────────
 function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
   const handleProveedorChange = (provId) => {
@@ -2039,6 +2152,10 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
     const sit = getSituacion(prov.situacion_impositiva)
     set('tipo_comprobante', sit.comprobante)
     set('discrimina_iva', sit.iva)
+    if (prov.condicion_pago) {
+      set('condicion_pago', prov.condicion_pago)
+      set('redondear_viernes', prov.redondear_viernes !== false)
+    }
   }
   const dist = form.distribucion || []
   const setDist = (nuevo) => set('distribucion', nuevo)
