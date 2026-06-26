@@ -32,26 +32,35 @@ function App() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Failsafe: si getSession() o cargarPerfil() se cuelgan en mobile,
-    // liberar la pantalla de carga después de 8s
-    const failsafe = setTimeout(() => setLoading(false), 8000)
+    // Failsafe: si el auth se cuelga (mobile/red lenta), liberar spinner después de 10s
+    const failsafe = setTimeout(() => setLoading(false), 10000)
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    const resolver = (session) => async () => {
       clearTimeout(failsafe)
       if (session?.user) {
-        const perfil = await cargarPerfil(session.user.id).catch(() => null)
+        // IMPORTANTE: .catch(() => undefined) — undefined NO dispara pantalla Pendiente.
+        // null sí la dispara (usuario autenticado pero sin fila en tabla usuarios).
+        const perfil = await cargarPerfil(session.user.id).catch(() => undefined)
         setUsuario({ ...session.user, perfil })
       }
       setLoading(false)
-    }).catch(() => {
-      clearTimeout(failsafe)
-      setLoading(false)
-    })
+    }
 
-    // onAuthStateChange maneja login, logout y renovación de token
+    // onAuthStateChange es la fuente de verdad. INITIAL_SESSION es el primer evento
+    // que dispara Supabase v2 (incluso después de un redirect OAuth de Google).
+    // No usar getSession() como fuente principal porque puede resolver antes de que
+    // el intercambio de código PKCE (OAuth redirect) complete, mostrando Login prematuramente.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'INITIAL_SESSION') {
+        await resolver(session)()
+        return
+      }
       if (event === 'SIGNED_IN' && session?.user) {
-        const perfil = await cargarPerfil(session.user.id).catch(() => null)
+        // Limpiar params de URL después del redirect OAuth
+        if (window.location.hash || window.location.search.includes('code=')) {
+          window.history.replaceState({}, '', window.location.pathname)
+        }
+        const perfil = await cargarPerfil(session.user.id).catch(() => undefined)
         setUsuario({ ...session.user, perfil })
         setLoading(false)
       }
@@ -60,7 +69,7 @@ function App() {
         setLoading(false)
       }
       if (event === 'TOKEN_REFRESHED' && session?.user) {
-        const perfil = await cargarPerfil(session.user.id).catch(() => null)
+        const perfil = await cargarPerfil(session.user.id).catch(() => undefined)
         setUsuario(u => ({ ...u, perfil }))
       }
     })
