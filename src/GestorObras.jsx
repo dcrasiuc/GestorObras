@@ -531,8 +531,8 @@ export default function GestorObras({ usuario }) {
       }} />}
       {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) throw new Error('Nombre obligatorio')
-        const { id, nombre, cuit, rubro, situacion_impositiva, telefono, contacto, nota, cbu, alias_cbu, banco, titular_cuenta } = d
-        await dbWrite(id ? 'PATCH' : 'POST', 'proveedores', { nombre, cuit, rubro, situacion_impositiva, telefono: telefono || null, contacto: contacto || null, nota: nota || null, cbu: cbu || null, alias_cbu: alias_cbu || null, banco: banco || null, titular_cuenta: titular_cuenta || null }, id ? `id=eq.${id}` : null)
+        const { id, nombre, cuit, rubro, situacion_impositiva, telefono, contacto, nota, cbu, alias_cbu, banco, titular_cuenta, condicion_pago, redondear_viernes } = d
+        await dbWrite(id ? 'PATCH' : 'POST', 'proveedores', { nombre, cuit, rubro, situacion_impositiva, telefono: telefono || null, contacto: contacto || null, nota: nota || null, cbu: cbu || null, alias_cbu: alias_cbu || null, banco: banco || null, titular_cuenta: titular_cuenta || null, condicion_pago: condicion_pago || 'contado', redondear_viernes: redondear_viernes !== false }, id ? `id=eq.${id}` : null)
         cerrarModal(); recargarListas()
       }} />}
       {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} zIndex={300} />}
