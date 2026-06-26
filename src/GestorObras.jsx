@@ -776,7 +776,11 @@ function PanelMas({ esAdmin, onContactos, onAdmin, onLogout, usuario }) {
 // ── Panel Obras ───────────────────────────────────────────────
 function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {}, remitosPorObra = {} }) {
   const [filtroEstado, setFiltroEstado] = useState('activa')
-  const obrasFiltradas = filtroEstado === 'todas' ? obras : obras.filter(o => o.estado === filtroEstado)
+  const [filtroCliente, setFiltroCliente] = useState('')
+  const clientes = [...new Set(obras.map(o => o.cliente).filter(Boolean))].sort()
+  const obrasFiltradas = obras
+    .filter(o => filtroEstado === 'todas' || o.estado === filtroEstado)
+    .filter(o => !filtroCliente || o.cliente === filtroCliente)
   const FILTROS = [
     { value: 'activa', label: 'Activas' },
     { value: 'pausada', label: 'Pausadas' },
@@ -792,6 +796,13 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
               <button key={f.value} onClick={() => setFiltroEstado(f.value)} style={{ padding: '6px 12px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: filtroEstado === f.value ? 600 : 400, background: filtroEstado === f.value ? C.purpleDim : C.surface, color: filtroEstado === f.value ? C.purple : C.textMuted, whiteSpace: 'nowrap' }}>{f.label}</button>
             ))}
           </div>
+          {clientes.length > 0 && (
+            <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
+              style={{ padding: '6px 10px', borderRadius: 8, border: `1.5px solid ${filtroCliente ? C.purple : C.border}`, fontSize: 12, color: filtroCliente ? C.purple : C.textMuted, background: filtroCliente ? C.purpleDim : C.surface, fontWeight: filtroCliente ? 700 : 400, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>
+              <option value="">Cliente: todos</option>
+              {clientes.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
           <BtnPrimary onClick={onNueva}>+ Nueva obra</BtnPrimary>
         </div>
       </PageHeader>
