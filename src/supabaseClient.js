@@ -11,6 +11,5 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     storage: window.localStorage,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    flowType: 'pkce',
   }
 })
