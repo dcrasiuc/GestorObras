@@ -69,6 +69,7 @@ export const RUBROS = [
   'Plomería / Sanitaria',
   'Pintura',
   'Carpintería / Aberturas',
+  'Zinguería',
   'Vidriería',
   'Equipos y maquinaria',
   'Transporte / Logística',

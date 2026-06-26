@@ -513,8 +513,8 @@ export default function GestorObras({ usuario }) {
       }} />}
       {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) throw new Error('Nombre obligatorio')
-        const { id, nombre, cuit, rubro, situacion_impositiva } = d
-        await dbWrite(id ? 'PATCH' : 'POST', 'proveedores', { nombre, cuit, rubro, situacion_impositiva }, id ? `id=eq.${id}` : null)
+        const { id, nombre, cuit, rubro, situacion_impositiva, telefono, contacto, nota, cbu, alias_cbu, banco, titular_cuenta } = d
+        await dbWrite(id ? 'PATCH' : 'POST', 'proveedores', { nombre, cuit, rubro, situacion_impositiva, telefono: telefono || null, contacto: contacto || null, nota: nota || null, cbu: cbu || null, alias_cbu: alias_cbu || null, banco: banco || null, titular_cuenta: titular_cuenta || null }, id ? `id=eq.${id}` : null)
         cerrarModal(); recargarListas()
       }} />}
       {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} zIndex={300} />}
@@ -562,6 +562,14 @@ function MobileHeaderStats({ obras, gastos, remitosPorObra = {} }) {
 }
 
 // ── Panel Inicio ──────────────────────────────────────────────
+function WAIcon({ size = 14 }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} style={{ display: 'block' }}>
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+    </svg>
+  )
+}
+
 function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos, onVerObras, onNuevoGasto, onNuevoFoto }) {
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
@@ -901,7 +909,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       {esAdmin && !g.pagado && <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>$ Pagar</button>}
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                       {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
-                      <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#1A6B3C' }}>📤</a>
+                      <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
                       <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                       <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                     </div>
@@ -942,7 +950,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                         {esAdmin && !g.pagado && <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>Pagar</button>}
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                         {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
-                        <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#1A6B3C' }}>📤</a>
+                        <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
                         <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
                         <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                       </div>
@@ -1135,18 +1143,41 @@ function GraficoTemporalRubros({ gastos }) {
 
 // ── Panel Contactos ───────────────────────────────────────────
 function PanelContactos({ clientes, proveedores, onNuevoCliente, onNuevoProveedor, onEditarCliente, onEditarProveedor, onEliminarCliente, onEliminarProveedor }) {
+  const [filtroRubro, setFiltroRubro] = useState('')
+  const rubros = [...new Set(proveedores.map(p => p.rubro).filter(Boolean))].sort()
+  const provsFiltrados = filtroRubro ? proveedores.filter(p => p.rubro === filtroRubro) : proveedores
+  const waProvLink = (p) => p.telefono ? 'https://wa.me/549' + p.telefono.replace(/\D/g, '').replace(/^0/, '') : null
+  const waClienteLink = (c) => c.telefono ? 'https://wa.me/549' + c.telefono.replace(/\D/g, '').replace(/^0/, '') : null
   return (
     <div>
       <PageTitle titulo="Contactos" sub="Clientes y proveedores" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginTop: 20 }}>
-        <ContactoCol titulo="Clientes" items={clientes} onNuevo={onNuevoCliente} onEditar={onEditarCliente} onEliminar={onEliminarCliente} btnLabel="+ Cliente" renderSub={c => [c.telefono, c.email].filter(Boolean).join(' · ')} />
-        <ContactoCol titulo="Proveedores" items={proveedores} onNuevo={onNuevoProveedor} onEditar={onEditarProveedor} onEliminar={onEliminarProveedor} btnLabel="+ Proveedor" outline renderSub={p => { const sit = getSituacion(p.situacion_impositiva); return [sit.label, p.cuit && `CUIT: ${p.cuit}`].filter(Boolean).join(' · ') }} />
+        <ContactoCol titulo="Clientes" items={clientes} onNuevo={onNuevoCliente} onEditar={onEditarCliente} onEliminar={onEliminarCliente} btnLabel="+ Cliente"
+          renderSub={c => [c.telefono, c.email].filter(Boolean).join(' · ')}
+          renderWA={waClienteLink} />
+        <div>
+          {rubros.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+              {['', ...rubros].map(r => (
+                <button key={r || '__todos'} onClick={() => setFiltroRubro(r)}
+                  style={{ padding: '4px 10px', fontSize: 11, cursor: 'pointer', border: `1px solid ${filtroRubro === r ? C.purple : C.border}`, borderRadius: 99, background: filtroRubro === r ? C.purpleDim : C.surface, color: filtroRubro === r ? C.purple : C.textMuted, fontFamily: "'Outfit', sans-serif", fontWeight: filtroRubro === r ? 600 : 400 }}>
+                  {r || 'Todos'}
+                </button>
+              ))}
+            </div>
+          )}
+          <ContactoCol titulo={`Proveedores${filtroRubro ? ' · ' + filtroRubro : ''} (${provsFiltrados.length})`} items={provsFiltrados} onNuevo={onNuevoProveedor} onEditar={onEditarProveedor} onEliminar={onEliminarProveedor} btnLabel="+ Proveedor" outline
+            renderSub={p => { const sit = getSituacion(p.situacion_impositiva); return [p.contacto, p.rubro, sit.label, p.cuit && 'CUIT: ' + p.cuit].filter(Boolean).join(' · ') }}
+            renderBanco={p => [p.alias_cbu || p.cbu, p.banco].filter(Boolean).join(' · ') || null}
+            renderNota={p => p.nota || null}
+            renderWA={waProvLink} />
+        </div>
       </div>
     </div>
   )
 }
 
-function ContactoCol({ titulo, items, onNuevo, onEditar, onEliminar, btnLabel, outline, renderSub }) {
+function ContactoCol({ titulo, items, onNuevo, onEditar, onEliminar, btnLabel, outline, renderSub, renderWA, renderNota, renderBanco }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -1160,8 +1191,16 @@ function ContactoCol({ titulo, items, onNuevo, onEditar, onEliminar, btnLabel, o
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{item.nombre}</div>
               {renderSub(item) && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{renderSub(item)}</div>}
+              {renderNota && renderNota(item) && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{renderNota(item)}</div>}
+              {renderBanco && renderBanco(item) && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                  <span style={{ fontSize: 11, color: C.purple, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{renderBanco(item)}</span>
+                  <button title="Copiar alias/CBU" onClick={() => navigator.clipboard.writeText(item.alias_cbu || item.cbu || '')} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 11, padding: 0, color: C.textFaint, flexShrink: 0 }}>📋</button>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+              {renderWA && renderWA(item) && <a href={renderWA(item)} target="_blank" rel="noreferrer" title="WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>}
               {onEditar && <button style={btnIconSt} onClick={() => onEditar(item)}>✏️</button>}
               {onEliminar && <button style={{ ...btnIconSt, color: C.red ?? '#C62828' }} onClick={() => onEliminar(item)}>🗑️</button>}
             </div>
@@ -1570,7 +1609,7 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
 }
 
 function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
-  const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: datosIniciales?.cuit || '', rubro: '', situacion_impositiva: datosIniciales?.situacion_impositiva || 'responsable_inscripto' })
+  const [form, setForm] = useState({ nombre: datosIniciales?.nombre || '', cuit: datosIniciales?.cuit || '', rubro: '', situacion_impositiva: datosIniciales?.situacion_impositiva || 'responsable_inscripto', telefono: '', contacto: '', nota: '', cbu: '', alias_cbu: '', banco: '', titular_cuenta: '' })
   const [saving, setSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -1639,7 +1678,7 @@ function ModalCliente({ itemEdit, onClose, onGuardar }) {
 }
 
 function ModalProveedor({ itemEdit, onClose, onGuardar }) {
-  const [form, setForm] = useState(itemEdit || { nombre: '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto' })
+  const [form, setForm] = useState(itemEdit || { nombre: '', cuit: '', rubro: '', situacion_impositiva: 'responsable_inscripto', telefono: '', contacto: '', nota: '', cbu: '', alias_cbu: '', banco: '', titular_cuenta: '' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const sit = getSituacion(form.situacion_impositiva)
   return (
@@ -1650,6 +1689,22 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
         <Campo label="Rubro"><select style={inputSt} value={form.rubro || ''} onChange={e => set('rubro', e.target.value)}><option value="">— Seleccionar —</option>{RUBROS.map(r => <option key={r} value={r}>{r}</option>)}</select></Campo>
       </div>
       <div style={{ marginTop: 10 }}><Campo label="Situación impositiva"><select style={inputSt} value={form.situacion_impositiva} onChange={e => set('situacion_impositiva', e.target.value)}>{SITUACIONES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></Campo></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+        <Campo label="Teléfono WhatsApp"><input style={inputSt} value={form.telefono || ''} onChange={e => set('telefono', e.target.value)} placeholder="Ej: 3764123456" /></Campo>
+        <Campo label="Persona de contacto"><input style={inputSt} value={form.contacto || ''} onChange={e => set('contacto', e.target.value)} placeholder="Nombre" /></Campo>
+      </div>
+      <div style={{ marginTop: 10 }}><Campo label="Notas"><input style={inputSt} value={form.nota || ''} onChange={e => set('nota', e.target.value)} placeholder="Observaciones, condiciones, etc." /></Campo></div>
+      <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 10 }}>Datos bancarios</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+          <Campo label="CBU"><input style={inputSt} value={form.cbu || ''} onChange={e => set('cbu', e.target.value)} placeholder="22 dígitos" /></Campo>
+          <Campo label="Alias CBU"><input style={inputSt} value={form.alias_cbu || ''} onChange={e => set('alias_cbu', e.target.value)} placeholder="Ej: proveedor.banco" /></Campo>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <Campo label="Banco"><input style={inputSt} value={form.banco || ''} onChange={e => set('banco', e.target.value)} placeholder="Ej: Galicia" /></Campo>
+          <Campo label="Titular de la cuenta"><input style={inputSt} value={form.titular_cuenta || ''} onChange={e => set('titular_cuenta', e.target.value)} placeholder="Nombre o razón social" /></Campo>
+        </div>
+      </div>
       <div style={{ background: '#F9F9F9', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', fontSize: 12, marginTop: 12 }}>
         <div style={{ color: C.textFaint, fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Comprobante sugerido</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
