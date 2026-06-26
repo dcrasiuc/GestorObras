@@ -81,6 +81,14 @@ export const RUBROS = [
   'Varios',
 ]
 
+export const CONDICIONES_PAGO = [
+  { value: 'contado',  label: 'Contado',   dias: 0 },
+  { value: 'viernes',  label: 'Este viernes', dias: 0 },
+  { value: '15_dias',  label: '15 días',   dias: 15 },
+  { value: '30_dias',  label: '30 días',   dias: 30 },
+  { value: '60_dias',  label: '60 días',   dias: 60 },
+]
+
 // ── IVA ──────────────────────────────────────────────────────
 export const IVA = 0.21
 

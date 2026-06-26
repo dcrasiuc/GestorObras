@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
-import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE } from './constants'
+import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite } from './utils'
 import { exportarExcel } from './exportExcel'
 import './toast'
@@ -121,7 +121,7 @@ function useGastos(obrasIds) {
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
       let q = supabase.from('gastos')
-        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
+        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
         .order('fecha', { ascending: false })
       if (ids !== null) q = q.in('obra_id', ids)
       const { data, error } = await q
@@ -258,8 +258,9 @@ export default function GestorObras({ usuario }) {
     { id: 'inicio',  label: 'Inicio',  icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg> },
     { id: 'obras',   label: 'Obras',   icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="14" width="8" height="8"/><rect x="14" y="2" width="8" height="8"/><path d="M2 2h8v8H2zM14 14h8v8h-8z" strokeOpacity="0"/><rect x="2" y="2" width="8" height="8"/><rect x="14" y="14" width="8" height="8"/></svg> },
     { id: 'gastos',  label: 'Gastos',  icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg> },
-    { id: 'cc',      label: 'Cta Cte', icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> },
-    { id: 'informe', label: 'Informe', icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
+
+    { id: 'informe',  label: 'Informe',  icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
+    { id: 'finanzas', label: 'Finanzas', icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 10h2m4 0h2M7 7h10"/></svg> },
     { id: 'mas',     label: 'Más',     icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg> },
   ]
 
@@ -411,6 +412,7 @@ export default function GestorObras({ usuario }) {
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
+            {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
               onEliminarCliente={async c => { if (!window.confirm(`¿Eliminar cliente "${c.nombre}"?`)) return; await dbWrite('DELETE', 'clientes', null, `id=eq.${c.id}`); recargarListas() }}
@@ -458,9 +460,9 @@ export default function GestorObras({ usuario }) {
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
-          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto } = d
+          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes } = d
           // a_nombre_seate solo aplica a Factura A
-          const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0 }
+          const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes }
           const esNuevo = !id
           const saved = await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null, esNuevo)
           // Actualización optimista: reflejar en UI sin esperar reload
@@ -562,6 +564,27 @@ function MobileHeaderStats({ obras, gastos, remitosPorObra = {} }) {
 }
 
 // ── Panel Inicio ──────────────────────────────────────────────
+function calcVencimiento(fecha, condicion, redondearViernes = true) {
+  if (!fecha || !condicion || condicion === 'contado') return fecha
+  const d = new Date(fecha + 'T12:00:00')
+  if (condicion === 'viernes') {
+    const dow = d.getDay(); const toFri = dow === 5 ? 7 : (5 - dow + 7) % 7
+    d.setDate(d.getDate() + (toFri || 7)); return d.toISOString().slice(0, 10)
+  }
+  const dias = condicion === '15_dias' ? 15 : condicion === '30_dias' ? 30 : condicion === '60_dias' ? 60 : 0
+  d.setDate(d.getDate() + dias)
+  if (redondearViernes) {
+    const dow = d.getDay(); if (dow !== 5) { const tf = (5 - dow + 7) % 7; d.setDate(d.getDate() + (tf || 7)) }
+  }
+  return d.toISOString().slice(0, 10)
+}
+function diasHasta(fechaISO) {
+  if (!fechaISO) return null
+  const hoyMs = new Date(hoy() + 'T12:00:00').getTime()
+  const fMs   = new Date(fechaISO + 'T12:00:00').getTime()
+  return Math.round((fMs - hoyMs) / 86400000)
+}
+
 function WAIcon({ size = 14 }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} style={{ display: 'block' }}>
@@ -604,13 +627,15 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
           <BtnPrimary onClick={onNuevoGasto}>+ Gasto</BtnPrimary>
           </div>
         </PageHeader>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
           {[
             { label: 'Total gastos',   value: `$ ${fmt(totalGastos)}`, sub: provisorio > 0 ? `${gastosActivas.length} comprob. · incluye ${fmtK(provisorio)} provisorio` : `${gastosActivas.length} comprobantes` },
             { label: 'Pagado',         value: `$ ${fmt(pagado)}`,      sub: `${totalConfirmado > 0 ? Math.round(pagado/totalConfirmado*100) : 0}%` },
             { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${cantImpagas} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
             // Crédito fiscal IVA: solo visible para administradores
+            { label: 'Pend. contado',   value: `$ ${fmt(gastosActivas.filter(g => !g.pagado && (!g.condicion_pago || ['contado','viernes'].includes(g.condicion_pago))).reduce((s,g)=>s+(g.monto||0),0))}`, sub: 'pago inmediato', alert2: true },
+            { label: 'Pend. cta. cte.',  value: `$ ${fmt(gastosActivas.filter(g => !g.pagado && g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).reduce((s,g)=>s+(g.monto||0),0))}`, sub: (() => { const prox = gastosActivas.filter(g => !g.pagado && g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).map(g => calcVencimiento(g.fecha, g.condicion_pago, g.redondear_viernes)).filter(Boolean).sort()[0]; return prox ? 'próx. ' + prox : 'sin vencimientos' })() },
             ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(creditoFiscal)}`, sub: `${cantCreditoA} fact. A SEATE` }] : []),
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
@@ -803,6 +828,45 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
 }
 
 // ── Panel Gastos ──────────────────────────────────────────────
+
+function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filtroEstado, setFiltroEstado, filtroProveedorId, setFiltroProveedorId }) {
+  const hasFilter = filtroObraId || filtroEstado || filtroProveedorId
+  const chipSt = (active) => ({
+    padding: '5px 12px', borderRadius: 99, border: `1.5px solid ${active ? C.purple : C.border}`,
+    background: active ? C.purpleDim : C.surface, color: active ? C.purple : C.textMuted,
+    fontSize: 12, fontWeight: active ? 700 : 400, cursor: 'pointer', whiteSpace: 'nowrap',
+  })
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {/* Estado */}
+        <button style={chipSt(!filtroEstado)} onClick={() => setFiltroEstado('')}>Todos</button>
+        <button style={chipSt(filtroEstado === 'pendiente')} onClick={() => setFiltroEstado(filtroEstado === 'pendiente' ? '' : 'pendiente')}>Pendiente</button>
+        <button style={chipSt(filtroEstado === 'pagado')} onClick={() => setFiltroEstado(filtroEstado === 'pagado' ? '' : 'pagado')}>Pagado</button>
+        <div style={{ width: 1, height: 20, background: C.border, margin: '0 4px' }} />
+        {/* Obra */}
+        <select value={filtroObraId} onChange={e => setFiltroObraId(e.target.value)}
+          style={{ padding: '5px 8px', borderRadius: 8, border: `1.5px solid ${filtroObraId ? C.purple : C.border}`, fontSize: 12, color: filtroObraId ? C.purple : C.textMuted, background: filtroObraId ? C.purpleDim : C.surface, fontWeight: filtroObraId ? 700 : 400, cursor: 'pointer', maxWidth: 180 }}>
+          <option value="">Obra: todas</option>
+          {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+        </select>
+        {/* Proveedor */}
+        <select value={filtroProveedorId} onChange={e => setFiltroProveedorId(e.target.value)}
+          style={{ padding: '5px 8px', borderRadius: 8, border: `1.5px solid ${filtroProveedorId ? C.purple : C.border}`, fontSize: 12, color: filtroProveedorId ? C.purple : C.textMuted, background: filtroProveedorId ? C.purpleDim : C.surface, fontWeight: filtroProveedorId ? 700 : 400, cursor: 'pointer', maxWidth: 180 }}>
+          <option value="">Proveedor: todos</option>
+          {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+        </select>
+        {hasFilter && (
+          <button onClick={() => { setFiltroObraId(''); setFiltroEstado(''); setFiltroProveedorId('') }}
+            style={{ padding: '5px 10px', borderRadius: 99, border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted, fontSize: 11, cursor: 'pointer' }}>
+            Limpiar ✕
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar }) {
   // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
   const obrasActivas = obras.filter(o => o.estado === 'activa')
@@ -817,8 +881,13 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   useEffect(() => {
     if (filtroObraId && !obras.some(o => o.id === filtroObraId && o.estado === 'activa')) setFiltroObraId('')
   }, [filtroObraId, obras, setFiltroObraId])
-  const total = gastos.reduce((s, g) => s + (g.monto ?? 0), 0)
-  const pagado = gastos.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
+  const [filtroEstadoGasto, setFiltroEstadoGasto] = useState('')
+  const [filtroProveedorId, setFiltroProveedorId] = useState('')
+  const gastosFiltrados = gastos
+    .filter(g => !filtroEstadoGasto || (filtroEstadoGasto === 'pagado' ? g.pagado : !g.pagado))
+    .filter(g => !filtroProveedorId || g.proveedor_id === filtroProveedorId)
+  const total = gastosFiltrados.reduce((s, g) => s + (g.monto ?? 0), 0)
+  const pagado = gastosFiltrados.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   // Pendiente incluye TODAS las impagas (también de obras cerradas) como aviso de deuda
   const impagas = gastosRaw.filter(g => !g.pagado)
   const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
@@ -846,10 +915,17 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
         </div>
       )}
 
-      <select value={filtroObraId} onChange={e => setFiltroObraId(e.target.value)} style={{ ...inputSt, marginBottom: 16, maxWidth: 320 }}>
-        <option value="">Todas las obras</option>
-        {obrasActivas.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
-      </select>
+      {/* Multi-filtro: obra + estado + proveedor */}
+      <GastosFiltros
+        obras={obrasActivas}
+        proveedores={[...new Map(gastos.filter(g=>g.proveedores).map(g=>[g.proveedor_id, g.proveedores])).values()]}
+        filtroObraId={filtroObraId}
+        setFiltroObraId={setFiltroObraId}
+        filtroEstado={filtroEstadoGasto}
+        setFiltroEstado={setFiltroEstadoGasto}
+        filtroProveedorId={filtroProveedorId}
+        setFiltroProveedorId={setFiltroProveedorId}
+      />
 
       {/* Remitos provisorios (pendientes de factura) — se suman a la obra pero no son gasto confirmado */}
       {remitosScope.length > 0 && (
@@ -879,11 +955,11 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
         </div>
       )}
 
-      {loading ? <Spinner /> : gastos.length === 0 ? (remitosScope.length === 0 ? <EmptyState texto="No hay gastos registrados" /> : null) : (
+      {loading ? <Spinner /> : gastosFiltrados.length === 0 ? (remitosScope.length === 0 ? <EmptyState texto="Sin gastos con los filtros seleccionados" /> : null) : (
         <>
           {/* MOBILE */}
           <div className="mobile-only" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {gastos.map(g => {
+            {gastosFiltrados.map(g => {
               const [iconBg] = CONCEPTO_COLORS[g.concepto] ?? CONCEPTO_COLORS.varios
               return (
                 <div key={g.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px' }}>
@@ -935,7 +1011,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                 </tr>
               </thead>
               <tbody>
-                {gastos.map((g, i) => (
+                {gastosFiltrados.map((g, i) => (
                   <tr key={g.id} style={{ borderBottom: i < gastos.length-1 ? `1px solid ${C.borderFaint}` : 'none', background: g.pagado ? '#FAFFFE' : C.surface }}>
                     <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
                     <td style={tdSt}><span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}</span></td>
@@ -967,6 +1043,148 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
 }
 
 // ── Panel Informe ─────────────────────────────────────────────
+
+// ── Panel Financiero ─────────────────────────────────────────
+function PanelFinanciero({ gastos, obras }) {
+  const [horizonte, setHorizonte] = useState('semana')
+  const [filtroObra, setFiltroObra] = useState('')
+  const hoyStr = hoy()
+
+  const horizontes = [
+    { value: 'semana', label: 'Esta semana' },
+    { value: '15',     label: '15 días' },
+    { value: '30',     label: '30 días' },
+    { value: '60',     label: '60 días' },
+    { value: 'todos',  label: 'Todos' },
+  ]
+
+  const fechaLimite = (() => {
+    if (horizonte === 'todos') return '9999-12-31'
+    if (horizonte === 'semana') {
+      const d = new Date(hoyStr + 'T12:00:00')
+      const dow = d.getDay(); const toFri = dow <= 5 ? (5 - dow) : 6
+      d.setDate(d.getDate() + toFri); return d.toISOString().slice(0, 10)
+    }
+    const d = new Date(hoyStr + 'T12:00:00')
+    d.setDate(d.getDate() + parseInt(horizonte)); return d.toISOString().slice(0, 10)
+  })()
+
+  const pendientes = gastos
+    .filter(g => !g.pagado)
+    .filter(g => !filtroObra || g.obra_id === filtroObra)
+    .map(g => {
+      const vence = calcVencimiento(g.fecha, g.condicion_pago || 'contado', g.redondear_viernes !== false)
+      const dd = diasHasta(vence || hoyStr)
+      return { ...g, vence: vence || hoyStr, dd }
+    })
+    .filter(g => g.vence <= fechaLimite)
+    .sort((a, b) => a.vence.localeCompare(b.vence))
+
+  // Agrupar por semana (lunes-viernes)
+  const grupos = pendientes.reduce((acc, g) => {
+    const k = g.vence; (acc[k] = acc[k] || []).push(g); return acc
+  }, {})
+
+  const totalPendiente = pendientes.reduce((s, g) => s + (g.monto || 0), 0)
+
+  const rowSt = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '10px 0', borderBottom: `1px solid ${C.border}`, gap: 12 }
+  const badgeSt = (vence) => {
+    const dd = diasHasta(vence)
+    const color = dd < 0 ? '#D0021B' : dd <= 3 ? C.orange : C.textMuted
+    return { fontSize: 11, fontWeight: 700, color, whiteSpace: 'nowrap' }
+  }
+
+  return (
+    <div>
+      <PageHeader titulo="Finanzas" sub="Previsión de pagos pendientes" />
+
+      {/* Filtros */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {horizontes.map(h => (
+            <button key={h.value} onClick={() => setHorizonte(h.value)}
+              style={{ padding: '6px 14px', borderRadius: 20, border: `1.5px solid ${horizonte === h.value ? C.purple : C.border}`, background: horizonte === h.value ? C.purpleDim : C.surface, color: horizonte === h.value ? C.purple : C.text, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              {h.label}
+            </button>
+          ))}
+        </div>
+        <select value={filtroObra} onChange={e => setFiltroObra(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, color: C.text, background: C.surface, cursor: 'pointer' }}>
+          <option value="">Todas las obras</option>
+          {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+        </select>
+      </div>
+
+      {/* Resumen */}
+      <div style={{ background: C.purpleDim, border: `1.5px solid ${C.purple}20`, borderRadius: 12, padding: '14px 18px', marginBottom: 20, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>Total a pagar</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: totalPendiente > 0 ? '#D0021B' : C.text }}>{`$ ${fmt(totalPendiente)}`}</div>
+          <div style={{ fontSize: 11, color: C.textMuted }}>{pendientes.length} comprobante{pendientes.length !== 1 ? 's' : ''}</div>
+        </div>
+        {pendientes.filter(g => g.dd !== null && g.dd < 0).length > 0 && (
+          <div>
+            <div style={{ fontSize: 10, color: '#D0021B', fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>Vencidos</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#D0021B' }}>{`$ ${fmt(pendientes.filter(g => g.dd < 0).reduce((s,g)=>s+g.monto,0))}`}</div>
+            <div style={{ fontSize: 11, color: '#D0021B' }}>{pendientes.filter(g => g.dd < 0).length} comprobante{pendientes.filter(g=>g.dd<0).length!==1?'s':''}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Lista agrupada por fecha de vencimiento */}
+      {Object.keys(grupos).length === 0 ? (
+        <div style={{ textAlign: 'center', color: C.textMuted, padding: 40, fontSize: 14 }}>
+          Sin pagos pendientes en este período ✓
+        </div>
+      ) : (
+        Object.entries(grupos).map(([fecha, items]) => (
+          <div key={fecha} style={{ marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                {fecha === hoyStr ? 'Hoy — ' : ''}{fecha}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{`$ ${fmt(items.reduce((s,g)=>s+g.monto,0))}`}</div>
+            </div>
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+              {items.map((g, i) => (
+                <div key={g.id} style={{ ...rowSt, padding: '10px 14px', borderBottom: i < items.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: C.text, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {g.proveedores?.nombre ?? 'Sin proveedor'}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>
+                      {g.obras?.nombre} · {CONDICIONES_PAGO.find(c=>c.value===g.condicion_pago)?.label ?? 'Contado'}
+                      {g.nro_comprobante ? ' · ' + g.nro_comprobante : ''}
+                    </div>
+                    {(g.proveedores?.alias_cbu || g.proveedores?.cbu) && (
+                      <div style={{ fontSize: 11, color: C.purple, marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span>{g.proveedores.banco ? g.proveedores.banco + ' · ' : ''}{g.proveedores.alias_cbu || g.proveedores.cbu}</span>
+                        <button onClick={() => navigator.clipboard.writeText(g.proveedores.alias_cbu || g.proveedores.cbu)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 12, padding: 0, color: C.textFaint }}>📋</button>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums' }}>{`$ ${fmt(g.monto)}`}</div>
+                    <div style={badgeSt(g.vence)}>
+                      {g.dd < 0 ? `Vencido hace ${Math.abs(g.dd)}d` : g.dd === 0 ? 'Hoy' : `En ${g.dd}d`}
+                    </div>
+                    {g.proveedores?.telefono && (
+                      <a href={'https://wa.me/549' + g.proveedores.telefono.replace(/\D/g,'').replace(/^0/,'')} target="_blank" rel="noreferrer"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 4, fontSize: 11, color: '#25D366', textDecoration: 'none', fontWeight: 600 }}>
+                        <WAIcon size={12} /> WA
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
 function PanelInforme({ obras, gastos: todosGastosInforme, remitosPorObra = {}, bancos = [], esAdmin, loading }) {
   const [obraId, setObraId] = useState('')
   const exportar = () => {
@@ -1483,7 +1701,7 @@ async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.7) {
 
 function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [step, setStep] = useState('upload')
-  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [] })
+  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true })
   const [preview, setPreview] = useState(null)
   const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -1750,9 +1968,33 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
 
   return (
     <Modal title={`Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: parseFloat(form.monto) || 0, banco_id: form.banco_id || null })} guardarLabel="Confirmar pago">
-      <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12 }}>
-        <div style={{ fontWeight: 600, color: C.text, marginBottom: 2 }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
-        <div style={{ color: C.textMuted }}>{gasto?.obras?.nombre} · {gasto?.fecha} · {getTipoLabel(gasto?.tipo_comprobante)}</div>
+      <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontWeight: 600, color: C.text, marginBottom: 2 }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
+            <div style={{ color: C.textMuted }}>{gasto?.obras?.nombre} · {gasto?.fecha} · {getTipoLabel(gasto?.tipo_comprobante)}</div>
+          </div>
+          {gasto?.proveedores?.telefono && (
+            <a href={'https://wa.me/549' + gasto.proveedores.telefono.replace(/\D/g,'').replace(/^0/,'')} target="_blank" rel="noreferrer"
+              title="WhatsApp del proveedor"
+              style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366', flexShrink: 0 }}>
+              <WAIcon />
+            </a>
+          )}
+        </div>
+        {(gasto?.proveedores?.alias_cbu || gasto?.proveedores?.cbu) && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: C.textFaint, fontWeight: 600 }}>DATOS BANCARIOS</span>
+            {gasto.proveedores.banco && <span style={{ fontSize: 12, color: C.text }}>{gasto.proveedores.banco}</span>}
+            {gasto.proveedores.titular_cuenta && <span style={{ fontSize: 12, color: C.textMuted }}>{gasto.proveedores.titular_cuenta}</span>}
+            {(gasto.proveedores.alias_cbu || gasto.proveedores.cbu) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 12, color: C.purple, fontWeight: 700 }}>{gasto.proveedores.alias_cbu || gasto.proveedores.cbu}</span>
+                <button title="Copiar" onClick={() => navigator.clipboard.writeText(gasto.proveedores.alias_cbu || gasto.proveedores.cbu)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, padding: 0, color: C.textFaint }}>📋</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <Campo label="Fecha de pago"><input style={inputSt} type="date" value={form.fecha_pago} onChange={e => set('fecha_pago', e.target.value)} /></Campo>
@@ -1868,6 +2110,24 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
         )}
       </Campo>
       <Campo label="Descripción" style={{ gridColumn: '1/-1' }}><textarea style={{ ...inputSt, minHeight: 64, resize: 'vertical' }} value={form.descripcion || ''} onChange={e => set('descripcion', e.target.value)} /></Campo>
+      <Campo label="Condición de pago" style={{ gridColumn: '1/-1' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select style={{ ...inputSt, flex: 1 }} value={form.condicion_pago || 'contado'} onChange={e => set('condicion_pago', e.target.value)}>
+            {CONDICIONES_PAGO.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+          {form.condicion_pago !== 'contado' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: C.textMuted, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={!!form.redondear_viernes} onChange={e => set('redondear_viernes', e.target.checked)} style={{ width: 14, height: 14, accentColor: C.purple }} />
+              Al viernes siguiente
+            </label>
+          )}
+          {form.condicion_pago !== 'contado' && form.fecha && (
+            <span style={{ fontSize: 11, color: C.purple, fontWeight: 600 }}>
+              Vence: {calcVencimiento(form.fecha, form.condicion_pago, !!form.redondear_viernes)}
+            </span>
+          )}
+        </div>
+      </Campo>
     </div>
   )
 }
