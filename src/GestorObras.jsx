@@ -2016,22 +2016,52 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
     }
   }
 
+  const [verMas, setVerMas] = useState(false)
+  const venc = calcVencimiento(gasto?.fecha, gasto?.condicion_pago, gasto?.redondear_viernes !== false)
+
   return (
     <Modal title={`Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: parseFloat(form.monto) || 0, banco_id: form.banco_id || null })} guardarLabel="Confirmar pago">
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontWeight: 600, color: C.text, marginBottom: 2 }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
-            <div style={{ color: C.textMuted }}>{gasto?.obras?.nombre} · {gasto?.fecha} · {getTipoLabel(gasto?.tipo_comprobante)}</div>
+        {/* Fila principal: proveedor + WA */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 700, color: C.text, marginBottom: 3, fontSize: 13 }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
+            <div style={{ color: C.textMuted, display: 'flex', flexWrap: 'wrap', gap: '2px 8px', lineHeight: 1.6 }}>
+              <span>{gasto?.obras?.nombre ?? '—'}</span>
+              <span>·</span>
+              <span>{gasto?.fecha}</span>
+              <span>·</span>
+              <span>{getTipoLabel(gasto?.tipo_comprobante)}</span>
+              {gasto?.nro_comprobante && <><span>·</span><span style={{ fontWeight: 600, color: C.text }}>Nº {gasto.nro_comprobante}</span></>}
+            </div>
           </div>
-          {gasto?.proveedores?.telefono && (
-            <a href={'https://wa.me/549' + gasto.proveedores.telefono.replace(/\D/g,'').replace(/^0/,'')} target="_blank" rel="noreferrer"
-              title="WhatsApp del proveedor"
-              style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366', flexShrink: 0 }}>
-              <WAIcon />
-            </a>
-          )}
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            {gasto?.proveedores?.telefono && (
+              <a href={'https://wa.me/549' + gasto.proveedores.telefono.replace(/\D/g,'').replace(/^0/,'')} target="_blank" rel="noreferrer"
+                title="WhatsApp del proveedor"
+                style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}>
+                <WAIcon />
+              </a>
+            )}
+            <button onClick={() => setVerMas(v => !v)}
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 11, color: C.purple, fontWeight: 600, padding: '2px 4px', fontFamily: "'Outfit', sans-serif" }}>
+              {verMas ? 'ver menos ▲' : 'ver más ▼'}
+            </button>
+          </div>
         </div>
+
+        {/* Panel expandible */}
+        {verMas && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
+            {gasto?.concepto && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Concepto: </span><span style={{ color: C.text }}>{CONCEPTO_LABELS[gasto.concepto] ?? gasto.concepto}</span></div>}
+            {gasto?.condicion_pago && gasto.condicion_pago !== 'contado' && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Condición: </span><span style={{ color: C.text }}>{CONDICIONES_PAGO.find(c => c.value === gasto.condicion_pago)?.label ?? gasto.condicion_pago}</span></div>}
+            {venc && gasto?.condicion_pago !== 'contado' && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Vencimiento: </span><span style={{ color: C.text, fontWeight: 600 }}>{venc}</span></div>}
+            {gasto?.descripcion && <div style={{ gridColumn: '1/-1' }}><span style={{ color: C.textFaint, fontWeight: 600 }}>Descripción: </span><span style={{ color: C.text }}>{gasto.descripcion}</span></div>}
+            {gasto?.imagen_url && <div style={{ gridColumn: '1/-1' }}><a href={gasto.imagen_url} target="_blank" rel="noreferrer" style={{ color: C.purple, fontWeight: 600, fontSize: 11 }}>📎 Ver comprobante original</a></div>}
+          </div>
+        )}
+
+        {/* Datos bancarios — siempre visibles */}
         {(gasto?.proveedores?.alias_cbu || gasto?.proveedores?.cbu) && (
           <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: C.textFaint, fontWeight: 600 }}>DATOS BANCARIOS</span>
