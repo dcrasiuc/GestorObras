@@ -121,7 +121,7 @@ function useGastos(obrasIds) {
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
       let q = supabase.from('gastos')
-        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta, condicion_pago, redondear_viernes), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
+        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
         .order('fecha', { ascending: false })
       if (ids !== null) q = q.in('obra_id', ids)
       const { data, error } = await q
@@ -901,11 +901,11 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const [filtroProveedorId, setFiltroProveedorId] = useState('')
   const [seleccion, setSeleccion] = useState(new Set())
   const toggleSel = (id) => setSeleccion(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const gastosSeleccionados = gastosFiltrados.filter(g => seleccion.has(g.id) && !g.pagado)
-  const totalSeleccionado = gastosSeleccionados.reduce((s, g) => s + (g.monto || 0), 0)
   const gastosFiltrados = gastos
     .filter(g => !filtroEstadoGasto || (filtroEstadoGasto === 'pagado' ? g.pagado : !g.pagado))
     .filter(g => !filtroProveedorId || g.proveedor_id === filtroProveedorId)
+  const gastosSeleccionados = gastosFiltrados.filter(g => seleccion.has(g.id) && !g.pagado)
+  const totalSeleccionado = gastosSeleccionados.reduce((s, g) => s + (g.monto || 0), 0)
   const total = gastosFiltrados.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastosFiltrados.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   // Pendiente incluye TODAS las impagas (también de obras cerradas) como aviso de deuda
