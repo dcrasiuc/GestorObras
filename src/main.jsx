@@ -38,10 +38,12 @@ function App() {
     const resolver = (session) => async () => {
       clearTimeout(failsafe)
       if (session?.user) {
-        // IMPORTANTE: .catch(() => undefined) — undefined NO dispara pantalla Pendiente.
-        // null sí la dispara (usuario autenticado pero sin fila en tabla usuarios).
-        const perfil = await cargarPerfil(session.user.id).catch(() => undefined)
+        console.log('[AUTH] cargarPerfil para', session.user.id)
+        const perfil = await cargarPerfil(session.user.id).catch((e) => { console.error('[AUTH] cargarPerfil error:', e); return undefined })
+        console.log('[AUTH] perfil resultado:', perfil)
         setUsuario({ ...session.user, perfil })
+      } else {
+        console.log('[AUTH] sin usuario en sesión, mostrando Login')
       }
       setLoading(false)
     }
@@ -51,6 +53,7 @@ function App() {
     // No usar getSession() como fuente principal porque puede resolver antes de que
     // el intercambio de código PKCE (OAuth redirect) complete, mostrando Login prematuramente.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[AUTH EVENT]', event, 'user:', session?.user?.id ?? 'null')
       if (event === 'INITIAL_SESSION') {
         await resolver(session)()
         return
