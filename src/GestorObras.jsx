@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
-import { C, CONCEPTOS, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
+import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite } from './utils'
 import { exportarExcel } from './exportExcel'
 import './toast'
@@ -186,7 +186,7 @@ export default function GestorObras({ usuario }) {
   const creditoFiscalPorObra = {}
   const totalPorObra = {}
   const cantPorObra = {}
-  todosGastos.forEach(g => {
+  todosGastos.filter(g => !g.es_gasto_general).forEach(g => {
     const ivaG = ivaCreditoGasto(g), totalG = parseFloat(g.monto) || 0
     const obrasTocadas = new Set()
     imputaciones(g).forEach(im => {
@@ -460,9 +460,9 @@ export default function GestorObras({ usuario }) {
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
-          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes } = d
+          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes, es_gasto_general } = d
           // a_nombre_seate solo aplica a Factura A
-          const payload = { obra_id, fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes }
+          const payload = { obra_id: es_gasto_general ? null : (obra_id || null), fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes, es_gasto_general: !!es_gasto_general }
           const esNuevo = !id
           const saved = await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null, esNuevo)
           // Actualización optimista: reflejar en UI sin esperar reload
@@ -651,7 +651,12 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
   // Distribución: un gasto cuenta en una obra activa si alguna de sus partes cae ahí
-  const gastosActivas = gastos.filter(g => imputaciones(g).some(im => idsActivas.has(im.obra_id)))
+  const gastosActivas = gastos.filter(g => !g.es_gasto_general && imputaciones(g).some(im => idsActivas.has(im.obra_id)))
+  // Gastos generales de empresa en el período
+  const gastosGeneralesEnPeriodo = gastos.filter(g => g.es_gasto_general && enPeriodo(g.fecha))
+  const totalGenerales = gastosGeneralesEnPeriodo.reduce((s, g) => s + (g.monto || 0), 0)
+
+  // Prorrateo: cada obra activa absorbe según su peso en el gasto total del período
   const gastosEnPeriodo = gastosActivas.filter(g => enPeriodo(g.fecha))
   let totalConfirmado = 0, pagado = 0, creditoFiscal = 0
   gastosEnPeriodo.forEach(g => imputaciones(g).forEach(im => {
@@ -665,7 +670,7 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
   Object.entries(remitosPorObra).forEach(([oid, m]) => { if (idsActivas.has(oid)) provisorio += m })
   const totalGastos = totalConfirmado + provisorio
   // Pendiente = toda la deuda impaga (incluso obras cerradas), filtrada por período
-  const impagas = gastosEnPeriodo.filter(g => !g.pagado)
+  const impagas = gastosEnPeriodo.filter(g => !g.pagado && !g.es_gasto_general)
   let pendiente = 0
   impagas.forEach(g => imputaciones(g).forEach(im => { pendiente += im.monto }))
   const cantImpagas = impagas.length
@@ -714,6 +719,7 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
             { label: 'Pendiente',      value: `$ ${fmt(pendiente)}`,   sub: `${cantImpagas} facturas`, alert: pendiente > 0 },
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
             // Crédito fiscal IVA: solo visible para administradores
+            { label: 'Gastos empresa',  value: `$ ${fmt(totalGenerales)}`, sub: `${gastosGeneralesEnPeriodo.length} mov. generales` },
             { label: 'Pend. contado',   value: `$ ${fmt(gastosActivas.filter(g => !g.pagado && (!g.condicion_pago || ['contado','viernes'].includes(g.condicion_pago))).reduce((s,g)=>s+(g.monto||0),0))}`, sub: 'pago inmediato', alert2: true },
             { label: 'Pend. cta. cte.',  value: `$ ${fmt(gastosActivas.filter(g => !g.pagado && g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).reduce((s,g)=>s+(g.monto||0),0))}`, sub: (() => { const prox = gastosActivas.filter(g => !g.pagado && g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).map(g => calcVencimiento(g.fecha, g.condicion_pago, g.redondear_viernes)).filter(Boolean).sort()[0]; return prox ? 'próx. ' + prox : 'sin vencimientos' })() },
             ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(creditoFiscal)}`, sub: `${cantCreditoA} fact. A SEATE` }] : []),
@@ -789,6 +795,39 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
           )
         })}
       </div>
+
+      {/* Prorrateo de gastos generales */}
+      {totalGenerales > 0 && (() => {
+        const gastoPorObra = {}
+        gastosEnPeriodo.forEach(g => imputaciones(g).forEach(im => {
+          if (!idsActivas.has(im.obra_id)) return
+          gastoPorObra[im.obra_id] = (gastoPorObra[im.obra_id] || 0) + im.monto
+        }))
+        const totalObras = Object.values(gastoPorObra).reduce((s, v) => s + v, 0)
+        const obrasConGasto = obrasActivas.filter(o => gastoPorObra[o.id] > 0)
+        if (obrasConGasto.length === 0) return null
+        return (
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Gastos generales — impacto por obra</div>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>$ {fmt(totalGenerales)} prorrateados según peso relativo de gasto de cada obra en el período</div>
+            <div style={{ background: '#EEF4FF', border: '1px solid #C5D8FF', borderRadius: 12, overflow: 'hidden' }}>
+              {obrasConGasto.map((o, i) => {
+                const peso = totalObras > 0 ? gastoPorObra[o.id] / totalObras : 1 / obrasConGasto.length
+                const imputado = totalGenerales * peso
+                return (
+                  <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: i < obrasConGasto.length - 1 ? '1px solid #C5D8FF' : 'none' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1A2D5A' }}>{o.nombre}</div>
+                      <div style={{ fontSize: 11, color: '#5A7AB5' }}>{Math.round(peso * 100)}% del gasto del período</div>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#2D5FA8', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>+ $ {fmt(imputado)}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Últimos gastos */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -936,8 +975,8 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
 
 // ── Panel Gastos ──────────────────────────────────────────────
 
-function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filtroEstado, setFiltroEstado, filtroProveedorId, setFiltroProveedorId }) {
-  const hasFilter = filtroObraId || filtroEstado || filtroProveedorId
+function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filtroEstado, setFiltroEstado, filtroProveedorId, setFiltroProveedorId, filtroGeneral, setFiltroGeneral }) {
+  const hasFilter = filtroObraId || filtroEstado || filtroProveedorId || filtroGeneral
   const chipSt = (active) => ({
     padding: '5px 12px', borderRadius: 99, border: `1.5px solid ${active ? C.purple : C.border}`,
     background: active ? C.purpleDim : C.surface, color: active ? C.purple : C.textMuted,
@@ -963,8 +1002,15 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
           <option value="">Proveedor: todos</option>
           {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
         </select>
+        <div style={{ width: 1, height: 20, background: C.border, margin: '0 4px' }} />
+        {/* Generales */}
+        <button
+          onClick={() => { setFiltroGeneral(g => !g); if (!filtroGeneral) { setFiltroEstado(''); setFiltroObraId('') } }}
+          style={{ padding: '5px 12px', borderRadius: 99, border: `1.5px solid ${filtroGeneral ? '#2D5FA8' : C.border}`, background: filtroGeneral ? '#EEF4FF' : C.surface, color: filtroGeneral ? '#2D5FA8' : C.textMuted, fontSize: 12, fontWeight: filtroGeneral ? 700 : 400, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: "'Outfit', sans-serif" }}>
+          🏛️ Generales
+        </button>
         {hasFilter && (
-          <button onClick={() => { setFiltroObraId(''); setFiltroEstado(''); setFiltroProveedorId('') }}
+          <button onClick={() => { setFiltroObraId(''); setFiltroEstado(''); setFiltroProveedorId(''); setFiltroGeneral(false) }}
             style={{ padding: '5px 10px', borderRadius: 99, border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted, fontSize: 11, cursor: 'pointer' }}>
             Limpiar ✕
           </button>
@@ -978,9 +1024,10 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
-  const gastos = gastosRaw.filter(g => idsActivas.has(g.obra_id))
+  const gastos = gastosRaw.filter(g => g.es_gasto_general || idsActivas.has(g.obra_id))
   // Remitos provisorios dentro del alcance (obras activas + filtro de obra si aplica)
   const enScopeDist = d => idsActivas.has(d.obra_id) && (!filtroObraId || d.obra_id === filtroObraId)
+  // Ocultar select de obra cuando se ven generales (ya está manejado en filtroGeneral)
   const remitosScope = (remitosPendientes || []).filter(r => (r.comprobante_obras || []).some(enScopeDist))
   let provisorio = 0
   remitosScope.forEach(r => (r.comprobante_obras || []).forEach(d => { if (enScopeDist(d)) provisorio += parseFloat(d.monto) || 0 }))
@@ -992,7 +1039,9 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const [filtroProveedorId, setFiltroProveedorId] = useState('')
   const [seleccion, setSeleccion] = useState(new Set())
   const toggleSel = (id) => setSeleccion(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const [filtroGeneral, setFiltroGeneral] = useState(false)
   const gastosFiltrados = gastos
+    .filter(g => filtroGeneral ? !!g.es_gasto_general : !g.es_gasto_general)
     .filter(g => !filtroEstadoGasto || (filtroEstadoGasto === 'pagado' ? g.pagado : !g.pagado))
     .filter(g => !filtroProveedorId || g.proveedor_id === filtroProveedorId)
   const gastosSeleccionados = gastosFiltrados.filter(g => seleccion.has(g.id) && !g.pagado)
@@ -1000,7 +1049,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const total = gastosFiltrados.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastosFiltrados.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   // Pendiente incluye TODAS las impagas (también de obras cerradas) como aviso de deuda
-  const impagas = gastosRaw.filter(g => !g.pagado)
+  const impagas = gastosRaw.filter(g => !g.pagado && !g.es_gasto_general)
   const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
     <div>
@@ -1036,6 +1085,8 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
         setFiltroEstado={setFiltroEstadoGasto}
         filtroProveedorId={filtroProveedorId}
         setFiltroProveedorId={setFiltroProveedorId}
+        filtroGeneral={filtroGeneral}
+        setFiltroGeneral={setFiltroGeneral}
       />
 
       {/* Remitos provisorios (pendientes de factura) — se suman a la obra pero no son gasto confirmado */}
@@ -1786,7 +1837,7 @@ function PanelAdmin({ bancos, recargarListas }) {
 
 // ── Modales ───────────────────────────────────────────────────
 function ModalGasto({ itemEdit, obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
-  const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: true, iva_monto: 0 })
+  const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: true, iva_monto: 0, es_gasto_general: false })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => onGuardar(form)}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} /></Modal>
 }
@@ -1827,7 +1878,7 @@ async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.7) {
 
 function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [step, setStep] = useState('upload')
-  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true })
+  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true, es_gasto_general: false })
   const [preview, setPreview] = useState(null)
   const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -2283,10 +2334,22 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
   const sumaDist = dist.reduce((s, d) => s + (parseFloat(d.monto) || 0), 0)
   const montoTotal = parseFloat(form.monto) || 0
   const chipBtn = { padding: '5px 10px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 7, color: C.textMuted, cursor: 'pointer', fontSize: 12, fontFamily: "'Outfit', sans-serif" }
+  const esGeneral = !!form.es_gasto_general
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      {/* Toggle gasto general */}
+      <div style={{ gridColumn: '1/-1' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '10px 14px', borderRadius: 10, background: esGeneral ? '#EEF4FF' : C.surface, border: `1.5px solid ${esGeneral ? '#2D5FA8' : C.border}`, transition: 'all 0.15s' }}>
+          <input type="checkbox" checked={esGeneral} onChange={e => { set('es_gasto_general', e.target.checked); if (e.target.checked) { set('obra_id', null); set('concepto', 'combustible') } else { set('obra_id', obras[0]?.id || ''); set('concepto', 'materiales') } }} style={{ accentColor: '#2D5FA8', width: 16, height: 16 }} />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: esGeneral ? '#2D5FA8' : C.text }}>🏛️ Gasto general de empresa</div>
+            <div style={{ fontSize: 11, color: C.textMuted }}>Combustible, servicios, legal, oficina — se prorratea entre obras activas</div>
+          </div>
+        </label>
+      </div>
       <Campo label="Fecha"><input style={inputSt} type="date" value={form.fecha} onChange={e => set('fecha', e.target.value)} /></Campo>
-      <Campo label="Obra"><select style={inputSt} value={form.obra_id || ''} onChange={e => set('obra_id', e.target.value)}>{obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}</select></Campo>
+      {!esGeneral && <Campo label="Obra"><select style={inputSt} value={form.obra_id || ''} onChange={e => set('obra_id', e.target.value)}>{obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}</select></Campo>}
+      {esGeneral && <div />}
       <Campo label="Proveedor" style={{ gridColumn: '1/-1' }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <select style={{ ...inputSt, flex: 1 }} value={form.proveedor_id || ''} onChange={e => handleProveedorChange(e.target.value)}>
@@ -2296,7 +2359,7 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
           <button type="button" onClick={() => onNuevoProveedor && onNuevoProveedor('', p => handleProveedorChange(p.id))} style={{ padding: '8px 12px', background: C.purpleDim, color: C.purple, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600 }}>+ Alta</button>
         </div>
       </Campo>
-      <Campo label="Concepto"><select style={inputSt} value={form.concepto} onChange={e => set('concepto', e.target.value)}>{CONCEPTOS.map(c => <option key={c} value={c}>{CONCEPTO_LABELS[c]}</option>)}</select></Campo>
+      <Campo label="Concepto"><select style={inputSt} value={form.concepto} onChange={e => set('concepto', e.target.value)}>{(esGeneral ? CONCEPTOS_GENERALES : CONCEPTOS).map(c => <option key={c} value={c}>{CONCEPTO_LABELS[c]}</option>)}</select></Campo>
       <Campo label="Monto"><input style={inputSt} type="number" value={form.monto} onChange={e => set('monto', e.target.value)} placeholder="0" /></Campo>
       <Campo label="Tipo de comprobante">
         <select style={inputSt} value={form.tipo_comprobante || 'factura_a'} onChange={e => { set('tipo_comprobante', e.target.value); const t = TIPOS_COMPROBANTE.find(t => t.value === e.target.value); if (t) set('discrimina_iva', t.iva); if (e.target.value !== 'factura_a') set('a_nombre_seate', false) }}>

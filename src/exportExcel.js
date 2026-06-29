@@ -60,6 +60,7 @@ export function exportarExcel(obras = [], gastos = [], bancos = []) {
       'Crédito fiscal IVA': creditoFiscal(g),
       'Condición de pago': labelCondicion(g.condicion_pago),
       'Vencimiento': calcVencimiento(g.fecha, g.condicion_pago, g.redondear_viernes !== false),
+      'Tipo': g.es_gasto_general ? 'Gasto empresa' : 'Por obra',
       'Estado': g.pagado ? 'Pagado' : 'Pendiente',
     }))
 
@@ -121,9 +122,39 @@ export function exportarExcel(obras = [], gastos = [], bancos = []) {
     XLSX.utils.book_append_sheet(wb, ws, nombre)
   }
 
+  // ── Hoja Prorrateo gastos empresa ──
+  // Por cada mes que tiene gastos generales, calcula cuánto absorbió cada obra
+  const generales = gastos.filter(g => g.es_gasto_general)
+  const meses = [...new Set(generales.map(g => g.fecha?.slice(0, 7)).filter(Boolean))].sort().reverse()
+  const filasProrrateo = []
+  meses.forEach(mes => {
+    const gensDelMes = generales.filter(g => g.fecha?.startsWith(mes))
+    const totalGen = gensDelMes.reduce((s, g) => s + num(g.monto), 0)
+    // Gasto real por obra en ese mes
+    const gastoPorObra = {}
+    gastos.filter(g => !g.es_gasto_general && g.fecha?.startsWith(mes)).forEach(g => {
+      imputObra(g).forEach(im => { gastoPorObra[im.obra_id] = (gastoPorObra[im.obra_id] || 0) + im.monto })
+    })
+    const totalObras = Object.values(gastoPorObra).reduce((s, v) => s + v, 0)
+    obras.forEach(o => {
+      const pesoObra = totalObras > 0 ? (gastoPorObra[o.id] || 0) / totalObras : 0
+      if (pesoObra === 0 && totalGen === 0) return
+      filasProrrateo.push({
+        'Mes': mes,
+        'Obra': o.nombre,
+        'Gasto real obra': num(gastoPorObra[o.id] || 0),
+        'Total gastos empresa': num(totalGen),
+        'Peso (%)': totalObras > 0 ? Math.round(pesoObra * 100) : 0,
+        'Impacto gastos empresa': Math.round(totalGen * pesoObra),
+        'Nota': 'Solo informativo — no es costo de obra',
+      })
+    })
+  })
+
   agregar('Gastos', filasGastos, { 'Fecha': 'Sin datos' })
   agregar('Obras', filasObras, { 'Obra': 'Sin datos' })
   agregar('Pagos', filasPagos, { 'Fecha pago': 'Sin datos' })
+  if (filasProrrateo.length) agregar('Gastos empresa x obra', filasProrrateo, { 'Mes': 'Sin datos' })
 
   const fecha = new Date().toISOString().slice(0, 10)
   XLSX.writeFile(wb, `gestor-obras_${fecha}.xlsx`)

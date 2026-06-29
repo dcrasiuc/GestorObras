@@ -34,8 +34,11 @@ export const SITUACIONES = [
   { value: 'consumidor_final',      label: 'Consumidor Final',      comprobante: 'ticket',    iva: false },
 ]
 
-// ── Conceptos de gasto ───────────────────────────────────────
+// ── Conceptos de gasto (por obra) ────────────────────────────
 export const CONCEPTOS = ['materiales', 'mano-obra', 'equipos', 'subcontratos', 'varios']
+
+// ── Conceptos generales de empresa ───────────────────────────
+export const CONCEPTOS_GENERALES = ['combustible', 'servicios', 'legal', 'oficina', 'varios_gral']
 
 export const CONCEPTO_LABELS = {
   materiales:    'Materiales',
@@ -43,6 +46,12 @@ export const CONCEPTO_LABELS = {
   equipos:       'Equipos',
   subcontratos:  'Subcontratos',
   varios:        'Varios',
+  // generales
+  combustible:   'Combustible',
+  servicios:     'Servicios',
+  legal:         'Gastos legales',
+  oficina:       'Oficina / Administración',
+  varios_gral:   'Varios (empresa)',
 }
 
 export const CONCEPTO_COLORS = {
@@ -51,6 +60,12 @@ export const CONCEPTO_COLORS = {
   equipos:      ['#FFF8ED', '#8A5200'],
   subcontratos: ['#EDF3FF', '#1A3F8A'],
   varios:       ['#F3F3F3', '#666666'],
+  // generales (gama gris azulado)
+  combustible:  ['#EEF4FF', '#2D5FA8'],
+  servicios:    ['#EEF4FF', '#2D5FA8'],
+  legal:        ['#EEF4FF', '#2D5FA8'],
+  oficina:      ['#EEF4FF', '#2D5FA8'],
+  varios_gral:  ['#F0F0F0', '#555555'],
 }
 
 export const CONCEPTO_ICONS = {
@@ -59,6 +74,12 @@ export const CONCEPTO_ICONS = {
   equipos:      '🚜',
   subcontratos: '🏢',
   varios:       '📦',
+  // generales
+  combustible:  '⛽',
+  servicios:    '💡',
+  legal:        '⚖️',
+  oficina:      '🗂️',
+  varios_gral:  '🏛️',
 }
 
 // ── Rubros de proveedor ──────────────────────────────────────
