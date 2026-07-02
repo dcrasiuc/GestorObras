@@ -2154,17 +2154,21 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   const subirComprobante = async (file) => {
     setSubiendo(true)
     try {
-      // Validar sesión antes de subir — evita fallos silenciosos si el token expiró
-      const { data: { session: sesionActual } } = await supabase.auth.getSession()
-      if (!sesionActual) {
-        // Intentar refrescar el token
-        const { data: { session: sesionRefrescada }, error: errRefresh } = await supabase.auth.refreshSession()
-        if (!sesionRefrescada || errRefresh) {
-          window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
-          setSubiendo(false)
-          return
+      // Validar sesión — con timeout para no trabar en mobile si la red es lenta
+      try {
+        const sesionP = supabase.auth.getSession().then(r => r.data?.session)
+        const sesion = await Promise.race([sesionP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
+        if (!sesion) {
+          // Sin sesión: intentar refresh (también con timeout)
+          const refreshP = supabase.auth.refreshSession().then(r => r.data?.session)
+          const refreshed = await Promise.race([refreshP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
+          if (!refreshed && refreshed !== 'timeout') {
+            window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
+            setSubiendo(false)
+            return
+          }
         }
-      }
+      } catch { /* si falla el check, intentamos subir igual y el error del upload lo maneja el bloque siguiente */ }
 
       let blob = file, ext = (file.name.split('.').pop() || 'jpg')
       if (file.type === 'application/pdf') {
@@ -2297,16 +2301,20 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
   const subirArchivo = async (file) => {
     setSubiendo(true)
     try {
-      // Validar sesión — evita fallos silenciosos si el token expiró
-      const { data: { session: sesionActual } } = await supabase.auth.getSession()
-      if (!sesionActual) {
-        const { data: { session: sesionRefrescada } } = await supabase.auth.refreshSession()
-        if (!sesionRefrescada) {
-          window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
-          setSubiendo(false)
-          return
+      // Validar sesión — con timeout para no trabar en mobile si la red es lenta
+      try {
+        const sesionP = supabase.auth.getSession().then(r => r.data?.session)
+        const sesion = await Promise.race([sesionP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
+        if (!sesion) {
+          const refreshP = supabase.auth.refreshSession().then(r => r.data?.session)
+          const refreshed = await Promise.race([refreshP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
+          if (!refreshed && refreshed !== 'timeout') {
+            window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
+            setSubiendo(false)
+            return
+          }
         }
-      }
+      } catch { /* intentamos subir igual */ }
       let blob = file, ext = (file.name.split('.').pop() || 'jpg')
       if (file.type !== 'application/pdf') {
         try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
