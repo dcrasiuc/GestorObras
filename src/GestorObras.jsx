@@ -410,7 +410,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
@@ -520,6 +520,21 @@ export default function GestorObras({ usuario }) {
               setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: true, pagos: [...(x.pagos || []), { ...payload, id: savedPago?.id }] } : x))
             }
             cerrarModal(); recargarGastos(false)
+          }}
+        />
+      )}
+      {modal === 'adjuntarComprobante' && esAdmin && itemEditando && (
+        <ModalAdjuntarComprobante
+          gasto={itemEditando}
+          onClose={cerrarModal}
+          onGuardar={async url => {
+            const pagoId = itemEditando.pagos?.[0]?.id
+            if (!pagoId) return
+            await dbWrite('PATCH', 'pagos', { comprobante_url: url }, `id=eq.${pagoId}`)
+            setGastos(prev => prev.map(g => g.id === itemEditando.id
+              ? { ...g, pagos: (g.pagos || []).map((p, i) => i === 0 ? { ...p, comprobante_url: url } : p) }
+              : g))
+            cerrarModal()
           }}
         />
       )}
@@ -1020,7 +1035,7 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
   )
 }
 
-function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple }) {
+function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante }) {
   // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
@@ -1157,6 +1172,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     </div>
                     <div style={{ display: 'flex', gap: 5 }}>
                       {esAdmin && !g.pagado && <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>$ Pagar</button>}
+                      {esAdmin && g.pagado && g.pagos?.length > 0 && !g.pagos[0].comprobante_url && <button style={{ ...btnIconSt, fontSize: 11, padding: '4px 8px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                       {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                       <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
@@ -1201,6 +1217,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     <td style={{ ...tdSt, padding: '8px 8px' }}>
                       <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                         {esAdmin && !g.pagado && <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>Pagar</button>}
+                        {esAdmin && g.pagado && g.pagos?.length > 0 && !g.pagos[0].comprobante_url && <button style={{ ...btnIconSt, fontSize: 10, padding: '4px 7px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                         {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
                         <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
@@ -2251,6 +2268,56 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   )
 }
 
+
+
+// ── Modal Adjuntar Comprobante de Pago ───────────────────────
+function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
+  const [subiendo, setSubiendo] = useState(false)
+  const [url, setUrl] = useState(gasto?.pagos?.[0]?.comprobante_url || '')
+  const [nombre, setNombre] = useState('')
+
+  const subirArchivo = async (file) => {
+    setSubiendo(true)
+    try {
+      let blob = file, ext = (file.name.split('.').pop() || 'jpg')
+      if (file.type !== 'application/pdf') {
+        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
+      }
+      const path = `pagos/${Date.now()}.${ext}`
+      const res = await Promise.race([
+        supabase.storage.from('comprobantes-pagos').upload(path, blob),
+        new Promise(r => setTimeout(() => r({ _timeout: true }), 15000))
+      ])
+      if (res?._timeout || res?.error) { window._toast?.('No se pudo subir el archivo'); return }
+      const publicUrl = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+      setUrl(publicUrl); setNombre(file.name)
+    } finally { setSubiendo(false) }
+  }
+
+  return (
+    <Modal title="Adjuntar comprobante de pago" onClose={onClose} onGuardar={() => url && onGuardar(url)} guardarLabel="Guardar">
+      <div style={{ background: C.greenDim, border: `1px solid #B8E6CF`, borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
+        <div style={{ fontWeight: 600, color: C.text }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
+        <div style={{ color: C.textMuted, marginTop: 2 }}>{gasto?.obras?.nombre} · {gasto?.fecha} · $ {fmt(gasto?.monto)}</div>
+      </div>
+      {url ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#F6FFF9', border: `1px solid #B8E6CF`, borderRadius: 8 }}>
+          <span style={{ fontSize: 13, color: C.green }}>✓</span>
+          <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{nombre || 'Comprobante adjunto'}</span>
+          <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.purple, fontWeight: 600 }}>Ver</a>
+          <button onClick={() => { setUrl(''); setNombre('') }} style={{ fontSize: 12, color: '#D0021B', background: 'transparent', border: 'none', cursor: 'pointer' }}>✕</button>
+        </div>
+      ) : (
+        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '24px 16px', border: `2px dashed ${C.border}`, borderRadius: 10, cursor: 'pointer', background: subiendo ? '#F9F9F9' : C.surface }}>
+          <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && subirArchivo(e.target.files[0])} />
+          <span style={{ fontSize: 28 }}>{subiendo ? '⏳' : '📎'}</span>
+          <span style={{ fontSize: 13, color: C.textMuted, fontWeight: 600 }}>{subiendo ? 'Subiendo...' : 'Tocar para adjuntar'}</span>
+          <span style={{ fontSize: 11, color: C.textFaint }}>Imagen o PDF del comprobante de transferencia</span>
+        </label>
+      )}
+    </Modal>
+  )
+}
 
 // ── Modal Pago Múltiple ───────────────────────────────────────
 function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
