@@ -2154,6 +2154,18 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   const subirComprobante = async (file) => {
     setSubiendo(true)
     try {
+      // Validar sesión antes de subir — evita fallos silenciosos si el token expiró
+      const { data: { session: sesionActual } } = await supabase.auth.getSession()
+      if (!sesionActual) {
+        // Intentar refrescar el token
+        const { data: { session: sesionRefrescada }, error: errRefresh } = await supabase.auth.refreshSession()
+        if (!sesionRefrescada || errRefresh) {
+          window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
+          setSubiendo(false)
+          return
+        }
+      }
+
       let blob = file, ext = (file.name.split('.').pop() || 'jpg')
       if (file.type === 'application/pdf') {
         if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); setSubiendo(false); return }
@@ -2165,7 +2177,13 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
       const subir = supabase.storage.from('comprobantes-pagos').upload(path, blob)
       const res = await Promise.race([subir, new Promise(r => setTimeout(() => r({ _timeout: true }), 15000))])
       if (res?._timeout) { window._toast?.('La subida tardó demasiado. Confirmá el pago e intentá adjuntar después.'); setSubiendo(false); return }
-      if (res?.error) { console.error('Error al subir:', res.error.message); window._toast?.('No se pudo subir el comprobante'); setSubiendo(false); return }
+      if (res?.error) {
+        const esAuth = res.error.statusCode === '401' || res.error.statusCode === 401 || res.error.message?.toLowerCase().includes('jwt') || res.error.message?.toLowerCase().includes('auth')
+        const msg = esAuth
+          ? 'Sesión expirada. Cerrá sesión y volvé a ingresar para subir archivos.'
+          : 'No se pudo subir el comprobante'
+        console.error('Error al subir:', res.error.message); window._toast?.(msg); setSubiendo(false); return
+      }
       const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
       set('comprobante_url', url); setArchivoNombre(file.name)
     } catch (e) {
@@ -2279,6 +2297,16 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
   const subirArchivo = async (file) => {
     setSubiendo(true)
     try {
+      // Validar sesión — evita fallos silenciosos si el token expiró
+      const { data: { session: sesionActual } } = await supabase.auth.getSession()
+      if (!sesionActual) {
+        const { data: { session: sesionRefrescada } } = await supabase.auth.refreshSession()
+        if (!sesionRefrescada) {
+          window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
+          setSubiendo(false)
+          return
+        }
+      }
       let blob = file, ext = (file.name.split('.').pop() || 'jpg')
       if (file.type !== 'application/pdf') {
         try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
@@ -2288,7 +2316,12 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
         supabase.storage.from('comprobantes-pagos').upload(path, blob),
         new Promise(r => setTimeout(() => r({ _timeout: true }), 15000))
       ])
-      if (res?._timeout || res?.error) { window._toast?.('No se pudo subir el archivo'); return }
+      if (res?._timeout) { window._toast?.('La subida tardó demasiado. Intentá de nuevo.'); return }
+      if (res?.error) {
+        const esAuth = res.error.statusCode === '401' || res.error.statusCode === 401 || res.error.message?.toLowerCase().includes('jwt') || res.error.message?.toLowerCase().includes('auth')
+        window._toast?.(esAuth ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.' : 'No se pudo subir el archivo')
+        return
+      }
       const publicUrl = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
       setUrl(publicUrl); setNombre(file.name)
     } finally { setSubiendo(false) }
