@@ -1058,7 +1058,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const gastosFiltrados = gastos
     .filter(g => filtroGeneral ? !!g.es_gasto_general : !g.es_gasto_general)
     .filter(g => !filtroEstadoGasto || (filtroEstadoGasto === 'pagado' ? g.pagado : !g.pagado))
-    .filter(g => !filtroProveedorId || g.proveedor_id === filtroProveedorId)
+    .filter(g => !filtroProveedorId || String(g.proveedor_id) === String(filtroProveedorId))
   const gastosSeleccionados = gastosFiltrados.filter(g => seleccion.has(g.id) && !g.pagado)
   const totalSeleccionado = gastosSeleccionados.reduce((s, g) => s + (g.monto || 0), 0)
   const total = gastosFiltrados.reduce((s, g) => s + (g.monto ?? 0), 0)
