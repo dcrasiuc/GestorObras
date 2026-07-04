@@ -569,9 +569,9 @@ export default function GestorObras({ usuario }) {
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
-          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes, es_gasto_general } = d
+          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes, es_gasto_general, imagen_url } = d
           // a_nombre_seate solo aplica a Factura A
-          const payload = { obra_id: es_gasto_general ? null : (obra_id || null), fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes, es_gasto_general: !!es_gasto_general }
+          const payload = { obra_id: es_gasto_general ? null : (obra_id || null), fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes, es_gasto_general: !!es_gasto_general, imagen_url: imagen_url || null }
           const esNuevo = !id
           const saved = await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null, esNuevo)
           // Actualización optimista: reflejar en UI sin esperar reload
@@ -3088,6 +3088,51 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
           )}
         </div>
       </Campo>
+      {/* Comprobante de factura */}
+      <Campo label="Comprobante de factura" style={{ gridColumn: '1/-1' }}>
+        <SubirImagenComprobante url={form.imagen_url || ''} onUrl={url => set('imagen_url', url)} />
+      </Campo>
+    </div>
+  )
+}
+
+// ── Subir imagen de comprobante (reusable) ────────────────────
+function SubirImagenComprobante({ url, onUrl }) {
+  const [subiendo, setSubiendo] = useState(false)
+  const subir = async (file) => {
+    setSubiendo(true)
+    try {
+      let blob = file, ext = (file.name.split('.').pop() || 'jpg')
+      if (file.type !== 'application/pdf') {
+        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
+      }
+      const path = `facturas/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const { data, error } = await Promise.race([
+        supabase.storage.from('comprobantes').upload(path, blob),
+        new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
+      ])
+      if (error) { window._toast?.(error.message === 'timeout' ? 'La subida tardó demasiado' : 'No se pudo subir el archivo'); return }
+      const publicUrl = supabase.storage.from('comprobantes').getPublicUrl(path).data.publicUrl
+      onUrl(publicUrl)
+    } finally { setSubiendo(false) }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {url
+        ? <>
+            <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.purple, fontWeight: 600 }}>📎 Ver comprobante</a>
+            <label style={{ fontSize: 12, color: C.textMuted, cursor: 'pointer', textDecoration: 'underline' }}>
+              <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && subir(e.target.files[0])} />
+              {subiendo ? '⏳ Subiendo...' : 'Reemplazar'}
+            </label>
+            <button type="button" onClick={() => onUrl('')} style={{ fontSize: 11, color: '#D0021B', background: 'transparent', border: 'none', cursor: 'pointer' }}>✕ Quitar</button>
+          </>
+        : <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: `2px dashed ${C.border}`, borderRadius: 8, cursor: subiendo ? 'default' : 'pointer', background: '#FAFAFA', width: '100%' }}>
+            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && subir(e.target.files[0])} disabled={subiendo} />
+            <span style={{ fontSize: 16 }}>{subiendo ? '⏳' : '📎'}</span>
+            <span style={{ fontSize: 12, color: C.textMuted }}>{subiendo ? 'Subiendo...' : 'Adjuntar comprobante de factura (imagen o PDF)'}</span>
+          </label>
+      }
     </div>
   )
 }
