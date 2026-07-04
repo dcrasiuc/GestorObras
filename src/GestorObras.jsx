@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
 import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
@@ -1096,7 +1096,7 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
 function ProveedorAutofilter({ proveedores, value, onChange }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
-  const ref = React.useRef(null)
+  const ref = useRef(null)
 
   // Proveedor seleccionado actual
   const selNombre = value ? (proveedores.find(p => String(p.id) === String(value))?.nombre ?? '') : ''
@@ -1108,7 +1108,7 @@ function ProveedorAutofilter({ proveedores, value, onChange }) {
     : sorted
 
   // Cerrar al clickear fuera
-  React.useEffect(() => {
+  useEffect(() => {
     const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
