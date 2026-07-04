@@ -226,7 +226,7 @@ export const C = {
 ## Proceso de deploy
 
 **Plataforma:** Cloudflare **Pages** (no Workers)  
-**Trigger:** `workflow_dispatch` — el workflow NO se dispara automáticamente en cada push. Hay que lanzarlo manualmente desde GitHub Actions.
+**Trigger:** automático — Cloudflare Pages tiene integración directa con GitHub y despliega solo al hacer push a `main`.
 
 **Pasos:**
 1. Hacer el build y push en la PC Windows (el sandbox Linux no tiene los binarios correctos):
@@ -237,7 +237,7 @@ git add -A
 git commit -m "descripción del cambio"
 git push origin main
 ```
-2. Ir a GitHub → Actions → "Deploy to Cloudflare Pages" → **Run workflow** manualmente.
+El deploy se dispara solo. No hace falta ir a GitHub Actions.
 
 **Variables de entorno** (GitHub Secrets):
 - `VITE_SUPABASE_URL`
