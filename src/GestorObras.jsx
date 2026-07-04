@@ -1803,6 +1803,110 @@ function GraficoTemporalRubros({ gastos }) {
 }
 
 // ── Panel Contactos ───────────────────────────────────────────
+// ── Modal Unificar Proveedores Duplicados ────────────────────
+function ModalUnificarProveedores({ proveedores, gastos, onClose, onUnificar }) {
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9áéíóúñ]/gi, ' ').replace(/\s+/g, ' ').trim()
+  const nc = s => (s || '').replace(/\D/g, '')
+
+  // Detectar grupos de duplicados
+  const grupos = []
+  const usados = new Set()
+
+  // 1. Agrupar por CUIT
+  const porCuit = {}
+  proveedores.forEach(p => {
+    if (!p.cuit) return
+    const k = nc(p.cuit)
+    if (!k || k.length < 8) return
+    if (!porCuit[k]) porCuit[k] = []
+    porCuit[k].push(p)
+  })
+  Object.values(porCuit).forEach(grupo => {
+    if (grupo.length > 1) {
+      grupos.push({ tipo: 'cuit', items: grupo })
+      grupo.forEach(p => usados.add(p.id))
+    }
+  })
+
+  // 2. Agrupar por nombre similar (solo los que no tienen CUIT duplicado ya detectado)
+  const sin = proveedores.filter(p => !usados.has(p.id))
+  sin.forEach((p, i) => {
+    if (usados.has(p.id)) return
+    const np = norm(p.nombre)
+    const similares = sin.slice(i + 1).filter(q => {
+      if (usados.has(q.id)) return false
+      const nq = norm(q.nombre)
+      return np === nq || np.includes(nq) || nq.includes(np)
+    })
+    if (similares.length > 0) {
+      const grupo = [p, ...similares]
+      grupos.push({ tipo: 'nombre', items: grupo })
+      grupo.forEach(x => usados.add(x.id))
+    }
+  })
+
+  const [seleccion, setSeleccion] = useState(() =>
+    Object.fromEntries(grupos.map((g, i) => [i, g.items[0].id]))
+  )
+  const [procesando, setProcesando] = useState(false)
+
+  const cantGastos = (provId) => gastos.filter(g => g.proveedor_id === provId).length
+
+  return (
+    <Modal title="Detectar y unificar duplicados" onClose={onClose} onGuardar={null}>
+      {grupos.length === 0
+        ? <div style={{ textAlign: 'center', padding: '32px 0', color: C.textMuted, fontSize: 14 }}>
+            ✅ No se detectaron proveedores duplicados
+          </div>
+        : <>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 16 }}>
+            Se encontraron <strong style={{ color: C.text }}>{grupos.length} grupo{grupos.length > 1 ? 's' : ''}</strong> con posibles duplicados.
+            Seleccioná cuál querés conservar en cada grupo y los demás se unificarán.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {grupos.map((g, gi) => (
+              <div key={gi} style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ background: '#FAFAFA', padding: '8px 14px', fontSize: 11, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: `1px solid ${C.border}` }}>
+                  {g.tipo === 'cuit' ? `Mismo CUIT: ${g.items[0].cuit}` : 'Nombre similar'}
+                </div>
+                {g.items.map(p => {
+                  const esSelec = seleccion[gi] === p.id
+                  const ng = cantGastos(p.id)
+                  return (
+                    <div key={p.id} onClick={() => setSeleccion(prev => ({ ...prev, [gi]: p.id }))}
+                      style={{ padding: '10px 14px', borderBottom: `1px solid ${C.borderFaint}`, cursor: 'pointer',
+                        background: esSelec ? C.purpleDim : 'transparent', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <input type="radio" readOnly checked={esSelec} style={{ accentColor: C.purple, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: esSelec ? 700 : 500, color: esSelec ? C.purple : C.text, fontSize: 13 }}>{p.nombre}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                          {[p.cuit && `CUIT: ${p.cuit}`, p.situacion_impositiva, ng > 0 && `${ng} gasto${ng > 1 ? 's' : ''}`].filter(Boolean).join(' · ')}
+                        </div>
+                      </div>
+                      {esSelec && <span style={{ fontSize: 11, color: C.purple, fontWeight: 700, flexShrink: 0 }}>✓ Conservar</span>}
+                    </div>
+                  )
+                })}
+                <div style={{ padding: '10px 14px', background: '#FAFAFA' }}>
+                  <button disabled={procesando} onClick={async () => {
+                    setProcesando(true)
+                    const keepId = seleccion[gi]
+                    const deleteIds = g.items.filter(p => p.id !== keepId).map(p => p.id)
+                    await onUnificar(keepId, deleteIds)
+                    setProcesando(false)
+                  }} style={{ padding: '7px 16px', background: procesando ? C.border : C.purple, color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: procesando ? 'default' : 'pointer', fontFamily: "'Outfit', sans-serif" }}>
+                    {procesando ? 'Unificando...' : `Unificar este grupo`}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      }
+    </Modal>
+  )
+}
+
 function PanelContactos({ clientes, proveedores, gastos, onNuevoCliente, onNuevoProveedor, onEditarCliente, onEditarProveedor, onEliminarCliente, onEliminarProveedor, onUnificarProveedores }) {
   const [filtroRubro, setFiltroRubro] = useState('')
   const [showDuplicados, setShowDuplicados] = useState(false)
@@ -3029,11 +3133,14 @@ function PageHeader({ titulo, sub, children }) {
   )
 }
 
-function PageTitle({ titulo, sub }) {
+function PageTitle({ titulo, sub, children }) {
   return (
-    <div>
-      <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>{titulo}</h1>
-      {sub && <p style={{ fontSize: 12, color: C.textMuted, margin: '3px 0 0' }}>{sub}</p>}
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+      <div>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>{titulo}</h1>
+        {sub && <p style={{ fontSize: 12, color: C.textMuted, margin: '3px 0 0' }}>{sub}</p>}
+      </div>
+      {children}
     </div>
   )
 }
