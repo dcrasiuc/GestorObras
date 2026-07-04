@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
 import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
-import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite } from './utils'
+import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
 import { exportarExcel } from './exportExcel'
 import './toast'
 
@@ -121,7 +121,7 @@ function useGastos(obrasIds) {
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
       let q = supabase.from('gastos')
-        .select('*, obras(nombre), proveedores(nombre, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url)')
+        .select('*, obras(nombre), proveedores(id, nombre, cuit, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url, nro_cheque, fecha_vencimiento_cheque)')
         .order('fecha', { ascending: false })
       if (ids !== null) q = q.in('obra_id', ids)
       const { data, error } = await q
@@ -351,6 +351,16 @@ export default function GestorObras({ usuario }) {
 
   const guardarProveedor = async (datos) => {
     const { nombre, cuit, rubro, situacion_impositiva, telefono, contacto, nota, cbu, alias_cbu, banco, titular_cuenta, condicion_pago, redondear_viernes } = datos
+    // Verificar CUIT duplicado antes de crear
+    if (cuit?.trim()) {
+      const existente = proveedores.find(p => p.cuit && cuitMatch(p.cuit, cuit).match)
+      if (existente) {
+        if (!window.confirm(`Ya existe "${existente.nombre}" con ese CUIT (${existente.cuit}).\n¿Querés usarlo en lugar de crear uno nuevo?`)) return null
+        // Retornar el proveedor existente en vez de crear uno nuevo
+        if (onProveedorCreado) { onProveedorCreado(existente); setProveedorPendiente(null); setOnProveedorCreado(null) }
+        return existente
+      }
+    }
     let nuevoProv = null
     try {
       nuevoProv = await dbWrite('POST', 'proveedores',
@@ -636,6 +646,10 @@ export default function GestorObras({ usuario }) {
       {modal === 'proveedor' && <ModalProveedor itemEdit={itemEditando} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) throw new Error('Nombre obligatorio')
         const { id, nombre, cuit, rubro, situacion_impositiva, telefono, contacto, nota, cbu, alias_cbu, banco, titular_cuenta, condicion_pago, redondear_viernes } = d
+        if (!id && cuit?.trim()) {
+          const dup = proveedores.find(p => p.cuit && cuitMatch(p.cuit, cuit).match)
+          if (dup && !window.confirm(`Ya existe "${dup.nombre}" con CUIT ${dup.cuit}.\n¿Querés crear otro igualmente?`)) return
+        }
         await dbWrite(id ? 'PATCH' : 'POST', 'proveedores', { nombre, cuit, rubro, situacion_impositiva, telefono: telefono || null, contacto: contacto || null, nota: nota || null, cbu: cbu || null, alias_cbu: alias_cbu || null, banco: banco || null, titular_cuenta: titular_cuenta || null, condicion_pago: condicion_pago || 'contado', redondear_viernes: redondear_viernes !== false }, id ? `id=eq.${id}` : null)
         cerrarModal(); recargarListas()
       }} />}
@@ -1094,6 +1108,8 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
         {/* Estado */}
         <button style={chipSt(!filtroEstado)} onClick={() => setFiltroEstado('')}>Todos</button>
         <button style={chipSt(filtroEstado === 'pendiente')} onClick={() => setFiltroEstado(filtroEstado === 'pendiente' ? '' : 'pendiente')}>Pendiente</button>
+        <button onClick={() => setFiltroEstado(filtroEstado === 'parcial' ? '' : 'parcial')}
+          style={{ ...chipSt(filtroEstado === 'parcial'), background: filtroEstado === 'parcial' ? '#FFF8ED' : C.surface, borderColor: filtroEstado === 'parcial' ? '#8A5200' : C.border, color: filtroEstado === 'parcial' ? '#8A5200' : C.textMuted }}>◑ Parcial</button>
         <button style={chipSt(filtroEstado === 'pagado')} onClick={() => setFiltroEstado(filtroEstado === 'pagado' ? '' : 'pagado')}>Pagado</button>
         <div style={{ width: 1, height: 20, background: C.border, margin: '0 4px' }} />
         {/* Obra */}
@@ -1144,11 +1160,28 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const [filtroEstadoGasto, setFiltroEstadoGasto] = useState('')
   const [filtroProveedorId, setFiltroProveedorId] = useState('')
   const [seleccion, setSeleccion] = useState(new Set())
-  const toggleSel = (id) => setSeleccion(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleSel = (id) => {
+    if (!seleccion.has(id) && seleccion.size > 0) {
+      const primerSel = gastosFiltrados.find(x => seleccion.has(x.id))
+      const gSel = gastosFiltrados.find(x => x.id === id)
+      const cuit1 = primerSel?.proveedores?.cuit
+      const cuit2 = gSel?.proveedores?.cuit
+      const mismoCuit = cuit1 && cuit2 ? cuitMatch(cuit1, cuit2).match : primerSel?.proveedor_id === gSel?.proveedor_id
+      if (!mismoCuit) { window._toast?.('Solo podés seleccionar facturas del mismo proveedor (mismo CUIT)', 'info'); return }
+    }
+    setSeleccion(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
   const [filtroGeneral, setFiltroGeneral] = useState(false)
   const gastosFiltrados = gastos
     .filter(g => filtroGeneral ? !!g.es_gasto_general : !g.es_gasto_general)
-    .filter(g => !filtroEstadoGasto || (filtroEstadoGasto === 'pagado' ? g.pagado : !g.pagado))
+    .filter(g => {
+      if (!filtroEstadoGasto) return true
+      if (filtroEstadoGasto === 'pagado') return !!g.pagado
+      const totalPagado = (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)
+      if (filtroEstadoGasto === 'parcial') return !g.pagado && totalPagado > 0
+      // 'pendiente': sin pagar del todo (incluye los parciales con saldo pendiente)
+      return !g.pagado
+    })
     .filter(g => !filtroProveedorId || String(g.proveedor_id) === String(filtroProveedorId))
   const gastosSeleccionados = gastosFiltrados.filter(g => seleccion.has(g.id) && !g.pagado)
   const totalSeleccionado = gastosSeleccionados.reduce((s, g) => s + (g.monto || 0), 0)
@@ -2034,7 +2067,12 @@ function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNu
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
         const nombreIA = parsed.proveedor || ''
-        const matchProv = proveedores.find(p => p.nombre.toLowerCase().includes(nombreIA.toLowerCase()))
+        const matchProvCuit = parsed.cuit
+          ? proveedores.find(p => p.cuit && cuitMatch(p.cuit, parsed.cuit).match)
+          : null
+        if (matchProvCuit && cuitMatch(matchProvCuit.cuit, parsed.cuit).advertencia)
+          window._toast?.('⚠️ ' + cuitMatch(matchProvCuit.cuit, parsed.cuit).advertencia, 'info')
+        const matchProv = matchProvCuit || (nombreIA ? proveedores.find(p => p.nombre.toLowerCase().includes(nombreIA.toLowerCase()) || nombreIA.toLowerCase().includes(p.nombre.toLowerCase())) : null)
         // Tipo: primero lo que dice el documento, si no inferir del proveedor
         let tipo = parsed.tipo_comprobante || null
         let iva = tipo ? (TIPOS_COMPROBANTE.find(t => t.value === tipo)?.iva ?? true) : true

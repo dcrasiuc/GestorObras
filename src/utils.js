@@ -61,3 +61,59 @@ export const hoy = () => new Date().toISOString().slice(0, 10)
 export const getSituacion = (val) => SITUACIONES.find(s => s.value === val) ?? SITUACIONES[0]
 
 export const getTipoLabel = (val) => TIPOS_COMPROBANTE.find(t => t.value === val)?.label ?? val
+
+// ── CUIT helpers ─────────────────────────────────────────────
+
+/** Normaliza un CUIT: saca guiones, espacios, puntos → solo dígitos */
+export const normCuit = (s) => (s ?? '').replace(/\D/g, '')
+
+/**
+ * Valida un CUIT argentino por dígito verificador.
+ * Retorna true si los 11 dígitos son correctos.
+ */
+export function validarCuit(cuit) {
+  const n = normCuit(cuit)
+  if (n.length !== 11) return false
+  const pesos = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2]
+  const suma = pesos.reduce((acc, p, i) => acc + p * Number(n[i]), 0)
+  const resto = suma % 11
+  const dv = resto === 0 ? 0 : resto === 1 ? 9 : 11 - resto
+  return Number(n[10]) === dv
+}
+
+/**
+ * Compara dos CUITs con tolerancia inteligente:
+ * 1. Normaliza (quita guiones, espacios, puntos)
+ * 2. Exacto → match inmediato
+ * 3. Si uno tiene 10 dígitos y el otro 11 (OCR perdió un dígito):
+ *    prueba omitir cada posición del largo para ver si coincide con el corto,
+ *    o insertar dígitos en el corto hasta obtener el largo con dígito verificador válido.
+ * Retorna { match: bool, advertencia?: string }
+ */
+export function cuitMatch(a, b) {
+  const na = normCuit(a)
+  const nb = normCuit(b)
+  if (!na || !nb) return { match: false }
+  if (na === nb) return { match: true }
+
+  // Fuzzy: diferencia de exactamente 1 dígito (posible OCR cortó un carácter)
+  const [long, short] = na.length >= nb.length ? [na, nb] : [nb, na]
+  if (long.length === 11 && short.length === 10) {
+    // Caso A: omitir cada posición del largo → comparar con el corto
+    for (let i = 0; i < long.length; i++) {
+      if (long.slice(0, i) + long.slice(i + 1) === short) {
+        return { match: true, advertencia: `CUIT leído puede estar incompleto (${a} → ${b}). Verificá.` }
+      }
+    }
+    // Caso B: insertar dígito 0-9 en cada posición del corto para obtener el largo válido
+    for (let i = 0; i <= short.length; i++) {
+      for (let d = 0; d <= 9; d++) {
+        const candidato = short.slice(0, i) + String(d) + short.slice(i)
+        if (candidato === long && validarCuit(candidato)) {
+          return { match: true, advertencia: `CUIT leído puede tener un dígito faltante (${a}). Verificá.` }
+        }
+      }
+    }
+  }
+  return { match: false }
+}
