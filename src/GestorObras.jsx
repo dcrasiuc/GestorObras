@@ -509,7 +509,21 @@ export default function GestorObras({ usuario }) {
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
-            {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
+            {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} gastos={gastos} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
+              onUnificarProveedores={async (keepId, deleteIds) => {
+                if (!window.confirm(`¿Unificar ${deleteIds.length} proveedor(es) en el seleccionado? Esta acción reasigna todos sus gastos y no se puede deshacer.`)) return
+                for (const delId of deleteIds) {
+                  await dbWrite('PATCH', 'gastos', { proveedor_id: keepId }, `proveedor_id=eq.${delId}`)
+                  await dbWrite('PATCH', 'remitos', { proveedor_id: keepId }, `proveedor_id=eq.${delId}`)
+                  await dbWrite('DELETE', 'proveedores', null, `id=eq.${delId}`)
+                }
+                setProveedores(prev => prev.filter(p => !deleteIds.includes(p.id)))
+                setGastos(prev => prev.map(g => deleteIds.includes(g.proveedor_id)
+                  ? { ...g, proveedor_id: keepId, proveedores: proveedores.find(p => p.id === keepId) || g.proveedores }
+                  : g))
+                recargarListas(); recargarGastos(false)
+                window._toast?.(`Unificado correctamente`, 'ok')
+              }}
               onEliminarCliente={async c => { if (!window.confirm(`¿Eliminar cliente "${c.nombre}"?`)) return; await dbWrite('DELETE', 'clientes', null, `id=eq.${c.id}`); recargarListas() }}
               onEliminarProveedor={async p => { if (!window.confirm(`¿Eliminar proveedor "${p.nombre}"?`)) return; await dbWrite('DELETE', 'proveedores', null, `id=eq.${p.id}`); recargarListas() }}
             />}
@@ -1406,9 +1420,9 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
           <div className="desktop-only" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 130 }} /><col style={{ width: 180 }} />
-                <col style={{ width: 105 }} /><col style={{ width: 108 }} />
-                <col style={{ width: 120 }} /><col style={{ width: 100 }} /><col style={{ width: 170 }} />
+                <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 130 }} /><col style={{ width: 200 }} />
+                <col style={{ width: 110 }} /><col style={{ width: 115 }} />
+                <col style={{ width: 120 }} /><col style={{ width: 155 }} /><col style={{ width: 145 }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#FAFAFA' }}>
@@ -1432,19 +1446,32 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     <td style={tdSt}><ConceptoBadge concepto={g.concepto} /></td>
                     <td style={tdSt}><ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} /></td>
                     <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</td>
-                    <td style={tdSt}>{(() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); const parc=!g.pagado&&saldo<(parseFloat(g.monto)||0)&&saldo>0; return <><PagoBadge pagado={g.pagado} parcial={parc}/>{parc&&<div style={{fontSize:9,color:'#8A5200',marginTop:1,whiteSpace:'nowrap'}}>Saldo ${fmt(saldo)}</div>}</> })()}</td>
-                    <td style={{ ...tdSt, padding: '8px 8px' }}>
-                      <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', alignItems: 'center' }}>
-                        {esAdmin && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>0 ? <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>{saldo<(parseFloat(g.monto)||0)?'Saldo':'Pagar'}</button> : null })()} 
-                        {esAdmin && g.pagos?.length > 0 && g.pagos.some(p => !p.comprobante_url) && <button style={{ ...btnIconSt, fontSize: 10, padding: '4px 7px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
+                    <td style={{ ...tdSt, verticalAlign: 'middle' }}>{(() => {
+                      const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0))
+                      const parc = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo > 0
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                          <PagoBadge pagado={g.pagado} parcial={parc} />
+                          {parc && <span style={{ fontSize: 10, color: '#8A5200', whiteSpace: 'nowrap' }}>Saldo $ {fmt(saldo)}</span>}
+                          {esAdmin && saldo > 0 && (
+                            <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>
+                              {parc ? '+ Pago' : 'Pagar'}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })()}</td>
+                    <td style={{ ...tdSt, padding: '8px 10px' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
+                        {esAdmin && g.pagos?.length > 0 && g.pagos.some(p => !p.comprobante_url) && <button style={{ ...btnIconSt, color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
-                        {g.pagos?.filter(p=>p.comprobante_url).length > 0 && <a href={g.pagos.find(p=>p.comprobante_url)?.comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>{`🧾${g.pagos.filter(p=>p.comprobante_url).length > 1 ? ' '+g.pagos.filter(p=>p.comprobante_url).length : ''}`}</a>}
-                        <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
-                        <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
+                        {g.pagos?.filter(p=>p.comprobante_url).length > 0 && <a href={g.pagos.find(p=>p.comprobante_url)?.comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>{`🧾${g.pagos.filter(p=>p.comprobante_url).length > 1 ? ' ×'+g.pagos.filter(p=>p.comprobante_url).length : ''}`}</a>}
+                        <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
+                        <button style={btnIconSt} onClick={() => onEditar(g)} title="Editar">✏️</button>
                         {esAdmin && g.pagado && (() => { const tot=(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0); return tot < (parseFloat(g.monto)||0) })() && (
-                          <button title="Marcar como pendiente (pago incorrecto)" style={{ ...btnIconSt, color: '#8A5200', background: '#FFF8ED', borderColor: '#FFDCAA' }} onClick={() => onRevertirPago(g)}>↩</button>
+                          <button title="Revertir pago" style={{ ...btnIconSt, color: '#8A5200', background: '#FFF8ED', borderColor: '#FFDCAA' }} onClick={() => onRevertirPago(g)}>↩</button>
                         )}
-                        <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
+                        <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)} title="Eliminar">✕</button>
                       </div>
                     </td>
                   </tr>
@@ -1776,15 +1803,19 @@ function GraficoTemporalRubros({ gastos }) {
 }
 
 // ── Panel Contactos ───────────────────────────────────────────
-function PanelContactos({ clientes, proveedores, onNuevoCliente, onNuevoProveedor, onEditarCliente, onEditarProveedor, onEliminarCliente, onEliminarProveedor }) {
+function PanelContactos({ clientes, proveedores, gastos, onNuevoCliente, onNuevoProveedor, onEditarCliente, onEditarProveedor, onEliminarCliente, onEliminarProveedor, onUnificarProveedores }) {
   const [filtroRubro, setFiltroRubro] = useState('')
+  const [showDuplicados, setShowDuplicados] = useState(false)
   const rubros = [...new Set(proveedores.map(p => p.rubro).filter(Boolean))].sort()
   const provsFiltrados = filtroRubro ? proveedores.filter(p => p.rubro === filtroRubro) : proveedores
   const waProvLink = (p) => p.telefono ? 'https://wa.me/549' + p.telefono.replace(/\D/g, '').replace(/^0/, '') : null
   const waClienteLink = (c) => c.telefono ? 'https://wa.me/549' + c.telefono.replace(/\D/g, '').replace(/^0/, '') : null
   return (
     <div>
-      <PageTitle titulo="Contactos" sub="Clientes y proveedores" />
+      <PageTitle titulo="Contactos" sub="Clientes y proveedores">
+        <BtnSecondary onClick={() => setShowDuplicados(true)}>🔍 Detectar duplicados</BtnSecondary>
+      </PageTitle>
+      {showDuplicados && <ModalUnificarProveedores proveedores={proveedores} gastos={gastos} onClose={() => setShowDuplicados(false)} onUnificar={async (keepId, deleteIds) => { await onUnificarProveedores(keepId, deleteIds); setShowDuplicados(false) }} />}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginTop: 20 }}>
         <ContactoCol titulo="Clientes" items={clientes} onNuevo={onNuevoCliente} onEditar={onEditarCliente} onEliminar={onEliminarCliente} btnLabel="+ Cliente"
           renderSub={c => [c.telefono, c.email].filter(Boolean).join(' · ')}
