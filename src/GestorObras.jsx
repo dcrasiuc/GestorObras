@@ -163,6 +163,91 @@ function useRemitosPendientes() {
   return { remitosPendientes, recargarRemitosPend: cargar }
 }
 
+// ── Notificación diaria de facturas pendientes (14hs) ─────────
+function NotifPendientes({ gastos, esAdmin, onVerPendientes }) {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    if (!esAdmin) return
+    const check = () => {
+      const now = new Date()
+      if (now.getHours() < 14) { setVisible(false); return }
+      const todayStr = now.toISOString().slice(0, 10)
+      if (localStorage.getItem('seate-notif-dismiss') === todayStr) { setVisible(false); return }
+      const impagas = gastos.filter(g => !g.pagado && !g.es_gasto_general)
+      setVisible(impagas.length > 0)
+    }
+    check()
+    const t = setInterval(check, 60000)
+    return () => clearInterval(t)
+  }, [gastos, esAdmin])
+
+  if (!visible || !esAdmin) return null
+
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const dismiss = () => { localStorage.setItem('seate-notif-dismiss', todayStr); setVisible(false) }
+
+  const impagas = [...gastos]
+    .filter(g => !g.pagado && !g.es_gasto_general)
+    .sort((a, b) => {
+      const va = calcVencimiento(a.fecha, a.condicion_pago, a.redondear_viernes !== false) || a.fecha || ''
+      const vb = calcVencimiento(b.fecha, b.condicion_pago, b.redondear_viernes !== false) || b.fecha || ''
+      return va.localeCompare(vb)
+    })
+  const total = impagas.reduce((s, g) => s + (parseFloat(g.monto) || 0), 0)
+  const vencidas = impagas.filter(g => {
+    const v = calcVencimiento(g.fecha, g.condicion_pago, g.redondear_viernes !== false)
+    return v && v < todayStr
+  })
+  const preview = impagas.slice(0, 3)
+  const urgente = vencidas.length > 0
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 80, right: 16, zIndex: 200,
+      background: C.surface, border: `1.5px solid ${urgente ? '#D0021B' : C.purple}`,
+      borderRadius: 16, padding: '14px 16px', boxShadow: '0 8px 40px rgba(0,0,0,0.14)',
+      maxWidth: 320, width: 'calc(100vw - 32px)', animation: 'fadeUp 0.25s ease',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: urgente ? '#D0021B' : C.purple, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            🔔 {impagas.length} factura{impagas.length !== 1 ? 's' : ''} pendiente{impagas.length !== 1 ? 's' : ''}
+            {urgente && <span style={{ fontSize: 11, background: '#FFEAEA', color: '#D0021B', borderRadius: 6, padding: '2px 7px', flexShrink: 0 }}>{vencidas.length} vencida{vencidas.length !== 1 ? 's' : ''}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 3 }}>Total: <strong style={{ color: C.text }}>$ {fmt(total)}</strong></div>
+        </div>
+        <button onClick={dismiss} title="Descartar por hoy" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.textFaint, fontSize: 18, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}>✕</button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
+        {preview.map(g => {
+          const venc = calcVencimiento(g.fecha, g.condicion_pago, g.redondear_viernes !== false)
+          const vencida = venc && venc < todayStr
+          return (
+            <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, padding: '6px 8px', background: vencida ? '#FFF5F5' : C.bg, borderRadius: 8, gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.proveedores?.nombre ?? 'Sin proveedor'}</div>
+                <div style={{ color: vencida ? '#D0021B' : C.textMuted, marginTop: 1 }}>{venc ? `Vence ${venc}` : 'Contado'}{vencida ? ' ⚠️' : ''}</div>
+              </div>
+              <div style={{ fontWeight: 700, color: C.text, flexShrink: 0 }}>$ {fmt(g.monto)}</div>
+            </div>
+          )
+        })}
+        {impagas.length > 3 && (
+          <div style={{ fontSize: 11, color: C.textMuted, textAlign: 'center', padding: '2px 0' }}>+ {impagas.length - 3} más</div>
+        )}
+      </div>
+
+      <button onClick={() => { onVerPendientes(); dismiss() }} style={{
+        width: '100%', padding: '9px', background: urgente ? '#D0021B' : C.purple,
+        color: '#fff', border: 'none', borderRadius: 10, fontSize: 12, fontWeight: 600,
+        cursor: 'pointer', fontFamily: "'Outfit', sans-serif",
+      }}>Ver todas las pendientes →</button>
+    </div>
+  )
+}
+
 // ── App ───────────────────────────────────────────────────────
 export default function GestorObras({ usuario }) {
   const esAdmin = usuario?.perfil?.rol === 'admin'
@@ -410,7 +495,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
@@ -499,11 +584,15 @@ export default function GestorObras({ usuario }) {
 
       {modal === 'pago' && esAdmin && <ModalPago gasto={itemEditando} bancos={bancos} onClose={cerrarModal} onGuardar={async d => {
         const payload = { ...d, gasto_id: itemEditando.id, creado_por: usuario.id }
-        // Vía dbWrite (Edge Function): la escritura directa a Supabase se cuelga en mobile
         const savedPago = await dbWrite('POST', 'pagos', payload, null, true)
-        await dbWrite('PATCH', 'gastos', { pagado: true }, `id=eq.${itemEditando.id}`)
-        // Optimista: marcar el gasto como pagado y sumar el pago en memoria
-        setGastos(prev => prev.map(g => g.id === itemEditando.id ? { ...g, pagado: true, pagos: [...(g.pagos || []), { ...payload, id: savedPago?.id }] } : g))
+        // Solo marcar como pagado si el total cubre el monto de la factura
+        const pagosPrevios = itemEditando.pagos || []
+        const totalPagado = pagosPrevios.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) + (parseFloat(d.monto) || 0)
+        const esPagoCompleto = totalPagado >= (parseFloat(itemEditando.monto) || 0)
+        if (esPagoCompleto) await dbWrite('PATCH', 'gastos', { pagado: true }, `id=eq.${itemEditando.id}`)
+        setGastos(prev => prev.map(g => g.id === itemEditando.id
+          ? { ...g, pagado: esPagoCompleto, pagos: [...(g.pagos || []), { ...payload, id: savedPago?.id }] }
+          : g))
         cerrarModal(); recargarGastos(false)
       }} />}
 
@@ -551,6 +640,8 @@ export default function GestorObras({ usuario }) {
         cerrarModal(); recargarListas()
       }} />}
       {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} zIndex={300} />}
+      <NotifPendientes gastos={todosGastos} esAdmin={esAdmin} onVerPendientes={() => { setPanel('gastos') }} />
+      {modal === 'subidaMasiva' && <ModalSubidaMasiva gastos={todosGastos} onClose={cerrarModal} onDone={() => { cerrarModal(); recargarGastos(true) }} />}
     </>
   )
 }
@@ -1035,7 +1126,7 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
   )
 }
 
-function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante }) {
+function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante, onSubidaMasiva }) {
   // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
@@ -1064,12 +1155,13 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const total = gastosFiltrados.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastosFiltrados.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   // Pendiente incluye TODAS las impagas (también de obras cerradas) como aviso de deuda
-  const impagas = gastosRaw.filter(g => !g.pagado && !g.es_gasto_general)
+  const impagas = gastosRaw.filter(g => { if (g.pagado || g.es_gasto_general) return false; const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo > 0 })
   const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
     <div>
       <PageHeader titulo="Gastos" sub={`Total: $ ${fmt(total)}`}>
         <div style={{ display: 'flex', gap: 8 }}>
+          {esAdmin && <BtnSecondary onClick={onSubidaMasiva}>📂 Masivo</BtnSecondary>}
           <BtnSecondary onClick={onNuevoFoto}>📎 Comprobante</BtnSecondary>
           <BtnPrimary onClick={onNuevoManual}>+ Gasto</BtnPrimary>
         </div>
@@ -1150,7 +1242,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
               return (
                 <div key={g.id} style={{ background: seleccion.has(g.id) ? C.purpleDim : C.surface, border: `1.5px solid ${seleccion.has(g.id) ? C.purple : C.border}`, borderRadius: 14, padding: '14px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
-                    {esAdmin && !g.pagado && (
+                    {esAdmin && !g.pagado && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>0 })() && (
                       <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, marginTop: 4, flexShrink: 0, width: 16, height: 16, cursor: 'pointer' }} />
                     )}
                     <div style={{ width: 40, height: 40, borderRadius: 12, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
@@ -1161,8 +1253,15 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')} · {g.fecha}</div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
-                      <PagoBadge pagado={g.pagado} />
+                      {(() => {
+                        const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0))
+                        const parcial = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo > 0
+                        return <>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
+                          {parcial && <div style={{ fontSize: 10, color: '#8A5200', marginTop: 1 }}>Saldo $ {fmt(saldo)}</div>}
+                          <PagoBadge pagado={g.pagado} parcial={parcial} />
+                        </>
+                      })()}
                     </div>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1171,7 +1270,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       <ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} />
                     </div>
                     <div style={{ display: 'flex', gap: 5 }}>
-                      {esAdmin && !g.pagado && <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>$ Pagar</button>}
+                      {esAdmin && (() => { const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo > 0 ? <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>{saldo < (parseFloat(g.monto)||0) ? '$ Saldo' : '$ Pagar'}</button> : null })()} 
                       {esAdmin && g.pagado && g.pagos?.length > 0 && !g.pagos[0].comprobante_url && <button style={{ ...btnIconSt, fontSize: 11, padding: '4px 8px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                       {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
@@ -1204,7 +1303,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                 {gastosFiltrados.map((g, i) => (
                   <tr key={g.id} style={{ borderBottom: i < gastos.length-1 ? `1px solid ${C.borderFaint}` : 'none', background: g.pagado ? '#FAFFFE' : C.surface }}>
                     <td style={{ ...tdSt, padding: '8px 6px', textAlign: 'center' }}>
-                      {esAdmin && !g.pagado && <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, cursor: 'pointer', width: 15, height: 15 }} />}
+                      {esAdmin && !g.pagado && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>0 })() && <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, cursor: 'pointer', width: 15, height: 15 }} />}
                     </td>
                     <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
                     <td style={tdSt}><span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}</span></td>
@@ -1213,10 +1312,10 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     <td style={tdSt}><ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} /></td>
                     <td style={{ ...tdSt, color: C.textMuted, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.descripcion}</td>
                     <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</td>
-                    <td style={tdSt}><PagoBadge pagado={g.pagado} /></td>
+                    <td style={tdSt}>{(() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); const parc=!g.pagado&&saldo<(parseFloat(g.monto)||0)&&saldo>0; return <><PagoBadge pagado={g.pagado} parcial={parc}/>{parc&&<div style={{fontSize:9,color:'#8A5200',marginTop:1,whiteSpace:'nowrap'}}>Saldo ${fmt(saldo)}</div>}</> })()}</td>
                     <td style={{ ...tdSt, padding: '8px 8px' }}>
                       <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                        {esAdmin && !g.pagado && <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>Pagar</button>}
+                        {esAdmin && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>0 ? <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>{saldo<(parseFloat(g.monto)||0)?'Saldo':'Pagar'}</button> : null })()} 
                         {esAdmin && g.pagado && g.pagos?.length > 0 && !g.pagos[0].comprobante_url && <button style={{ ...btnIconSt, fontSize: 10, padding: '4px 7px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                         {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
@@ -2145,48 +2244,35 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
 
 // ── Modal Pago ────────────────────────────────────────────────
 function ModalPago({ gasto, bancos, onClose, onGuardar }) {
-  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', monto: gasto?.monto ?? '', banco_id: '', nro_operacion: '', titular_tarjeta: '', observaciones: '', comprobante_url: '' })
+  const yaPageado = (gasto?.pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+  const saldoRestante = Math.max(0, (parseFloat(gasto?.monto) || 0) - yaPageado)
+  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', monto: saldoRestante > 0 ? saldoRestante : (gasto?.monto ?? ''), banco_id: '', nro_operacion: '', nro_cheque: '', fecha_vencimiento_cheque: '', observaciones: '', comprobante_url: '' })
   const [archivoNombre, setArchivoNombre] = useState('')
   const [subiendo, setSubiendo] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const necesitaBanco = ['transferencia', 'cheque', 'tarjeta'].includes(form.medio_pago)
+  const esCheque = form.medio_pago === 'cheque'
 
   const subirComprobante = async (file) => {
     setSubiendo(true)
     try {
-      // Validar sesión — con timeout para no trabar en mobile si la red es lenta
-      try {
-        const sesionP = supabase.auth.getSession().then(r => r.data?.session)
-        const sesion = await Promise.race([sesionP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
-        if (!sesion) {
-          // Sin sesión: intentar refresh (también con timeout)
-          const refreshP = supabase.auth.refreshSession().then(r => r.data?.session)
-          const refreshed = await Promise.race([refreshP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
-          if (!refreshed && refreshed !== 'timeout') {
-            window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
-            setSubiendo(false)
-            return
-          }
-        }
-      } catch { /* si falla el check, intentamos subir igual y el error del upload lo maneja el bloque siguiente */ }
-
       let blob = file, ext = (file.name.split('.').pop() || 'jpg')
       if (file.type === 'application/pdf') {
         if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); setSubiendo(false); return }
       } else {
-        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch { /* si falla, sube el original */ }
+        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch { /* sube original */ }
       }
-      const path = `pagos/${Date.now()}.${ext}`
-      // Timeout: en mobile la subida directa puede colgarse; así no traba el modal
-      const subir = supabase.storage.from('comprobantes-pagos').upload(path, blob)
-      const res = await Promise.race([subir, new Promise(r => setTimeout(() => r({ _timeout: true }), 15000))])
-      if (res?._timeout) { window._toast?.('La subida tardó demasiado. Confirmá el pago e intentá adjuntar después.'); setSubiendo(false); return }
-      if (res?.error) {
-        const esAuth = res.error.statusCode === '401' || res.error.statusCode === 401 || res.error.message?.toLowerCase().includes('jwt') || res.error.message?.toLowerCase().includes('auth')
-        const msg = esAuth
-          ? 'Sesión expirada. Cerrá sesión y volvé a ingresar para subir archivos.'
-          : 'No se pudo subir el comprobante'
-        console.error('Error al subir:', res.error.message); window._toast?.(msg); setSubiendo(false); return
+      const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const { data: upData, error: upErr } = await Promise.race([
+        supabase.storage.from('comprobantes-pagos').upload(path, blob),
+        new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
+      ])
+      if (upErr) {
+        const esAuth = upErr.message?.includes('jwt') || upErr.message?.includes('unauthorized') || upErr.statusCode === '401'
+        const msg = upErr.message === 'timeout'
+          ? 'La subida tardó demasiado. Confirmá el pago e intentá adjuntar después.'
+          : esAuth ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.' : 'No se pudo subir el comprobante'
+        console.error('upload error:', upErr.message); window._toast?.(msg); setSubiendo(false); return
       }
       const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
       set('comprobante_url', url); setArchivoNombre(file.name)
@@ -2199,9 +2285,11 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
 
   const [verMas, setVerMas] = useState(false)
   const venc = calcVencimiento(gasto?.fecha, gasto?.condicion_pago, gasto?.redondear_viernes !== false)
+  const addDiasCheque = (dias) => { const d = new Date(); d.setDate(d.getDate() + dias); set('fecha_vencimiento_cheque', d.toISOString().slice(0, 10)) }
+  const montoNum = parseFloat(form.monto) || 0
 
   return (
-    <Modal title={`Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: parseFloat(form.monto) || 0, banco_id: form.banco_id || null })} guardarLabel="Confirmar pago">
+    <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmt(saldoRestante)}` : `Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: montoNum, banco_id: form.banco_id || null })} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmt(montoNum)}`}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12 }}>
         {/* Fila principal: proveedor + WA */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
@@ -2257,17 +2345,61 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
           </div>
         )}
       </div>
+      {/* Historial pagos anteriores + resumen saldo */}
+      {yaPageado > 0 && (
+        <div style={{ background: C.orangeDim, border: '1px solid #FFDCAA', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Total factura</div><div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif" }}>$ {fmt(gasto?.monto)}</div></div>
+            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Ya pagado</div><div style={{ fontSize: 13, fontWeight: 700, color: C.green, fontFamily: "'Inter', sans-serif" }}>$ {fmt(yaPageado)}</div></div>
+            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Saldo</div><div style={{ fontSize: 13, fontWeight: 700, color: '#8A5200', fontFamily: "'Inter', sans-serif" }}>$ {fmt(saldoRestante)}</div></div>
+          </div>
+          {(gasto?.pagos || []).map((p, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', background: 'rgba(255,255,255,0.6)', borderRadius: 6, marginBottom: 3, fontSize: 11, gap: 8 }}>
+              <div style={{ color: C.textMuted, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {p.fecha_pago} · {MEDIOS_PAGO.find(m => m.value === p.medio_pago)?.label ?? p.medio_pago}
+                {p.nro_cheque ? ` · Cheque N°${p.nro_cheque}` : ''}
+                {p.fecha_vencimiento_cheque ? ` · Cobrar ${p.fecha_vencimiento_cheque}` : ''}
+              </div>
+              <div style={{ fontWeight: 700, color: C.green, flexShrink: 0 }}>$ {fmt(p.monto)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <Campo label="Fecha de pago"><input style={inputSt} type="date" value={form.fecha_pago} onChange={e => set('fecha_pago', e.target.value)} /></Campo>
-        <Campo label="Monto pagado"><input style={inputSt} type="number" value={form.monto} onChange={e => set('monto', e.target.value)} /></Campo>
+        <Campo label={yaPageado > 0 ? 'Monto de este pago' : 'Monto pagado'}>
+          <input style={inputSt} type="number" value={form.monto} onChange={e => set('monto', e.target.value)} />
+          {yaPageado > 0 && montoNum > 0 && montoNum < saldoRestante && (
+            <div style={{ fontSize: 10, color: '#8A5200', marginTop: 3 }}>Quedará saldo de $ {fmt(saldoRestante - montoNum)}</div>
+          )}
+        </Campo>
         <Campo label="Medio de pago" style={{ gridColumn: '1/-1' }}>
           <select style={inputSt} value={form.medio_pago} onChange={e => set('medio_pago', e.target.value)}>
             {MEDIOS_PAGO.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
         </Campo>
         {necesitaBanco && <Campo label="Banco" style={{ gridColumn: '1/-1' }}><select style={inputSt} value={form.banco_id} onChange={e => set('banco_id', e.target.value)}><option value="">Seleccionar banco...</option>{bancos.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}</select></Campo>}
-        {form.medio_pago === 'tarjeta' && <Campo label="Titular de la tarjeta" style={{ gridColumn: '1/-1' }}><input style={inputSt} value={form.titular_tarjeta} onChange={e => set('titular_tarjeta', e.target.value)} placeholder="Nombre del titular" /></Campo>}
-        {['transferencia','cheque'].includes(form.medio_pago) && <Campo label={form.medio_pago === 'cheque' ? 'Nro. de cheque (opcional)' : 'Nro. de operación (opcional)'} style={{ gridColumn: '1/-1' }}><input style={inputSt} value={form.nro_operacion} onChange={e => set('nro_operacion', e.target.value)} placeholder="Opcional" /></Campo>}
+        {esCheque && (
+          <>
+            <Campo label="N° de cheque" style={{ gridColumn: '1/-1' }}>
+              <input style={inputSt} value={form.nro_cheque} onChange={e => set('nro_cheque', e.target.value)} placeholder="Ej: 00012345" />
+            </Campo>
+            <Campo label="Fecha de cobro del cheque" style={{ gridColumn: '1/-1' }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input type="date" style={{ ...inputSt, flex: 1, minWidth: 120 }} value={form.fecha_vencimiento_cheque} onChange={e => set('fecha_vencimiento_cheque', e.target.value)} />
+                {[30, 60, 90].map(d => (
+                  <button key={d} type="button" onClick={() => addDiasCheque(d)}
+                    style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: '#F9F9F9', color: C.textMuted, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: "'Outfit', sans-serif" }}>
+                    +{d}d
+                  </button>
+                ))}
+              </div>
+            </Campo>
+          </>
+        )}
+        {form.medio_pago === 'tarjeta' && <Campo label="Titular de la tarjeta" style={{ gridColumn: '1/-1' }}><input style={inputSt} value={form.titular_tarjeta || ''} onChange={e => set('titular_tarjeta', e.target.value)} placeholder="Nombre del titular" /></Campo>}
+        {form.medio_pago === 'transferencia' && <Campo label="N° de operación (opcional)" style={{ gridColumn: '1/-1' }}><input style={inputSt} value={form.nro_operacion} onChange={e => set('nro_operacion', e.target.value)} placeholder="Opcional" /></Campo>}
         <Campo label="Observaciones (opcional)" style={{ gridColumn: '1/-1' }}><textarea style={{ ...inputSt, minHeight: 56, resize: 'vertical' }} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} /></Campo>
         <Campo label="Comprobante de pago (opcional)" style={{ gridColumn: '1/-1' }}>
           {form.comprobante_url ? (
@@ -2292,6 +2424,153 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
 
 
 
+// ── Modal Subida Masiva de Comprobantes de Pago ──────────────
+function ModalSubidaMasiva({ gastos, onClose, onDone }) {
+  // Solo gastos pagados sin comprobante de pago adjunto
+  const pendientes = [...gastos]
+    .filter(g => g.pagado && g.pagos?.length > 0 && !g.pagos[0]?.comprobante_url && !g.es_gasto_general)
+    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
+
+  const [archivos, setArchivos] = useState({})   // gastoId → File
+  const [estados, setEstados] = useState({})     // gastoId → 'uploading'|'ok'|'error'
+  const [subiendo, setSubiendo] = useState(false)
+  const [progreso, setProgreso] = useState({ done: 0, total: 0 })
+
+  const seleccionados = Object.keys(archivos)
+  const todosOk = estados && seleccionados.length > 0 && seleccionados.every(id => estados[id] === 'ok')
+
+  const setArchivo = (gastoId, file) => {
+    if (!file) { setArchivos(prev => { const n = { ...prev }; delete n[gastoId]; return n }) }
+    else setArchivos(prev => ({ ...prev, [gastoId]: file }))
+    setEstados(prev => { const n = { ...prev }; delete n[gastoId]; return n })
+  }
+
+  const subirTodos = async () => {
+    if (!seleccionados.length) return
+    setSubiendo(true)
+    setProgreso({ done: 0, total: seleccionados.length })
+    let done = 0
+    for (const gastoId of seleccionados) {
+      const g = pendientes.find(x => String(x.id) === String(gastoId))
+      const pagoId = g?.pagos?.[0]?.id
+      if (!pagoId) { setEstados(prev => ({ ...prev, [gastoId]: 'error' })); done++; setProgreso({ done, total: seleccionados.length }); continue }
+      setEstados(prev => ({ ...prev, [gastoId]: 'uploading' }))
+      try {
+        const file = archivos[gastoId]
+        let blob = file, ext = (file.name.split('.').pop() || 'jpg')
+        if (file.type !== 'application/pdf') {
+          try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
+        }
+        const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await Promise.race([
+          supabase.storage.from('comprobantes-pagos').upload(path, blob),
+          new Promise(r => setTimeout(() => r({ error: { message: 'timeout' } }), 30000))
+        ])
+        if (upErr) throw new Error(upErr.message)
+        const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+        await dbWrite('PATCH', 'pagos', { comprobante_url: url }, `id=eq.${pagoId}`)
+        setEstados(prev => ({ ...prev, [gastoId]: 'ok' }))
+      } catch (e) {
+        console.error('Error subiendo gasto', gastoId, e)
+        setEstados(prev => ({ ...prev, [gastoId]: 'error' }))
+      }
+      done++
+      setProgreso({ done, total: seleccionados.length })
+    }
+    setSubiendo(false)
+    if (done > 0) onDone()
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 0 0 0' }}
+      onClick={e => e.target === e.currentTarget && !subiendo && onClose()}>
+      <div style={{ background: C.surface, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 -8px 40px rgba(0,0,0,0.15)' }}>
+        {/* Header */}
+        <div style={{ padding: '18px 20px 14px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>📂 Subida masiva de comprobantes</div>
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+              {pendientes.length} pago{pendientes.length !== 1 ? 's' : ''} sin comprobante · Seleccionados: {seleccionados.length}
+            </div>
+          </div>
+          {!subiendo && <button onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: 20, cursor: 'pointer', color: C.textMuted, padding: '0 4px' }}>✕</button>}
+        </div>
+
+        {/* Progress bar */}
+        {subiendo && (
+          <div style={{ padding: '8px 20px', background: C.purpleDim, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+            <div style={{ fontSize: 11, color: C.purple, fontWeight: 600, marginBottom: 5 }}>Subiendo {progreso.done}/{progreso.total}...</div>
+            <div style={{ background: C.border, borderRadius: 99, height: 4 }}>
+              <div style={{ background: C.purple, height: 4, borderRadius: 99, width: `${(progreso.done / progreso.total) * 100}%`, transition: 'width 0.3s' }} />
+            </div>
+          </div>
+        )}
+
+        {/* List */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          {pendientes.length === 0 ? (
+            <div style={{ padding: '40px 20px', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>
+              ✅ Todos los pagos tienen comprobante adjunto
+            </div>
+          ) : pendientes.map(g => {
+            const est = estados[String(g.id)]
+            const archivo = archivos[String(g.id)]
+            const isUploading = est === 'uploading'
+            const isOk = est === 'ok'
+            const isErr = est === 'error'
+            return (
+              <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px', borderBottom: `1px solid ${C.borderFaint || C.border}`, background: isOk ? C.greenDim : isErr ? '#FFF5F5' : C.surface }}>
+                {/* Info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {g.proveedores?.nombre ?? 'Sin proveedor'}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMuted, marginTop: 1 }}>
+                    {g.fecha} · {g.obras?.nombre ?? '—'} · <strong>$ {fmt(g.monto)}</strong>
+                  </div>
+                  {archivo && !isOk && !isErr && (
+                    <div style={{ fontSize: 10, color: C.purple, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      📎 {archivo.name}
+                    </div>
+                  )}
+                </div>
+                {/* Status / picker */}
+                <div style={{ flexShrink: 0 }}>
+                  {isUploading && <span style={{ fontSize: 12, color: C.purple }}>⏳</span>}
+                  {isOk && <span style={{ fontSize: 14, color: C.green }}>✓</span>}
+                  {isErr && <span style={{ fontSize: 12, color: '#D0021B' }}>❌</span>}
+                  {!isUploading && !isOk && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: archivo ? C.purpleDim : C.bg, border: `1px solid ${archivo ? C.purple : C.border}`, borderRadius: 8, cursor: 'pointer', fontSize: 11, color: archivo ? C.purple : C.textMuted, fontWeight: archivo ? 600 : 400, whiteSpace: 'nowrap' }}>
+                      {isErr ? '🔄 Reintentar' : archivo ? '📎 ' + archivo.name.slice(0, 12) + (archivo.name.length > 12 ? '…' : '') : '📎 Seleccionar'}
+                      <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => setArchivo(String(g.id), e.target.files?.[0] || null)} />
+                    </label>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Footer */}
+        {pendientes.length > 0 && (
+          <div style={{ padding: '12px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', gap: 10, flexShrink: 0 }}>
+            {todosOk ? (
+              <button onClick={onClose} style={{ flex: 1, padding: '11px', background: C.green, color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>
+                ✅ Todos subidos — Cerrar
+              </button>
+            ) : (
+              <button onClick={subirTodos} disabled={subiendo || seleccionados.length === 0}
+                style={{ flex: 1, padding: '11px', background: seleccionados.length === 0 ? C.border : C.purple, color: seleccionados.length === 0 ? C.textMuted : '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: seleccionados.length === 0 ? 'default' : 'pointer', fontFamily: "'Outfit', sans-serif" }}>
+                {subiendo ? `Subiendo ${progreso.done}/${progreso.total}...` : `⬆️ Subir ${seleccionados.length > 0 ? seleccionados.length : ''} comprobante${seleccionados.length !== 1 ? 's' : ''}`}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Modal Adjuntar Comprobante de Pago ───────────────────────
 function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
   const [subiendo, setSubiendo] = useState(false)
@@ -2301,34 +2580,20 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
   const subirArchivo = async (file) => {
     setSubiendo(true)
     try {
-      // Validar sesión — con timeout para no trabar en mobile si la red es lenta
-      try {
-        const sesionP = supabase.auth.getSession().then(r => r.data?.session)
-        const sesion = await Promise.race([sesionP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
-        if (!sesion) {
-          const refreshP = supabase.auth.refreshSession().then(r => r.data?.session)
-          const refreshed = await Promise.race([refreshP, new Promise(r => setTimeout(() => r('timeout'), 3000))])
-          if (!refreshed && refreshed !== 'timeout') {
-            window._toast?.('La sesión expiró. Cerrá sesión y volvé a ingresar para subir archivos.')
-            setSubiendo(false)
-            return
-          }
-        }
-      } catch { /* intentamos subir igual */ }
       let blob = file, ext = (file.name.split('.').pop() || 'jpg')
       if (file.type !== 'application/pdf') {
         try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
       }
-      const path = `pagos/${Date.now()}.${ext}`
-      const res = await Promise.race([
+      const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const { data: upData, error: upErr } = await Promise.race([
         supabase.storage.from('comprobantes-pagos').upload(path, blob),
-        new Promise(r => setTimeout(() => r({ _timeout: true }), 15000))
+        new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
       ])
-      if (res?._timeout) { window._toast?.('La subida tardó demasiado. Intentá de nuevo.'); return }
-      if (res?.error) {
-        const esAuth = res.error.statusCode === '401' || res.error.statusCode === 401 || res.error.message?.toLowerCase().includes('jwt') || res.error.message?.toLowerCase().includes('auth')
-        window._toast?.(esAuth ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.' : 'No se pudo subir el archivo')
-        return
+      if (upErr) {
+        const esAuth = upErr.message?.includes('jwt') || upErr.message?.includes('unauthorized') || upErr.statusCode === '401'
+        const msg = upErr.message === 'timeout' ? 'La subida tardó demasiado. Intentá de nuevo.'
+          : esAuth ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.' : 'No se pudo subir el archivo'
+        console.error('upload error:', upErr.message); window._toast?.(msg); return
       }
       const publicUrl = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
       setUrl(publicUrl); setNombre(file.name)
@@ -2601,7 +2866,8 @@ function ComprobanteBadge({ tipo, iva }) {
   return <span style={{ background: iva ? C.greenDim : '#F3F3F3', color: iva ? C.green : '#666', padding: '2px 8px', borderRadius: 99, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{getTipoLabel(tipo)}</span>
 }
 
-function PagoBadge({ pagado }) {
+function PagoBadge({ pagado, parcial }) {
+  if (parcial) return <span style={{ background: '#FFF8ED', color: '#8A5200', padding: '2px 9px', borderRadius: 99, fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', marginTop: 2 }}>◑ Parcial</span>
   return <span style={{ background: pagado ? C.greenDim : '#FFF8ED', color: pagado ? C.green : '#8A5200', padding: '2px 9px', borderRadius: 99, fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', marginTop: 2 }}>{pagado ? '✓ Pagado' : 'Pendiente'}</span>
 }
 
