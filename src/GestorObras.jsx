@@ -505,7 +505,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onRevertirPago={async g => { if (!window.confirm(`¿Revertir pago de ${g.proveedores?.nombre ?? 'este gasto'}? Quedará como pendiente/parcial.`)) return; await dbWrite('PATCH', 'gastos', { pagado: false }, `id=eq.${g.id}`); setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: false } : x)); recargarGastos(false) }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
@@ -626,14 +626,12 @@ export default function GestorObras({ usuario }) {
         <ModalAdjuntarComprobante
           gasto={itemEditando}
           onClose={cerrarModal}
-          onGuardar={async url => {
-            const pagoId = itemEditando.pagos?.[0]?.id
+          onGuardar={async (pagoId, url) => {
             if (!pagoId) return
             await dbWrite('PATCH', 'pagos', { comprobante_url: url }, `id=eq.${pagoId}`)
             setGastos(prev => prev.map(g => g.id === itemEditando.id
-              ? { ...g, pagos: (g.pagos || []).map((p, i) => i === 0 ? { ...p, comprobante_url: url } : p) }
+              ? { ...g, pagos: (g.pagos || []).map(p => p.id === pagoId ? { ...p, comprobante_url: url } : p) }
               : g))
-            cerrarModal()
           }}
         />
       )}
@@ -1095,6 +1093,90 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
 
 // ── Panel Gastos ──────────────────────────────────────────────
 
+function ProveedorAutofilter({ proveedores, value, onChange }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const ref = React.useRef(null)
+
+  // Proveedor seleccionado actual
+  const selNombre = value ? (proveedores.find(p => String(p.id) === String(value))?.nombre ?? '') : ''
+
+  // Lista ordenada alfabéticamente y filtrada por query
+  const sorted = [...proveedores].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }))
+  const filtered = query
+    ? sorted.filter(p => p.nombre.toLowerCase().includes(query.toLowerCase()))
+    : sorted
+
+  // Cerrar al clickear fuera
+  React.useEffect(() => {
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const handleSelect = (p) => {
+    onChange(p ? String(p.id) : '')
+    setQuery('')
+    setOpen(false)
+  }
+
+  const isActive = !!value
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 8px', borderRadius: 8,
+        border: `1.5px solid ${isActive ? C.purple : C.border}`,
+        background: isActive ? C.purpleDim : C.surface, minWidth: 160, maxWidth: 220, cursor: 'text' }}
+        onClick={() => { setOpen(true); setQuery('') }}>
+        {isActive && !open
+          ? <span style={{ fontSize: 12, fontWeight: 700, color: C.purple, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selNombre}</span>
+          : <input
+              autoFocus={open}
+              value={query}
+              onChange={e => { setQuery(e.target.value); setOpen(true) }}
+              onFocus={() => setOpen(true)}
+              placeholder={isActive ? selNombre : 'Proveedor: todos'}
+              style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12,
+                color: isActive ? C.purple : C.textMuted, fontWeight: isActive ? 700 : 400,
+                width: '100%', cursor: 'text', fontFamily: "'Outfit', sans-serif" }}
+            />
+        }
+        {isActive
+          ? <span onClick={e => { e.stopPropagation(); handleSelect(null) }}
+              style={{ fontSize: 12, color: C.textMuted, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}>✕</span>
+          : <span style={{ fontSize: 10, color: C.textFaint, flexShrink: 0 }}>▾</span>
+        }
+      </div>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 500,
+          background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.10)', minWidth: 220, maxHeight: 260, overflowY: 'auto' }}>
+          <div onClick={() => handleSelect(null)}
+            style={{ padding: '8px 12px', fontSize: 12, color: C.textMuted, cursor: 'pointer',
+              borderBottom: `1px solid ${C.border}`, fontStyle: 'italic' }}
+            onMouseEnter={e => e.currentTarget.style.background = C.bg}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            Todos los proveedores
+          </div>
+          {filtered.length === 0
+            ? <div style={{ padding: '10px 12px', fontSize: 12, color: C.textFaint }}>Sin resultados</div>
+            : filtered.map(p => (
+              <div key={p.id} onClick={() => handleSelect(p)}
+                style={{ padding: '8px 12px', fontSize: 12, color: String(p.id) === String(value) ? C.purple : C.text,
+                  fontWeight: String(p.id) === String(value) ? 700 : 400, cursor: 'pointer',
+                  background: String(p.id) === String(value) ? C.purpleDim : 'transparent' }}
+                onMouseEnter={e => { if (String(p.id) !== String(value)) e.currentTarget.style.background = C.bg }}
+                onMouseLeave={e => { if (String(p.id) !== String(value)) e.currentTarget.style.background = 'transparent' }}>
+                {p.nombre}
+              </div>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  )
+}
+
 function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filtroEstado, setFiltroEstado, filtroProveedorId, setFiltroProveedorId, filtroGeneral, setFiltroGeneral }) {
   const hasFilter = filtroObraId || filtroEstado || filtroProveedorId || filtroGeneral
   const chipSt = (active) => ({
@@ -1118,12 +1200,12 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
           <option value="">Obra: todas</option>
           {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
         </select>
-        {/* Proveedor */}
-        <select value={filtroProveedorId} onChange={e => setFiltroProveedorId(e.target.value)}
-          style={{ padding: '5px 8px', borderRadius: 8, border: `1.5px solid ${filtroProveedorId ? C.purple : C.border}`, fontSize: 12, color: filtroProveedorId ? C.purple : C.textMuted, background: filtroProveedorId ? C.purpleDim : C.surface, fontWeight: filtroProveedorId ? 700 : 400, cursor: 'pointer', maxWidth: 180 }}>
-          <option value="">Proveedor: todos</option>
-          {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-        </select>
+        {/* Proveedor — autofilter */}
+        <ProveedorAutofilter
+          proveedores={proveedores}
+          value={filtroProveedorId}
+          onChange={setFiltroProveedorId}
+        />
         <div style={{ width: 1, height: 20, background: C.border, margin: '0 4px' }} />
         {/* Generales */}
         <button
@@ -1142,7 +1224,7 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
   )
 }
 
-function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante, onSubidaMasiva }) {
+function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante, onSubidaMasiva, onRevertirPago }) {
   // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
@@ -1194,7 +1276,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
     <div>
       <PageHeader titulo="Gastos" sub={`Total: $ ${fmt(total)}`}>
         <div style={{ display: 'flex', gap: 8 }}>
-          {esAdmin && <BtnSecondary onClick={onSubidaMasiva}>📂 Masivo</BtnSecondary>}
+          {esAdmin && <BtnSecondary onClick={onSubidaMasiva}>📂 Comp. pagos</BtnSecondary>}
           <BtnSecondary onClick={onNuevoFoto}>📎 Comprobante</BtnSecondary>
           <BtnPrimary onClick={onNuevoManual}>+ Gasto</BtnPrimary>
         </div>
@@ -1304,11 +1386,14 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     </div>
                     <div style={{ display: 'flex', gap: 5 }}>
                       {esAdmin && (() => { const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo > 0 ? <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>{saldo < (parseFloat(g.monto)||0) ? '$ Saldo' : '$ Pagar'}</button> : null })()} 
-                      {esAdmin && g.pagado && g.pagos?.length > 0 && !g.pagos[0].comprobante_url && <button style={{ ...btnIconSt, fontSize: 11, padding: '4px 8px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
+                      {esAdmin && g.pagos?.length > 0 && g.pagos.some(p => !p.comprobante_url) && <button style={{ ...btnIconSt, fontSize: 11, padding: '4px 8px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
-                      {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
+                      {g.pagos?.filter(p=>p.comprobante_url).length > 0 && <a href={g.pagos.find(p=>p.comprobante_url)?.comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>{`🧾${g.pagos.filter(p=>p.comprobante_url).length > 1 ? ' '+g.pagos.filter(p=>p.comprobante_url).length : ''}`}</a>}
                       <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
                       <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
+                      {esAdmin && g.pagado && (() => { const tot=(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0); return tot < (parseFloat(g.monto)||0) })() && (
+                        <button title="Revertir: marcar como pendiente" style={{ ...btnIconSt, color: '#8A5200', background: '#FFF8ED', borderColor: '#FFDCAA' }} onClick={() => onRevertirPago(g)}>↩</button>
+                      )}
                       <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                     </div>
                   </div>
@@ -1321,13 +1406,13 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
           <div className="desktop-only" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: 36 }} /><col style={{ width: 86 }} /><col style={{ width: 108 }} /><col style={{ width: 118 }} />
-                <col style={{ width: 90 }} /><col style={{ width: 98 }} /><col />
-                <col style={{ width: 110 }} /><col style={{ width: 72 }} /><col style={{ width: 120 }} />
+                <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 130 }} /><col style={{ width: 180 }} />
+                <col style={{ width: 105 }} /><col style={{ width: 108 }} />
+                <col style={{ width: 120 }} /><col style={{ width: 100 }} /><col style={{ width: 170 }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#FAFAFA' }}>
-                  {['','Fecha','Obra','Proveedor','Concepto','Comprobante','Descripción','Monto','Estado',''].map((h,i) => (
+                  {['','Fecha','Obra','Proveedor','Concepto','Comprobante','Monto','Estado',''].map((h,i) => (
                     <th key={h+i} style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, textAlign: h==='Monto'?'right':'left', padding: '11px 10px', textTransform: 'uppercase', letterSpacing: '0.07em', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -1340,20 +1425,25 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     </td>
                     <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
                     <td style={tdSt}><span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}</span></td>
-                    <td style={{ ...tdSt, fontWeight: 500, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.proveedores?.nombre ?? '—'}</td>
+                    <td style={{ ...tdSt, overflow: 'hidden', maxWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.proveedores?.nombre ?? '—'}</div>
+                      {g.descripcion && <div style={{ fontSize: 11, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{g.descripcion}</div>}
+                    </td>
                     <td style={tdSt}><ConceptoBadge concepto={g.concepto} /></td>
                     <td style={tdSt}><ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} /></td>
-                    <td style={{ ...tdSt, color: C.textMuted, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.descripcion}</td>
                     <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</td>
                     <td style={tdSt}>{(() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); const parc=!g.pagado&&saldo<(parseFloat(g.monto)||0)&&saldo>0; return <><PagoBadge pagado={g.pagado} parcial={parc}/>{parc&&<div style={{fontSize:9,color:'#8A5200',marginTop:1,whiteSpace:'nowrap'}}>Saldo ${fmt(saldo)}</div>}</> })()}</td>
                     <td style={{ ...tdSt, padding: '8px 8px' }}>
-                      <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                      <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', alignItems: 'center' }}>
                         {esAdmin && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>0 ? <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '4px 7px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>{saldo<(parseFloat(g.monto)||0)?'Saldo':'Pagar'}</button> : null })()} 
-                        {esAdmin && g.pagado && g.pagos?.length > 0 && !g.pagos[0].comprobante_url && <button style={{ ...btnIconSt, fontSize: 10, padding: '4px 7px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
+                        {esAdmin && g.pagos?.length > 0 && g.pagos.some(p => !p.comprobante_url) && <button style={{ ...btnIconSt, fontSize: 10, padding: '4px 7px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
-                        {g.pagos?.length > 0 && g.pagos[0].comprobante_url && <a href={g.pagos[0].comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>🧾</a>}
+                        {g.pagos?.filter(p=>p.comprobante_url).length > 0 && <a href={g.pagos.find(p=>p.comprobante_url)?.comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>{`🧾${g.pagos.filter(p=>p.comprobante_url).length > 1 ? ' '+g.pagos.filter(p=>p.comprobante_url).length : ''}`}</a>}
                         <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="Enviar por WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
                         <button style={btnIconSt} onClick={() => onEditar(g)}>✏️</button>
+                        {esAdmin && g.pagado && (() => { const tot=(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0); return tot < (parseFloat(g.monto)||0) })() && (
+                          <button title="Marcar como pendiente (pago incorrecto)" style={{ ...btnIconSt, color: '#8A5200', background: '#FFF8ED', borderColor: '#FFDCAA' }} onClick={() => onRevertirPago(g)}>↩</button>
+                        )}
                         <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)}>✕</button>
                       </div>
                     </td>
@@ -2611,12 +2701,14 @@ function ModalSubidaMasiva({ gastos, onClose, onDone }) {
 
 // ── Modal Adjuntar Comprobante de Pago ───────────────────────
 function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
-  const [subiendo, setSubiendo] = useState(false)
-  const [url, setUrl] = useState(gasto?.pagos?.[0]?.comprobante_url || '')
-  const [nombre, setNombre] = useState('')
+  const [subiendo, setSubiendo] = useState(null) // pagoId que está subiendo
+  const [urls, setUrls] = useState(
+    Object.fromEntries((gasto?.pagos || []).map(p => [p.id, p.comprobante_url || '']))
+  )
+  const MEDIOS = { transferencia: 'Transferencia', efectivo: 'Efectivo', cheque: 'Cheque', debito: 'Débito', credito: 'Crédito', otro: 'Otro' }
 
-  const subirArchivo = async (file) => {
-    setSubiendo(true)
+  const subirArchivo = async (file, pagoId) => {
+    setSubiendo(pagoId)
     try {
       let blob = file, ext = (file.name.split('.').pop() || 'jpg')
       if (file.type !== 'application/pdf') {
@@ -2628,37 +2720,58 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
         new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
       ])
       if (upErr) {
-        const esAuth = upErr.message?.includes('jwt') || upErr.message?.includes('unauthorized') || upErr.statusCode === '401'
-        const msg = upErr.message === 'timeout' ? 'La subida tardó demasiado. Intentá de nuevo.'
-          : esAuth ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.' : 'No se pudo subir el archivo'
-        console.error('upload error:', upErr.message); window._toast?.(msg); return
+        const msg = upErr.message === 'timeout' ? 'La subida tardó demasiado. Intentá de nuevo.' : 'No se pudo subir el archivo'
+        window._toast?.(msg); return
       }
       const publicUrl = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
-      setUrl(publicUrl); setNombre(file.name)
-    } finally { setSubiendo(false) }
+      setUrls(prev => ({ ...prev, [pagoId]: publicUrl }))
+      await onGuardar(pagoId, publicUrl)
+      window._toast?.('Comprobante guardado', 'ok')
+    } finally { setSubiendo(null) }
   }
 
+  const pagos = gasto?.pagos || []
+
   return (
-    <Modal title="Adjuntar comprobante de pago" onClose={onClose} onGuardar={() => url && onGuardar(url)} guardarLabel="Guardar">
-      <div style={{ background: C.greenDim, border: `1px solid #B8E6CF`, borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
+    <Modal title="Comprobantes de pago" onClose={onClose} onGuardar={null}>
+      <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
         <div style={{ fontWeight: 600, color: C.text }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
-        <div style={{ color: C.textMuted, marginTop: 2 }}>{gasto?.obras?.nombre} · {gasto?.fecha} · $ {fmt(gasto?.monto)}</div>
+        <div style={{ color: C.textMuted, marginTop: 2 }}>{gasto?.obras?.nombre} · $ {fmt(gasto?.monto)}</div>
       </div>
-      {url ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#F6FFF9', border: `1px solid #B8E6CF`, borderRadius: 8 }}>
-          <span style={{ fontSize: 13, color: C.green }}>✓</span>
-          <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{nombre || 'Comprobante adjunto'}</span>
-          <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.purple, fontWeight: 600 }}>Ver</a>
-          <button onClick={() => { setUrl(''); setNombre('') }} style={{ fontSize: 12, color: '#D0021B', background: 'transparent', border: 'none', cursor: 'pointer' }}>✕</button>
+      {pagos.length === 0
+        ? <div style={{ color: C.textMuted, fontSize: 13, textAlign: 'center', padding: 20 }}>Sin pagos registrados</div>
+        : <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {pagos.map((p, i) => {
+            const compUrl = urls[p.id]
+            const esteSubiendo = subiendo === p.id
+            return (
+              <div key={p.id} style={{ border: `1px solid ${compUrl ? '#B8E6CF' : C.border}`, borderRadius: 10, padding: '12px 14px', background: compUrl ? '#F6FFF9' : C.surface }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: C.text }}>Pago {i + 1} · $ {fmt(p.monto)}</span>
+                    <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{p.fecha_pago} · {MEDIOS[p.medio_pago] ?? p.medio_pago}</span>
+                  </div>
+                  {compUrl && <a href={compUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>Ver 🧾</a>}
+                </div>
+                {compUrl
+                  ? <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: C.green }}>✓ Comprobante adjunto</span>
+                      <label style={{ fontSize: 11, color: C.textMuted, cursor: 'pointer', textDecoration: 'underline' }}>
+                        <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && subirArchivo(e.target.files[0], p.id)} />
+                        Reemplazar
+                      </label>
+                    </div>
+                  : <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', border: `2px dashed ${C.border}`, borderRadius: 8, cursor: esteSubiendo ? 'default' : 'pointer', background: '#FAFAFA' }}>
+                      <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} disabled={!!subiendo} onChange={e => e.target.files?.[0] && subirArchivo(e.target.files[0], p.id)} />
+                      <span style={{ fontSize: 18 }}>{esteSubiendo ? '⏳' : '📎'}</span>
+                      <span style={{ fontSize: 13, color: C.textMuted }}>{esteSubiendo ? 'Subiendo...' : 'Adjuntar comprobante'}</span>
+                    </label>
+                }
+              </div>
+            )
+          })}
         </div>
-      ) : (
-        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '24px 16px', border: `2px dashed ${C.border}`, borderRadius: 10, cursor: 'pointer', background: subiendo ? '#F9F9F9' : C.surface }}>
-          <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && subirArchivo(e.target.files[0])} />
-          <span style={{ fontSize: 28 }}>{subiendo ? '⏳' : '📎'}</span>
-          <span style={{ fontSize: 13, color: C.textMuted, fontWeight: 600 }}>{subiendo ? 'Subiendo...' : 'Tocar para adjuntar'}</span>
-          <span style={{ fontSize: 11, color: C.textFaint }}>Imagen o PDF del comprobante de transferencia</span>
-        </label>
-      )}
+      }
     </Modal>
   )
 }
@@ -2934,4 +3047,4 @@ function EmptyState({ texto }) {
 const inputSt = { width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: "'Outfit', sans-serif", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.text, boxSizing: 'border-box', outline: 'none', colorScheme: 'light' }
 const cardSt   = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12 }
 const tdSt     = { padding: '10px 10px', color: C.textMuted, verticalAlign: 'middle' }
-const btnIconSt = { padding: '4px 6px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 6, color: C.textMuted, cursor: 'pointer', fontSize: 11, lineHeight: 1 }
+const btnIconSt = { padding: '5px 8px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 7, color: C.textMuted, cursor: 'pointer', fontSize: 12, lineHeight: 1 }
