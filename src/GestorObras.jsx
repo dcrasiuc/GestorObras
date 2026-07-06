@@ -1422,9 +1422,9 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
           <div className="desktop-only" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 115 }} /><col style={{ width: 185 }} />
+                <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 120 }} /><col style={{ width: 200 }} />
                 <col style={{ width: 110 }} /><col style={{ width: 115 }} />
-                <col style={{ width: 120 }} /><col style={{ width: 155 }} /><col style={{ width: 185 }} />
+                <col style={{ width: 120 }} /><col style={{ width: 155 }} /><col style={{ width: 80 }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#FAFAFA' }}>
@@ -1464,16 +1464,9 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       )
                     })()}</td>
                     <td style={{ ...tdSt, padding: '8px 10px' }}>
-                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
-                        {esAdmin && g.pagos?.length > 0 && g.pagos.some(p => !p.comprobante_url) && <button style={{ ...btnIconSt, color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
-                        {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
-                        {g.pagos?.filter(p=>p.comprobante_url).length > 0 && <a href={g.pagos.find(p=>p.comprobante_url)?.comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>{`🧾${g.pagos.filter(p=>p.comprobante_url).length > 1 ? ' ×'+g.pagos.filter(p=>p.comprobante_url).length : ''}`}</a>}
-                        <a href={waGastoLink(g)} target="_blank" rel="noreferrer" title="WhatsApp" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', background: '#E7F9ED', borderColor: '#A8DDB5', color: '#25D366' }}><WAIcon /></a>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
                         <button style={btnIconSt} onClick={() => onEditar(g)} title="Editar">✏️</button>
-                        {esAdmin && g.pagado && (() => { const tot=(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0); return tot < (parseFloat(g.monto)||0) })() && (
-                          <button title="Revertir pago" style={{ ...btnIconSt, color: '#8A5200', background: '#FFF8ED', borderColor: '#FFDCAA' }} onClick={() => onRevertirPago(g)}>↩</button>
-                        )}
-                        <button style={{ ...btnIconSt, color: '#D0021B', background: '#FFF0F0', borderColor: '#FFDCDC' }} onClick={() => onEliminar(g)} title="Eliminar">✕</button>
+                        <MenuAccionesGasto gasto={g} esAdmin={esAdmin} onAdjuntarComprobante={onAdjuntarComprobante} onRevertirPago={onRevertirPago} onEliminar={onEliminar} />
                       </div>
                     </td>
                   </tr>
@@ -3242,3 +3235,47 @@ const inputSt = { width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: 
 const cardSt   = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12 }
 const tdSt     = { padding: '10px 10px', color: C.textMuted, verticalAlign: 'middle' }
 const btnIconSt = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '5px 8px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 7, color: C.textMuted, cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0, fontFamily: "'Outfit', sans-serif" }
+const menuItemSt = { display: 'flex', alignItems: 'center', gap: 9, padding: '10px 14px', cursor: 'pointer', fontSize: 13, color: C.text, textDecoration: 'none', borderBottom: `1px solid ${C.border}`, background: 'transparent', fontFamily: "'Outfit', sans-serif" }
+
+function MenuAccionesGasto({ gasto: g, esAdmin, onAdjuntarComprobante, onRevertirPago, onEliminar }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  const compPagoUrls = (g.pagos || []).filter(p => p.comprobante_url)
+  const tieneComprobantePendiente = esAdmin && (g.pagos || []).length > 0 && (g.pagos || []).some(p => !p.comprobante_url)
+  const puedeRevertir = esAdmin && g.pagado && (g.pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) < (parseFloat(g.monto) || 0)
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button style={btnIconSt} onClick={() => setOpen(v => !v)} title="Más acciones">⋮</button>
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: '0 6px 24px rgba(0,0,0,0.13)', zIndex: 300, minWidth: 190, overflow: 'hidden' }}>
+          {g.imagen_url && (
+            <a href={g.imagen_url} target="_blank" rel="noreferrer" style={menuItemSt} onClick={() => setOpen(false)}>📎 Ver factura</a>
+          )}
+          {compPagoUrls.length > 0 && (
+            <a href={compPagoUrls[0].comprobante_url} target="_blank" rel="noreferrer" style={{ ...menuItemSt, color: C.green }} onClick={() => setOpen(false)}>
+              🧾 Comp. de pago{compPagoUrls.length > 1 ? ` (×${compPagoUrls.length})` : ''}
+            </a>
+          )}
+          {tieneComprobantePendiente && (
+            <div style={menuItemSt} onClick={() => { onAdjuntarComprobante(g); setOpen(false) }}>🧾+ Adjuntar comprobante</div>
+          )}
+          <a href={waGastoLink(g)} target="_blank" rel="noreferrer" style={{ ...menuItemSt, color: '#25D366' }} onClick={() => setOpen(false)}>
+            <WAIcon size={13} /> WhatsApp
+          </a>
+          {puedeRevertir && (
+            <div style={{ ...menuItemSt, color: C.orange }} onClick={() => { onRevertirPago(g); setOpen(false) }}>↩ Revertir pago</div>
+          )}
+          <div style={{ ...menuItemSt, color: '#D0021B', borderBottom: 'none' }} onClick={() => { onEliminar(g); setOpen(false) }}>✕ Eliminar</div>
+        </div>
+      )}
+    </div>
+  )
+}
