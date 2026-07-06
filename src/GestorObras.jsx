@@ -248,6 +248,11 @@ function NotifPendientes({ gastos, esAdmin, onVerPendientes }) {
   )
 }
 
+// ── Estilos compartidos ───────────────────────────────────────
+const btnIconSt = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '5px 7px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', fontSize: 13, fontFamily: "'Outfit', sans-serif", lineHeight: 1, flexShrink: 0, color: C.text }
+const tdSt = { padding: '10px 10px', verticalAlign: 'middle', color: C.text, fontSize: 13 }
+const inputSt = { width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: "'Outfit', sans-serif", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.text, boxSizing: 'border-box', outline: 'none', colorScheme: 'light' }
+
 // ── App ───────────────────────────────────────────────────────
 export default function GestorObras({ usuario }) {
   const esAdmin = usuario?.perfil?.rol === 'admin'
@@ -647,6 +652,7 @@ export default function GestorObras({ usuario }) {
             setGastos(prev => prev.map(g => g.id === itemEditando.id
               ? { ...g, pagos: (g.pagos || []).map(p => p.id === pagoId ? { ...p, comprobante_url: url } : p) }
               : g))
+            recargarGastos(false)
           }}
         />
       )}
@@ -1421,9 +1427,9 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
           <div className="desktop-only" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 130 }} /><col style={{ width: 200 }} />
+                <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 115 }} /><col style={{ width: 185 }} />
                 <col style={{ width: 110 }} /><col style={{ width: 115 }} />
-                <col style={{ width: 120 }} /><col style={{ width: 155 }} /><col style={{ width: 145 }} />
+                <col style={{ width: 120 }} /><col style={{ width: 155 }} /><col style={{ width: 185 }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#FAFAFA' }}>
@@ -1463,7 +1469,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       )
                     })()}</td>
                     <td style={{ ...tdSt, padding: '8px 10px' }}>
-                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
                         {esAdmin && g.pagos?.length > 0 && g.pagos.some(p => !p.comprobante_url) && <button style={{ ...btnIconSt, color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                         {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" title="Ver factura" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                         {g.pagos?.filter(p=>p.comprobante_url).length > 0 && <a href={g.pagos.find(p=>p.comprobante_url)?.comprobante_url} target="_blank" rel="noreferrer" title="Comprobante pago" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>{`🧾${g.pagos.filter(p=>p.comprobante_url).length > 1 ? ' ×'+g.pagos.filter(p=>p.comprobante_url).length : ''}`}</a>}
