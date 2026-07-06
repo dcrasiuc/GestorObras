@@ -2225,8 +2225,14 @@ function leerBase64(file) {
 // Reduce drásticamente el peso → más rápido en mobile y menos timeouts. La IA no pierde
 // precisión porque igual reescala internamente a ~1568px.
 async function _canvasComprimido(file, maxLado = 1600) {
-  const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(e.target.result); r.readAsDataURL(file) })
-  const img = await new Promise((res, rej) => { const i = new Image(); i.onerror = rej; i.onload = () => res(i); i.src = dataUrl })
+  const dataUrl = await Promise.race([
+    new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(e.target.result); r.readAsDataURL(file) }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('FileReader timeout')), 12000))
+  ])
+  const img = await Promise.race([
+    new Promise((res, rej) => { const i = new Image(); i.onerror = rej; i.onload = () => res(i); i.src = dataUrl }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('Image load timeout')), 8000))
+  ])
   let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height
   if (w > maxLado || h > maxLado) {
     if (w >= h) { h = Math.round(h * maxLado / w); w = maxLado }
@@ -2247,7 +2253,10 @@ async function comprimirImagen(file, maxLado = 1600, calidad = 0.7) {
 // Para subir al storage (Blob)
 async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.7) {
   const canvas = await _canvasComprimido(file, maxLado)
-  return await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob null')), 'image/jpeg', calidad))
+  return await Promise.race([
+    new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob null')), 'image/jpeg', calidad)),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('toBlob timeout')), 10000))
+  ])
 }
 
 function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
@@ -2507,8 +2516,8 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
 
 // ── Modal Pago ────────────────────────────────────────────────
 function ModalPago({ gasto, bancos, onClose, onGuardar }) {
-  const yaPageado = (gasto?.pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
-  const saldoRestante = Math.max(0, (parseFloat(gasto?.monto) || 0) - yaPageado)
+  const yaPageado = Math.round((gasto?.pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) * 100) / 100
+  const saldoRestante = Math.round(Math.max(0, (parseFloat(gasto?.monto) || 0) - yaPageado) * 100) / 100
   const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', monto: saldoRestante > 0 ? saldoRestante : (gasto?.monto ?? ''), banco_id: '', nro_operacion: '', nro_cheque: '', fecha_vencimiento_cheque: '', observaciones: '', comprobante_url: '' })
   const [archivoNombre, setArchivoNombre] = useState('')
   const [subiendo, setSubiendo] = useState(false)
