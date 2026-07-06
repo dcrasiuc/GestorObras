@@ -248,11 +248,6 @@ function NotifPendientes({ gastos, esAdmin, onVerPendientes }) {
   )
 }
 
-// ── Estilos compartidos ───────────────────────────────────────
-const btnIconSt = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '5px 7px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', fontSize: 13, fontFamily: "'Outfit', sans-serif", lineHeight: 1, flexShrink: 0, color: C.text }
-const tdSt = { padding: '10px 10px', verticalAlign: 'middle', color: C.text, fontSize: 13 }
-const inputSt = { width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: "'Outfit', sans-serif", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.text, boxSizing: 'border-box', outline: 'none', colorScheme: 'light' }
-
 // ── App ───────────────────────────────────────────────────────
 export default function GestorObras({ usuario }) {
   const esAdmin = usuario?.perfil?.rol === 'admin'
@@ -3246,4 +3241,4 @@ function EmptyState({ texto }) {
 const inputSt = { width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: "'Outfit', sans-serif", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.text, boxSizing: 'border-box', outline: 'none', colorScheme: 'light' }
 const cardSt   = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12 }
 const tdSt     = { padding: '10px 10px', color: C.textMuted, verticalAlign: 'middle' }
-const btnIconSt = { padding: '5px 8px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 7, color: C.textMuted, cursor: 'pointer', fontSize: 12, lineHeight: 1 }
+const btnIconSt = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '5px 8px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 7, color: C.textMuted, cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0, fontFamily: "'Outfit', sans-serif" }
