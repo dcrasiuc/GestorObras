@@ -612,7 +612,8 @@ export default function GestorObras({ usuario }) {
         // Solo marcar como pagado si el total cubre el monto de la factura
         const pagosPrevios = itemEditando.pagos || []
         const totalPagado = pagosPrevios.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) + (parseFloat(d.monto) || 0)
-        const esPagoCompleto = totalPagado >= (parseFloat(itemEditando.monto) || 0)
+        const montoFactura = parseFloat(itemEditando.monto) || 0
+        const esPagoCompleto = (montoFactura - totalPagado) < 1 // menos de $1 pendiente = pagado
         if (esPagoCompleto) await dbWrite('PATCH', 'gastos', { pagado: true }, `id=eq.${itemEditando.id}`)
         setGastos(prev => prev.map(g => g.id === itemEditando.id
           ? { ...g, pagado: esPagoCompleto, pagos: [...(g.pagos || []), { ...payload, id: savedPago?.id }] }
@@ -1284,7 +1285,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const total = gastosFiltrados.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastosFiltrados.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   // Pendiente incluye TODAS las impagas (también de obras cerradas) como aviso de deuda
-  const impagas = gastosRaw.filter(g => { if (g.pagado || g.es_gasto_general) return false; const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo > 0 })
+  const impagas = gastosRaw.filter(g => { if (g.pagado || g.es_gasto_general) return false; const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo >= 1 })
   const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
     <div>
@@ -1371,7 +1372,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
               return (
                 <div key={g.id} style={{ background: seleccion.has(g.id) ? C.purpleDim : C.surface, border: `1.5px solid ${seleccion.has(g.id) ? C.purple : C.border}`, borderRadius: 14, padding: '14px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
-                    {esAdmin && !g.pagado && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>0 })() && (
+                    {esAdmin && !g.pagado && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>=1 })() && (
                       <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, marginTop: 4, flexShrink: 0, width: 16, height: 16, cursor: 'pointer' }} />
                     )}
                     <div style={{ width: 40, height: 40, borderRadius: 12, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
@@ -1384,7 +1385,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
                       {(() => {
                         const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0))
-                        const parcial = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo > 0
+                        const parcial = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo >= 1
                         return <>
                           <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
                           {parcial && <div style={{ fontSize: 10, color: '#8A5200', marginTop: 1 }}>Saldo $ {fmt(saldo)}</div>}
@@ -1399,7 +1400,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       <ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} />
                     </div>
                     <div style={{ display: 'flex', gap: 5 }}>
-                      {esAdmin && (() => { const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo > 0 ? <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>{saldo < (parseFloat(g.monto)||0) ? '$ Saldo' : '$ Pagar'}</button> : null })()} 
+                      {esAdmin && (() => { const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo >= 1 ? <button style={{ ...btnIconSt, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', fontSize: 11, padding: '4px 8px' }} onClick={() => onPagar(g)}>{saldo < (parseFloat(g.monto)||0) ? '$ Saldo' : '$ Pagar'}</button> : null })()}
                       {esAdmin && g.pagos?.length > 0 && g.pagos.some(p => !p.comprobante_url) && <button style={{ ...btnIconSt, fontSize: 11, padding: '4px 8px', color: C.textMuted }} onClick={() => onAdjuntarComprobante(g)} title="Adjuntar comprobante de pago">🧾+</button>}
                       {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📎</a>}
                       {g.pagos?.filter(p=>p.comprobante_url).length > 0 && <a href={g.pagos.find(p=>p.comprobante_url)?.comprobante_url} target="_blank" rel="noreferrer" style={{ ...btnIconSt, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: C.green }}>{`🧾${g.pagos.filter(p=>p.comprobante_url).length > 1 ? ' '+g.pagos.filter(p=>p.comprobante_url).length : ''}`}</a>}
@@ -1435,7 +1436,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                 {gastosFiltrados.map((g, i) => (
                   <tr key={g.id} style={{ borderBottom: i < gastos.length-1 ? `1px solid ${C.borderFaint}` : 'none', background: g.pagado ? '#FAFFFE' : C.surface }}>
                     <td style={{ ...tdSt, padding: '8px 6px', textAlign: 'center' }}>
-                      {esAdmin && !g.pagado && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>0 })() && <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, cursor: 'pointer', width: 15, height: 15 }} />}
+                      {esAdmin && !g.pagado && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>=1 })() && <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, cursor: 'pointer', width: 15, height: 15 }} />}
                     </td>
                     <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
                     <td style={tdSt}><span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}</span></td>
@@ -1448,12 +1449,12 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</td>
                     <td style={{ ...tdSt, verticalAlign: 'middle' }}>{(() => {
                       const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0))
-                      const parc = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo > 0
+                      const parc = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo >= 1
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                           <PagoBadge pagado={g.pagado} parcial={parc} />
                           {parc && <span style={{ fontSize: 10, color: '#8A5200', whiteSpace: 'nowrap' }}>Saldo $ {fmt(saldo)}</span>}
-                          {esAdmin && saldo > 0 && (
+                          {esAdmin && saldo >= 1 && (
                             <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>
                               {parc ? '+ Pago' : 'Pagar'}
                             </button>
