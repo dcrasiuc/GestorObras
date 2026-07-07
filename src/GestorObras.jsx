@@ -258,6 +258,7 @@ export default function GestorObras({ usuario }) {
   const [itemEditando, setItemEditando] = useState(null)
   const [proveedorPendiente, setProveedorPendiente] = useState(null)
   const [onProveedorCreado, setOnProveedorCreado] = useState(null)
+  const [obraDetalle, setObraDetalle] = useState(null)
 
   const { clientes, proveedores, bancos, recargarListas, setProveedores } = useListas()
   const { obras, setObras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
@@ -516,7 +517,7 @@ export default function GestorObras({ usuario }) {
         <div className="main-content" style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 20px', width: '100%' }}>
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
-            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} gastosGeneralesPorObra={gastosGeneralesPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
+            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} gastosGeneralesPorObra={gastosGeneralesPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} onVerDetalle={o => setObraDetalle(o)} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onRevertirPago={async g => { if (!window.confirm(`¿Revertir pago de ${g.proveedores?.nombre ?? 'este gasto'}? Quedará como pendiente/parcial.`)) return; await dbWrite('PATCH', 'gastos', { pagado: false }, `id=eq.${g.id}`); setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: false } : x)); recargarGastos(false) }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
@@ -680,6 +681,7 @@ export default function GestorObras({ usuario }) {
         cerrarModal(); recargarListas()
       }} />}
       {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} zIndex={300} />}
+      {obraDetalle && <ModalDetalleObra obra={obraDetalle} gastos={todosGastos} remitosPorObra={remitosPorObra} onClose={() => setObraDetalle(null)} />}
       <NotifPendientes gastos={todosGastos} esAdmin={esAdmin} onVerPendientes={() => { setPanel('gastos') }} />
       {modal === 'subidaMasiva' && <ModalSubidaMasiva gastos={todosGastos} onClose={cerrarModal} onDone={() => { cerrarModal(); recargarGastos(true) }} />}
     </>
@@ -1046,7 +1048,7 @@ function PanelMas({ esAdmin, onContactos, onAdmin, onLogout, usuario }) {
 }
 
 // ── Panel Obras ───────────────────────────────────────────────
-function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {}, remitosPorObra = {}, gastosGeneralesPorObra = {} }) {
+function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, onVerDetalle, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {}, remitosPorObra = {}, gastosGeneralesPorObra = {} }) {
   const [filtroEstado, setFiltroEstado] = useState('activa')
   const [filtroCliente, setFiltroCliente] = useState('')
   const clientes = [...new Set(obras.map(o => o.cliente).filter(Boolean))].sort()
@@ -1094,8 +1096,11 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
                 <div style={{ display: 'flex' }}>
                   <div style={{ width: 3, background: o.estado === 'activa' ? C.purple : C.border, flexShrink: 0 }} />
                   <div style={{ flex: 1, padding: '16px 16px 16px 14px', position: 'relative' }}>
-                    <button style={{ position: 'absolute', top: 12, right: 12, ...btnIconSt }} onClick={e => { e.stopPropagation(); onEditar(o) }}>✏️</button>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 32 }}>{o.nombre}</div>
+                    <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 4 }}>
+                      {onVerDetalle && <button style={btnIconSt} onClick={e => { e.stopPropagation(); onVerDetalle(o) }} title="Ver cierre de obra">📊</button>}
+                      <button style={btnIconSt} onClick={e => { e.stopPropagation(); onEditar(o) }}>✏️</button>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 64 }}>{o.nombre}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 14 }}>{o.cliente || 'Sin cliente'}</div>
                     <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(totalGastado)}</div>
                     <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: provis > 0 ? 4 : ((esAdmin && creditoFiscalPorObra[o.id] > 0) ? 4 : (o.presupuesto > 0 ? 10 : 12)) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
@@ -3264,6 +3269,193 @@ const cardSt   = { background: C.surface, border: `1px solid ${C.border}`, borde
 const tdSt     = { padding: '10px 10px', color: C.textMuted, verticalAlign: 'middle' }
 const btnIconSt = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '5px 8px', background: '#F5F5F5', border: `1px solid ${C.border}`, borderRadius: 7, color: C.textMuted, cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0, fontFamily: "'Outfit', sans-serif" }
 const menuItemSt = { display: 'flex', alignItems: 'center', gap: 9, padding: '10px 14px', cursor: 'pointer', fontSize: 13, color: C.text, textDecoration: 'none', borderBottom: `1px solid ${C.border}`, background: 'transparent', fontFamily: "'Outfit', sans-serif" }
+
+// ── Modal Detalle / Cierre de Obra ────────────────────────────
+function ModalDetalleObra({ obra, gastos, remitosPorObra = {}, onClose }) {
+  // Gastos directos de esta obra
+  const gastosObra = gastos.filter(g => !g.es_gasto_general && imputaciones(g).some(im => im.obra_id === obra.id))
+  const gastosGenerales = gastos.filter(g => g.es_gasto_general)
+
+  // Total directo (solo la parte imputable a esta obra)
+  const totalDirecto = gastosObra.reduce((s, g) =>
+    s + imputaciones(g).filter(im => im.obra_id === obra.id).reduce((ss, im) => ss + im.monto, 0), 0)
+  const pagadoDirecto = gastosObra.filter(g => g.pagado).reduce((s, g) =>
+    s + imputaciones(g).filter(im => im.obra_id === obra.id).reduce((ss, im) => ss + im.monto, 0), 0)
+
+  // Remito provisorio de esta obra
+  const provisorio = remitosPorObra[obra.id] || 0
+
+  // Meses que tienen actividad (directa o general)
+  const mesesSet = new Set([
+    ...gastosObra.map(g => g.fecha?.slice(0, 7)),
+    ...gastosGenerales.map(g => g.fecha?.slice(0, 7)),
+  ].filter(Boolean))
+  const meses = [...mesesSet].sort()
+
+  // Prorrateo mes a mes
+  let totalProrrateo = 0
+  const timeline = meses.map(mes => {
+    const directoMes = gastosObra
+      .filter(g => g.fecha?.startsWith(mes))
+      .reduce((s, g) => s + imputaciones(g).filter(im => im.obra_id === obra.id).reduce((ss, im) => ss + im.monto, 0), 0)
+
+    const generalesMes = gastosGenerales
+      .filter(g => g.fecha?.startsWith(mes))
+      .reduce((s, g) => s + (parseFloat(g.monto) || 0), 0)
+
+    // Total de todas las obras ese mes (para calcular proporción)
+    const totalObrasMes = {}
+    gastos.filter(g => !g.es_gasto_general && g.fecha?.startsWith(mes)).forEach(g => {
+      imputaciones(g).forEach(im => { totalObrasMes[im.obra_id] = (totalObrasMes[im.obra_id] || 0) + im.monto })
+    })
+    const sumaObrasMes = Object.values(totalObrasMes).reduce((s, v) => s + v, 0)
+    const proporcion = sumaObrasMes > 0 ? ((totalObrasMes[obra.id] || 0) / sumaObrasMes) : 0
+    const prorrateoMes = Math.round(generalesMes * proporcion)
+    totalProrrateo += prorrateoMes
+
+    const mesLabel = (() => {
+      const [y, m] = mes.split('-')
+      const nombres = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+      return `${nombres[parseInt(m,10)-1]} ${y}`
+    })()
+    return { mes, mesLabel, directoMes, generalesMes, prorrateoMes, subtotal: directoMes + prorrateoMes }
+  }).filter(r => r.directoMes > 0 || r.prorrateoMes > 0).reverse() // más reciente primero
+
+  const totalReal = totalDirecto + provisorio + totalProrrateo
+  const pct = obra.presupuesto > 0 ? Math.round((totalReal / obra.presupuesto) * 100) : 0
+  const sobrep = obra.presupuesto > 0 && totalReal > obra.presupuesto
+
+  // Breakdown por concepto
+  const porConcepto = {}
+  gastosObra.forEach(g => {
+    imputaciones(g).filter(im => im.obra_id === obra.id).forEach(im => {
+      porConcepto[g.concepto] = (porConcepto[g.concepto] || 0) + im.monto
+    })
+  })
+  const conceptosOrden = Object.entries(porConcepto).sort((a, b) => b[1] - a[1])
+
+  const estadoColor = { activa: [C.purpleDim, C.purple], pausada: [C.orangeDim, C.orange], finalizada: [C.greenDim, C.green] }
+  const [stBg, stColor] = estadoColor[obra.estado] ?? estadoColor.activa
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 18, width: '100%', maxWidth: 580, maxHeight: '92vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 12px 48px rgba(0,0,0,0.14)' }}>
+
+        {/* Header */}
+        <div style={{ background: `linear-gradient(135deg, ${C.purpleDark} 0%, ${C.purple} 100%)`, borderRadius: '18px 18px 0 0', padding: '20px 22px 22px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>Cierre de obra</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#fff', marginBottom: 4 }}>{obra.nombre}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {obra.cliente && <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>{obra.cliente}</span>}
+                <span style={{ background: stBg, color: stColor, padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700 }}>{obra.estado}</span>
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13, fontFamily: "'Outfit', sans-serif" }}>✕</button>
+          </div>
+          {/* Total real destacado */}
+          <div style={{ marginTop: 18, background: 'rgba(255,255,255,0.12)', borderRadius: 12, padding: '14px 18px' }}>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>Costo real estimado (directo + empresa)</div>
+            <div style={{ fontSize: 36, fontWeight: 800, color: '#fff', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em', lineHeight: 1 }}>$ {fmt(totalReal)}</div>
+            {obra.presupuesto > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ height: 4, background: 'rgba(255,255,255,0.2)', borderRadius: 99, overflow: 'hidden', marginBottom: 4 }}>
+                  <div style={{ height: '100%', borderRadius: 99, width: `${Math.min(100, pct)}%`, background: sobrep ? '#FF6B6B' : 'rgba(255,255,255,0.85)' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>Presupuesto: $ {fmt(obra.presupuesto)}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: sobrep ? '#FF6B6B' : 'rgba(255,255,255,0.8)' }}>{pct}% {sobrep ? '⚠ sobrepresupuesto' : ''}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ padding: '20px 22px' }}>
+          {/* Stats resumen */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
+            {[
+              { label: 'Gasto directo', value: `$ ${fmt(totalDirecto)}`, sub: `$ ${fmt(pagadoDirecto)} pagado`, color: C.text },
+              { label: 'Generales prop.', value: `$ ${fmt(totalProrrateo)}`, sub: 'prorrateo acumulado', color: '#2D5FA8' },
+              { label: 'Provisorio', value: `$ ${fmt(provisorio)}`, sub: 'remitos sin factura', color: provisorio > 0 ? C.orange : C.textFaint },
+            ].map(s => (
+              <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ fontSize: 9, fontWeight: 600, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{s.label}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: s.color, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>{s.value}</div>
+                <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>{s.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Breakdown por concepto */}
+          {conceptosOrden.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>Gasto directo por concepto</div>
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                {conceptosOrden.map(([concepto, monto], i) => {
+                  const pctC = totalDirecto > 0 ? Math.round(monto / totalDirecto * 100) : 0
+                  const [bgC, fgC] = CONCEPTO_COLORS[concepto] ?? ['#F3F3F3', '#666']
+                  return (
+                    <div key={concepto} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: i < conceptosOrden.length - 1 ? `1px solid ${C.borderFaint}` : 'none' }}>
+                      <span style={{ fontSize: 14 }}>{CONCEPTO_ICONS[concepto] ?? '📦'}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{CONCEPTO_LABELS[concepto] ?? concepto}</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(monto)}</span>
+                        </div>
+                        <div style={{ height: 3, background: C.borderFaint, borderRadius: 99, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', borderRadius: 99, width: `${pctC}%`, background: fgC }} />
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 10, color: C.textFaint, width: 30, textAlign: 'right' }}>{pctC}%</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Timeline mes a mes */}
+          {timeline.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>Evolución mensual</div>
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 1fr', gap: 0, padding: '8px 14px', borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+                  {['Mes', 'Directo', 'Empresa', 'Subtotal'].map(h => (
+                    <div key={h} style={{ fontSize: 9, fontWeight: 700, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.07em', textAlign: h !== 'Mes' ? 'right' : 'left' }}>{h}</div>
+                  ))}
+                </div>
+                {timeline.map((row, i) => (
+                  <div key={row.mes} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 1fr', gap: 0, padding: '9px 14px', borderBottom: i < timeline.length - 1 ? `1px solid ${C.borderFaint}` : 'none', background: i % 2 === 0 ? 'transparent' : '#FAFAFA' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.mesLabel}</div>
+                    <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'right', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(row.directoMes)}</div>
+                    <div style={{ fontSize: 12, color: row.prorrateoMes > 0 ? '#2D5FA8' : C.textFaint, textAlign: 'right', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>
+                      {row.prorrateoMes > 0 ? `$ ${fmt(row.prorrateoMes)}` : '—'}
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textAlign: 'right', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(row.subtotal)}</div>
+                  </div>
+                ))}
+                {/* Totales */}
+                <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 1fr', gap: 0, padding: '10px 14px', borderTop: `2px solid ${C.border}`, background: C.purpleDim }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.purple }}>Total</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, textAlign: 'right', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(totalDirecto)}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#2D5FA8', textAlign: 'right', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(totalProrrateo)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.purple, textAlign: 'right', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(totalDirecto + totalProrrateo)}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {timeline.length === 0 && totalDirecto === 0 && (
+            <div style={{ textAlign: 'center', padding: '32px 20px', color: C.textFaint, fontSize: 13 }}>Sin gastos registrados para esta obra</div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function MenuAccionesGasto({ gasto: g, esAdmin, onAdjuntarComprobante, onRevertirPago, onEliminar }) {
   const [open, setOpen] = useState(false)
