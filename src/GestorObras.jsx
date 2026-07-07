@@ -2540,6 +2540,41 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
   )
 }
 
+// ── Subida de comprobante de pago (shared) ───────────────────
+// Comprime imagen a 800px (suficiente para un recibo), reintenta 1 vez si falla,
+// timeout de 60s por intento. Devuelve la URL pública o null si falló.
+async function subirArchivoStorage(file, onProgress) {
+  let blob = file, ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+  if (file.type === 'application/pdf') {
+    if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); return null }
+  } else {
+    try { blob = await comprimirImagenBlob(file, 800, 0.75); ext = 'jpg' } catch { /* sube original */ }
+  }
+  const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+
+  const intentarUpload = () => Promise.race([
+    supabase.storage.from('comprobantes-pagos').upload(path, blob, { upsert: true }),
+    new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 60000))
+  ])
+
+  let res = await intentarUpload()
+  // Reintento automático si fue timeout o error de red
+  if (res.error) {
+    onProgress?.('Reintentando subida...')
+    await new Promise(r => setTimeout(r, 1500))
+    res = await intentarUpload()
+  }
+  if (res.error) {
+    const esAuth = res.error.message?.includes('jwt') || res.error.message?.includes('unauthorized') || res.error.statusCode === '401'
+    const msg = esAuth
+      ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.'
+      : 'No se pudo subir el comprobante. Verificá la conexión e intentá de nuevo.'
+    window._toast?.(msg)
+    return null
+  }
+  return supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+}
+
 // ── Modal Pago ────────────────────────────────────────────────
 function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   const yaPageado = Math.round((gasto?.pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) * 100) / 100
@@ -2553,32 +2588,9 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
 
   const subirComprobante = async (file) => {
     setSubiendo(true)
-    try {
-      let blob = file, ext = (file.name.split('.').pop() || 'jpg')
-      if (file.type === 'application/pdf') {
-        if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); setSubiendo(false); return }
-      } else {
-        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch { /* sube original */ }
-      }
-      const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
-      const { data: upData, error: upErr } = await Promise.race([
-        supabase.storage.from('comprobantes-pagos').upload(path, blob),
-        new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
-      ])
-      if (upErr) {
-        const esAuth = upErr.message?.includes('jwt') || upErr.message?.includes('unauthorized') || upErr.statusCode === '401'
-        const msg = upErr.message === 'timeout'
-          ? 'La subida tardó demasiado. Confirmá el pago e intentá adjuntar después.'
-          : esAuth ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.' : 'No se pudo subir el comprobante'
-        console.error('upload error:', upErr.message); window._toast?.(msg); setSubiendo(false); return
-      }
-      const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
-      set('comprobante_url', url); setArchivoNombre(file.name)
-    } catch (e) {
-      console.error('subirComprobante:', e); window._toast?.('No se pudo subir el comprobante')
-    } finally {
-      setSubiendo(false)
-    }
+    const url = await subirArchivoStorage(file)
+    if (url) { set('comprobante_url', url); setArchivoNombre(file.name) }
+    setSubiendo(false)
   }
 
   const [verMas, setVerMas] = useState(false)
@@ -2879,25 +2891,13 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
 
   const subirArchivo = async (file, pagoId) => {
     setSubiendo(pagoId)
-    try {
-      let blob = file, ext = (file.name.split('.').pop() || 'jpg')
-      if (file.type !== 'application/pdf') {
-        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
-      }
-      const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
-      const { data: upData, error: upErr } = await Promise.race([
-        supabase.storage.from('comprobantes-pagos').upload(path, blob),
-        new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
-      ])
-      if (upErr) {
-        const msg = upErr.message === 'timeout' ? 'La subida tardó demasiado. Intentá de nuevo.' : 'No se pudo subir el archivo'
-        window._toast?.(msg); return
-      }
-      const publicUrl = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+    const publicUrl = await subirArchivoStorage(file)
+    if (publicUrl) {
       setUrls(prev => ({ ...prev, [pagoId]: publicUrl }))
       await onGuardar(pagoId, publicUrl)
       window._toast?.('Comprobante guardado', 'ok')
-    } finally { setSubiendo(null) }
+    }
+    setSubiendo(null)
   }
 
   const pagos = gasto?.pagos || []
@@ -2959,22 +2959,9 @@ function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
 
   const subirComprobante = async (file) => {
     setSubiendo(true)
-    try {
-      let blob = file, ext = (file.name.split('.').pop() || 'jpg')
-      if (file.type !== 'application/pdf') {
-        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch { /* sube original */ }
-      }
-      const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
-      const { data: upData, error: upErr } = await Promise.race([
-        supabase.storage.from('comprobantes-pagos').upload(path, blob),
-        new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
-      ])
-      if (upErr) { window._toast?.('No se pudo subir el comprobante'); setSubiendo(false); return }
-      const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
-      set('comprobante_url', url); setArchivoNombre(file.name)
-    } catch (e) {
-      window._toast?.('No se pudo subir el comprobante')
-    } finally { setSubiendo(false) }
+    const url = await subirArchivoStorage(file)
+    if (url) { set('comprobante_url', url); setArchivoNombre(file.name) }
+    setSubiendo(false)
   }
 
   return (
