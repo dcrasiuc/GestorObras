@@ -2948,12 +2948,34 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
 
 // ── Modal Pago Múltiple ───────────────────────────────────────
 function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
-  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', banco_id: '', observaciones: '' })
+  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', banco_id: '', observaciones: '', comprobante_url: '' })
+  const [subiendo, setSubiendo] = useState(false)
+  const [archivoNombre, setArchivoNombre] = useState('')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const total = gastos.reduce((s, g) => s + (g.monto || 0), 0)
   const necesitaBanco = ['transferencia', 'cheque', 'tarjeta'].includes(form.medio_pago)
   const proveedorNombre = gastos[0]?.proveedores?.nombre
   const mismoProveedor = gastos.every(g => g.proveedor_id === gastos[0]?.proveedor_id)
+
+  const subirComprobante = async (file) => {
+    setSubiendo(true)
+    try {
+      let blob = file, ext = (file.name.split('.').pop() || 'jpg')
+      if (file.type !== 'application/pdf') {
+        try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch { /* sube original */ }
+      }
+      const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const { data: upData, error: upErr } = await Promise.race([
+        supabase.storage.from('comprobantes-pagos').upload(path, blob),
+        new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 20000))
+      ])
+      if (upErr) { window._toast?.('No se pudo subir el comprobante'); setSubiendo(false); return }
+      const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+      set('comprobante_url', url); setArchivoNombre(file.name)
+    } catch (e) {
+      window._toast?.('No se pudo subir el comprobante')
+    } finally { setSubiendo(false) }
+  }
 
   return (
     <Modal title={`Pagar ${gastos.length} comprobantes`} onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel={`Confirmar pago $ ${fmt(total)}`}>
@@ -3002,6 +3024,22 @@ function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
         )}
         <Campo label="Observaciones" style={{ gridColumn: '1/-1' }}>
           <input style={inputSt} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} placeholder="Referencia de transferencia, etc." />
+        </Campo>
+        <Campo label="Comprobante de pago (opcional)" style={{ gridColumn: '1/-1' }}>
+          {form.comprobante_url ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: C.greenDim, border: `1px solid #B8E6CF`, borderRadius: 8 }}>
+              <span>📎</span>
+              <span style={{ fontSize: 12, color: C.green, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{archivoNombre}</span>
+              <a href={form.comprobante_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>Ver</a>
+              <button onClick={() => { set('comprobante_url', ''); setArchivoNombre('') }} style={{ background: 'transparent', border: 'none', color: '#D0021B', cursor: 'pointer', fontSize: 12 }}>✕</button>
+            </div>
+          ) : (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#FAFAFA', border: `1.5px dashed ${C.border}`, borderRadius: 8, cursor: subiendo ? 'default' : 'pointer' }}>
+              <span>{subiendo ? '⏳' : '📎'}</span>
+              <span style={{ fontSize: 12, color: C.textMuted }}>{subiendo ? 'Subiendo...' : 'Subir foto o PDF'}</span>
+              <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && subirComprobante(e.target.files[0])} disabled={subiendo} />
+            </label>
+          )}
         </Campo>
       </div>
     </Modal>
