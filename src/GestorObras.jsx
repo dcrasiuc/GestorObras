@@ -281,6 +281,18 @@ export default function GestorObras({ usuario }) {
     })
     obrasTocadas.forEach(o => { cantPorObra[o] = (cantPorObra[o] || 0) + 1 })
   })
+  // Prorrateo de gastos generales por obra: cada obra absorbe según su peso en el total
+  const gastosGeneralesPorObra = {}
+  const totalGeneralesAll = todosGastos.filter(g => g.es_gasto_general).reduce((s, g) => s + (parseFloat(g.monto) || 0), 0)
+  if (totalGeneralesAll > 0) {
+    const totalTodasObras = Object.values(totalPorObra).reduce((s, v) => s + v, 0)
+    if (totalTodasObras > 0) {
+      Object.entries(totalPorObra).forEach(([obraId, montoObra]) => {
+        gastosGeneralesPorObra[obraId] = Math.round((montoObra / totalTodasObras) * totalGeneralesAll)
+      })
+    }
+  }
+
   // silent=true → refresca en background sin mostrar spinner (post-save en mobile)
   const recargarTodo = (silent = false) => { recargarObras(!silent); recargarGastos(!silent); recargarRemitosPend() }
 
@@ -504,7 +516,7 @@ export default function GestorObras({ usuario }) {
         <div className="main-content" style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 20px', width: '100%' }}>
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
-            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
+            {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} gastosGeneralesPorObra={gastosGeneralesPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} />}
             {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onRevertirPago={async g => { if (!window.confirm(`¿Revertir pago de ${g.proveedores?.nombre ?? 'este gasto'}? Quedará como pendiente/parcial.`)) return; await dbWrite('PATCH', 'gastos', { pagado: false }, `id=eq.${g.id}`); setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: false } : x)); recargarGastos(false) }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
@@ -690,12 +702,19 @@ function SeateHex({ size = 20, color = '#7B4DB5' }) {
 function MobileHeaderStats({ obras, gastos, remitosPorObra = {} }) {
   const obrasActivas = obras.filter(o => o.estado === 'activa').length
   const idsActivas = new Set(obras.filter(o => o.estado === 'activa').map(o => o.id))
-  // Distribución: cada gasto suma a cada obra su parte. Total = parte en obras activas.
+  // Distribución: cada gasto suma a cada obra su parte. Total = parte en obras activas + generales.
   let totalConfirmado = 0, pendiente = 0
-  gastos.forEach(g => imputaciones(g).forEach(im => {
-    if (idsActivas.has(im.obra_id)) totalConfirmado += im.monto
-    if (!g.pagado) pendiente += im.monto   // pendiente = toda la deuda impaga (cualquier obra)
-  }))
+  gastos.forEach(g => {
+    if (g.es_gasto_general) {
+      totalConfirmado += parseFloat(g.monto) || 0
+      if (!g.pagado) pendiente += parseFloat(g.monto) || 0
+    } else {
+      imputaciones(g).forEach(im => {
+        if (idsActivas.has(im.obra_id)) totalConfirmado += im.monto
+        if (!g.pagado) pendiente += im.monto
+      })
+    }
+  })
   // Remitos provisorios de obras activas (se suman al total)
   let provisorio = 0
   Object.entries(remitosPorObra).forEach(([oid, m]) => { if (idsActivas.has(oid)) provisorio += m })
@@ -1027,7 +1046,7 @@ function PanelMas({ esAdmin, onContactos, onAdmin, onLogout, usuario }) {
 }
 
 // ── Panel Obras ───────────────────────────────────────────────
-function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {}, remitosPorObra = {} }) {
+function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, creditoFiscalPorObra = {}, totalPorObra = {}, cantPorObra = {}, remitosPorObra = {}, gastosGeneralesPorObra = {} }) {
   const [filtroEstado, setFiltroEstado] = useState('activa')
   const [filtroCliente, setFiltroCliente] = useState('')
   const clientes = [...new Set(obras.map(o => o.cliente).filter(Boolean))].sort()
@@ -1065,6 +1084,8 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
             const gastoConfirmado = totalPorObra[o.id] ?? o.total_gastado ?? 0
             const provis = remitosPorObra[o.id] || 0
             const totalGastado = gastoConfirmado + provis
+            const prorrateoGeneral = gastosGeneralesPorObra[o.id] || 0
+            const totalConGeneral = totalGastado + prorrateoGeneral
             const cantGastos = cantPorObra[o.id] ?? o.cant_gastos ?? 0
             const pct = o.presupuesto > 0 ? Math.min(100, Math.round((totalGastado / o.presupuesto) * 100)) : 0
             const sobrep = o.presupuesto > 0 && totalGastado > o.presupuesto
@@ -1082,7 +1103,12 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, c
                       <div style={{ fontSize: 11, color: C.orange, fontWeight: 600, background: C.orangeDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>📋 Incluye $ {fmt(provis)} en remitos provisorios</div>
                     )}
                     {esAdmin && creditoFiscalPorObra[o.id] > 0 && (
-                      <div style={{ fontSize: 11, color: C.green, fontWeight: 600, background: C.greenDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>IVA crédito fiscal: $ {fmt(creditoFiscalPorObra[o.id])}</div>
+                      <div style={{ fontSize: 11, color: C.green, fontWeight: 600, background: C.greenDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: prorrateoGeneral > 0 ? 4 : (o.presupuesto > 0 ? 10 : 12) }}>IVA crédito fiscal: $ {fmt(creditoFiscalPorObra[o.id])}</div>
+                    )}
+                    {prorrateoGeneral > 0 && (
+                      <div style={{ fontSize: 11, color: '#2D5FA8', background: '#EEF4FF', borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>
+                        🏛️ +$ {fmt(prorrateoGeneral)} empresa → <strong>$ {fmt(totalConGeneral)}</strong> total
+                      </div>
                     )}
                     {o.presupuesto > 0 && (
                       <div style={{ marginBottom: 12 }}>
@@ -1286,7 +1312,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   const total = gastosFiltrados.reduce((s, g) => s + (g.monto ?? 0), 0)
   const pagado = gastosFiltrados.filter(g => g.pagado).reduce((s, g) => s + (g.monto ?? 0), 0)
   // Pendiente incluye TODAS las impagas (también de obras cerradas) como aviso de deuda
-  const impagas = gastosRaw.filter(g => { if (g.pagado || g.es_gasto_general) return false; const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo >= 1 })
+  const impagas = gastosRaw.filter(g => { if (g.pagado) return false; const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo >= 1 })
   const pendiente = impagas.reduce((s, g) => s + (g.monto ?? 0), 0)
   return (
     <div>
@@ -3046,33 +3072,35 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
           </label>
         </Campo>
       )}
-      <Campo label="Distribución por obras" style={{ gridColumn: '1/-1' }}>
-        {dist.length === 0 ? (
-          <button type="button" onClick={() => setDist([{ obra_id: form.obra_id || obras[0]?.id || '', monto: montoTotal }])} style={chipBtn}>
-            🏗️ Repartir entre varias obras
-          </button>
-        ) : (
-          <div>
-            {dist.map((d, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                <select style={{ ...inputSt, flex: 1 }} value={d.obra_id || ''} onChange={e => setDist(dist.map((x, idx) => idx === i ? { ...x, obra_id: e.target.value } : x))}>
-                  <option value="">Obra...</option>
-                  {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
-                </select>
-                <input style={{ ...inputSt, width: 110 }} type="number" placeholder="Monto" value={d.monto} onChange={e => setDist(dist.map((x, idx) => idx === i ? { ...x, monto: e.target.value } : x))} />
-                <button type="button" onClick={() => setDist(dist.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', color: '#D0021B', cursor: 'pointer', fontSize: 14 }}>✕</button>
+      {!esGeneral && (
+        <Campo label="Distribución por obras" style={{ gridColumn: '1/-1' }}>
+          {dist.length === 0 ? (
+            <button type="button" onClick={() => setDist([{ obra_id: form.obra_id || obras[0]?.id || '', monto: montoTotal }])} style={chipBtn}>
+              🏗️ Repartir entre varias obras
+            </button>
+          ) : (
+            <div>
+              {dist.map((d, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <select style={{ ...inputSt, flex: 1 }} value={d.obra_id || ''} onChange={e => setDist(dist.map((x, idx) => idx === i ? { ...x, obra_id: e.target.value } : x))}>
+                    <option value="">Obra...</option>
+                    {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+                  </select>
+                  <input style={{ ...inputSt, width: 110 }} type="number" placeholder="Monto" value={d.monto} onChange={e => setDist(dist.map((x, idx) => idx === i ? { ...x, monto: e.target.value } : x))} />
+                  <button type="button" onClick={() => setDist(dist.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', color: '#D0021B', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                <button type="button" onClick={() => setDist([...dist, { obra_id: '', monto: '' }])} style={chipBtn}>+ Obra</button>
+                <span style={{ fontSize: 11, color: sumaDist === montoTotal ? C.textMuted : C.orange, fontWeight: 600 }}>
+                  Repartido: $ {fmt(sumaDist)} / $ {fmt(montoTotal)} {sumaDist === montoTotal ? '✓' : '⚠'}
+                </span>
+                <button type="button" onClick={() => setDist([])} style={{ ...chipBtn, color: C.textMuted }}>Quitar (100% una obra)</button>
               </div>
-            ))}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-              <button type="button" onClick={() => setDist([...dist, { obra_id: '', monto: '' }])} style={chipBtn}>+ Obra</button>
-              <span style={{ fontSize: 11, color: sumaDist === montoTotal ? C.textMuted : C.orange, fontWeight: 600 }}>
-                Repartido: $ {fmt(sumaDist)} / $ {fmt(montoTotal)} {sumaDist === montoTotal ? '✓' : '⚠'}
-              </span>
-              <button type="button" onClick={() => setDist([])} style={{ ...chipBtn, color: C.textMuted }}>Quitar (100% una obra)</button>
             </div>
-          </div>
-        )}
-      </Campo>
+          )}
+        </Campo>
+      )}
       <Campo label="Descripción" style={{ gridColumn: '1/-1' }}><textarea style={{ ...inputSt, minHeight: 64, resize: 'vertical' }} value={form.descripcion || ''} onChange={e => set('descripcion', e.target.value)} /></Campo>
       <Campo label="Condición de pago" style={{ gridColumn: '1/-1' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

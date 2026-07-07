@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
-import { C, MEDIOS_PAGO, IVA } from './constants'
-import { fmt, hoy, dbWrite } from './utils'
+import { C, MEDIOS_PAGO, IVA, CONCEPTO_LABELS, CONCEPTO_ICONS } from './constants'
+import { fmt, hoy, dbWrite, getTipoLabel } from './utils'
 import { toast } from './toast'
 
 // ── Hooks ────────────────────────────────────────────────────
@@ -82,6 +82,29 @@ function useCCPagos(proveedorId) {
   return { pagos, recargar: cargar }
 }
 
+function useGastosGenerales(proveedorId) {
+  const [gastos, setGastos] = useState([])
+  const [loading, setLoading] = useState(false)
+  const cargar = useCallback(async () => {
+    if (!proveedorId) { setGastos([]); return }
+    setLoading(true)
+    const failsafe = setTimeout(() => setLoading(false), 12000)
+    try {
+      const { data } = await supabase
+        .from('gastos')
+        .select('*, pagos(*)')
+        .eq('proveedor_id', proveedorId)
+        .eq('es_gasto_general', true)
+        .order('fecha', { ascending: false })
+      setGastos(data ?? [])
+    } catch (e) { console.error('useGastosGenerales error:', e) }
+    clearTimeout(failsafe)
+    setLoading(false)
+  }, [proveedorId])
+  useEffect(() => { cargar() }, [cargar])
+  return { gastos, loading, recargar: cargar }
+}
+
 function useResumenCC() {
   const [resumen, setResumen] = useState([])
   const [loading, setLoading] = useState(true)
@@ -131,16 +154,21 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
   const { resumen, loading: loadingResumen, recargar: recargarResumen } = useResumenCC()
   const { remitos, loading: loadingRemitos, recargar: recargarRemitos } = useRemitos(proveedorId)
   const { pagos, recargar: recargarPagos } = useCCPagos(proveedorId)
+  const { gastos: gastosGen, loading: loadingGastos, recargar: recargarGastosGen } = useGastosGenerales(proveedorId)
 
   const proveedor = proveedores.find(p => p.id === proveedorId)
   const esRI = proveedor?.situacion_impositiva === 'responsable_inscripto'
   const remitosP = remitos.filter(r => r.estado === 'pendiente' || r.estado === 'facturado')
-  const saldoPendiente = remitosP.reduce((s, r) => s + (r.monto_neto ?? 0), 0)
-  const saldoConIva = esRI ? saldoPendiente * (1 + IVA) : saldoPendiente
+  const saldoRemitoNeto = remitosP.reduce((s, r) => s + (r.monto_neto ?? 0), 0)
+  const saldoRemitoConIva = esRI ? saldoRemitoNeto * (1 + IVA) : saldoRemitoNeto
+  const gastosImpagos = gastosGen.filter(g => !g.pagado)
+  const totalGastosImpagos = gastosImpagos.reduce((s, g) => s + (parseFloat(g.monto) || 0), 0)
+  const saldoPendiente = saldoRemitoNeto + totalGastosImpagos
+  const saldoConIva = saldoRemitoConIva + totalGastosImpagos
 
   const abrirModal = (tipo, item = null) => { setItemEditando(item); setModal(tipo) }
   const cerrarModal = () => { setModal(null); setItemEditando(null) }
-  const recargarTodo = () => { recargarRemitos(); recargarResumen(); recargarPagos() }
+  const recargarTodo = () => { recargarRemitos(); recargarResumen(); recargarPagos(); recargarGastosGen() }
 
   // Vista general — lista de proveedores con saldo pendiente
   if (!proveedorId) {
@@ -237,16 +265,17 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
         <>
           {/* Stats del proveedor */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
-            <StatCard label="Sin pagar" value={remitosP.length} sub={`${remitos.filter(r=>r.estado==='facturado').length} facturado${remitos.filter(r=>r.estado==='facturado').length!==1?'s':''}`} />
-            <StatCard label="Saldo neto" value={`$ ${fmt(saldoPendiente)}`} sub="sin IVA" />
-            {esRI && <StatCard label={`Saldo c/ IVA (21%)`} value={`$ ${fmt(saldoConIva)}`} sub="estimado con factura A" color={C.orange} />}
+            <StatCard label="Remitos sin pagar" value={remitosP.length} sub={`${remitos.filter(r=>r.estado==='facturado').length} facturado${remitos.filter(r=>r.estado==='facturado').length!==1?'s':''}`} />
+            <StatCard label="Saldo remitos" value={`$ ${fmt(saldoRemitoNeto)}`} sub={esRI ? 'sin IVA' : 'total'} />
+            {totalGastosImpagos > 0 && <StatCard label="Gastos generales" value={`$ ${fmt(totalGastosImpagos)}`} sub={`${gastosImpagos.length} impago${gastosImpagos.length !== 1 ? 's' : ''}`} color={C.orange} />}
+            <StatCard label="Total a pagar" value={`$ ${fmt(saldoConIva)}`} sub={esRI ? 'remitos c/IVA + gastos' : 'remitos + gastos'} color={(saldoConIva > 0) ? '#D0021B' : C.textFaint} />
             <StatCard label="Situación fiscal" value={proveedor?.situacion_impositiva === 'responsable_inscripto' ? 'Resp. Inscripto' : proveedor?.situacion_impositiva === 'monotributo' ? 'Monotributo' : 'Otro'} sub={esRI ? 'Factura A + IVA' : 'Factura C'} color={C.purple} />
           </div>
 
           {/* Tabs */}
           <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', marginBottom: 16, width: 'fit-content' }}>
-            {[{ id: 'remitos', label: `Remitos (${remitos.length})` }, { id: 'pagos', label: `Pagos (${pagos.length})` }].map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '7px 18px', fontSize: 13, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: tab === t.id ? 600 : 400, background: tab === t.id ? C.purpleDim : C.surface, color: tab === t.id ? C.purple : C.textMuted }}>
+            {[{ id: 'remitos', label: `Remitos (${remitos.length})` }, { id: 'gastos', label: `Gastos (${gastosGen.length})` }, { id: 'pagos', label: `Pagos (${pagos.length})` }].map((t, i, arr) => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '7px 18px', fontSize: 13, cursor: 'pointer', border: 'none', borderRight: i < arr.length - 1 ? `1px solid ${C.border}` : 'none', fontFamily: "'Outfit', sans-serif", fontWeight: tab === t.id ? 600 : 400, background: tab === t.id ? C.purpleDim : C.surface, color: tab === t.id ? C.purple : C.textMuted }}>
                 {t.label}
               </button>
             ))}
@@ -269,6 +298,15 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
                     }}
                   />
                 ))}
+              </div>
+            )
+          )}
+
+          {/* Lista gastos generales */}
+          {tab === 'gastos' && (
+            loadingGastos ? <Spinner /> : gastosGen.length === 0 ? <EmptyState texto="No hay gastos generales para este proveedor" /> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {gastosGen.map(g => <GastoGenCard key={g.id} gasto={g} />)}
               </div>
             )
           )}
@@ -374,6 +412,39 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
           }}
         />
       )}
+    </div>
+  )
+}
+
+// ── GastoGenCard ─────────────────────────────────────────────
+function GastoGenCard({ gasto: g }) {
+  const icon = CONCEPTO_ICONS[g.concepto] ?? '📦'
+  const label = CONCEPTO_LABELS[g.concepto] ?? g.concepto
+  const montoPagado = (g.pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+  const saldo = Math.max(0, (parseFloat(g.monto) || 0) - montoPagado)
+  const pagado = g.pagado || saldo < 1
+
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{icon} {label}</span>
+            <span style={{ background: pagado ? C.greenDim : C.orangeDim, color: pagado ? C.green : C.orange, padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 600 }}>
+              {pagado ? 'Pagado' : 'Pendiente'}
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>
+            {g.fecha}{g.tipo_comprobante ? ` · ${getTipoLabel(g.tipo_comprobante)}` : ''}{g.nro_comprobante ? ` ${g.nro_comprobante}` : ''}
+          </div>
+          {g.descripcion && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>{g.descripcion}</div>}
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(g.monto)}</div>
+          {!pagado && montoPagado > 0 && <div style={{ fontSize: 10, color: C.orange, marginTop: 2 }}>Saldo: $ {fmt(saldo)}</div>}
+          {g.imagen_url && <a href={g.imagen_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: C.purple, fontWeight: 500, display: 'block', marginTop: 4 }}>📎 Factura</a>}
+        </div>
+      </div>
     </div>
   )
 }
