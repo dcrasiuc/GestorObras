@@ -9,10 +9,12 @@ export const C = {
 
 // ── Medios de pago ───────────────────────────────────────────
 export const MEDIOS_PAGO = [
-  { value: 'transferencia', label: 'Transferencia bancaria' },
-  { value: 'cheque',        label: 'Cheque' },
-  { value: 'efectivo',      label: 'Efectivo' },
-  { value: 'tarjeta',       label: 'Tarjeta' },
+  { value: 'transferencia',   label: 'Transferencia bancaria' },
+  { value: 'cheque',          label: 'Cheque' },
+  { value: 'efectivo',        label: 'Efectivo' },
+  { value: 'tarjeta_credito', label: 'Tarjeta de crédito' },
+  { value: 'tarjeta_debito',  label: 'Tarjeta de débito' },
+  { value: 'tarjeta',         label: 'Tarjeta (sin especificar)' }, // compat. registros anteriores
 ]
 
 // ── Tipos de comprobante ─────────────────────────────────────

@@ -2544,47 +2544,55 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
 // Comprime imagen a 800px (suficiente para un recibo), reintenta 1 vez si falla,
 // timeout de 60s por intento. Devuelve la URL pública o null si falló.
 async function subirArchivoStorage(file, onProgress) {
-  let blob = file, ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
-  if (file.type === 'application/pdf') {
-    if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); return null }
-  } else {
-    try { blob = await comprimirImagenBlob(file, 800, 0.75); ext = 'jpg' } catch { /* sube original */ }
-  }
-  const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+  try {
+    let blob = file, ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+    if (file.type === 'application/pdf') {
+      if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); return null }
+    } else {
+      try { blob = await comprimirImagenBlob(file, 800, 0.75); ext = 'jpg' } catch { /* sube original */ }
+    }
+    const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
 
-  const intentarUpload = () => Promise.race([
-    supabase.storage.from('comprobantes-pagos').upload(path, blob, { upsert: true }),
-    new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 60000))
-  ])
+    const intentarUpload = () => Promise.race([
+      supabase.storage.from('comprobantes-pagos').upload(path, blob, { upsert: true }),
+      new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 60000))
+    ])
 
-  let res = await intentarUpload()
-  // Reintento automático si fue timeout o error de red
-  if (res.error) {
-    onProgress?.('Reintentando subida...')
-    await new Promise(r => setTimeout(r, 1500))
-    res = await intentarUpload()
-  }
-  if (res.error) {
-    const esAuth = res.error.message?.includes('jwt') || res.error.message?.includes('unauthorized') || res.error.statusCode === '401'
-    const msg = esAuth
-      ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.'
-      : 'No se pudo subir el comprobante. Verificá la conexión e intentá de nuevo.'
-    window._toast?.(msg)
+    let res = await intentarUpload()
+    // Reintento automático si fue timeout o error de red
+    if (res?.error) {
+      onProgress?.('Reintentando subida...')
+      await new Promise(r => setTimeout(r, 1500))
+      res = await intentarUpload()
+    }
+    if (res?.error) {
+      const esAuth = res.error.message?.includes('jwt') || res.error.message?.includes('unauthorized') || res.error.statusCode === '401'
+      const msg = esAuth
+        ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.'
+        : 'No se pudo subir el comprobante. Verificá la conexión e intentá de nuevo.'
+      window._toast?.(msg)
+      return null
+    }
+    return supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+  } catch (e) {
+    console.warn('subirArchivoStorage:', e?.message || e)
+    window._toast?.('No se pudo subir el comprobante. Verificá la conexión e intentá de nuevo.')
     return null
   }
-  return supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
 }
 
 // ── Modal Pago ────────────────────────────────────────────────
 function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   const yaPageado = Math.round((gasto?.pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) * 100) / 100
   const saldoRestante = Math.round(Math.max(0, (parseFloat(gasto?.monto) || 0) - yaPageado) * 100) / 100
-  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', monto: saldoRestante > 0 ? saldoRestante : (gasto?.monto ?? ''), banco_id: '', nro_operacion: '', nro_cheque: '', fecha_vencimiento_cheque: '', observaciones: '', comprobante_url: '' })
+  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', monto: saldoRestante > 0 ? saldoRestante : (gasto?.monto ?? ''), banco_id: '', nro_operacion: '', nro_cheque: '', fecha_vencimiento_cheque: '', nota_tarjeta: '', cuotas: '', observaciones: '', comprobante_url: '' })
   const [archivoNombre, setArchivoNombre] = useState('')
   const [subiendo, setSubiendo] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const necesitaBanco = ['transferencia', 'cheque', 'tarjeta'].includes(form.medio_pago)
+  const necesitaBanco = ['transferencia', 'cheque', 'tarjeta', 'tarjeta_credito', 'tarjeta_debito'].includes(form.medio_pago)
   const esCheque = form.medio_pago === 'cheque'
+  const esTarjeta = ['tarjeta', 'tarjeta_credito', 'tarjeta_debito'].includes(form.medio_pago)
+  const esTarjetaCredito = form.medio_pago === 'tarjeta_credito'
 
   const subirComprobante = async (file) => {
     setSubiendo(true)
@@ -2599,7 +2607,7 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   const montoNum = parseFloat(form.monto) || 0
 
   return (
-    <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmt(saldoRestante)}` : `Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: montoNum, banco_id: form.banco_id || null, fecha_vencimiento_cheque: form.fecha_vencimiento_cheque || null, nro_cheque: form.nro_cheque || null, nro_operacion: form.nro_operacion || null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null })} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmt(montoNum)}`}>
+    <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmt(saldoRestante)}` : `Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: montoNum, banco_id: form.banco_id || null, fecha_vencimiento_cheque: form.fecha_vencimiento_cheque || null, nro_cheque: form.nro_cheque || null, nro_operacion: form.nro_operacion || null, nota_tarjeta: form.nota_tarjeta || null, cuotas: form.cuotas ? parseInt(form.cuotas) : null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null })} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmt(montoNum)}`}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12 }}>
         {/* Fila principal: proveedor + WA */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
@@ -2708,7 +2716,16 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
             </Campo>
           </>
         )}
-        {form.medio_pago === 'tarjeta' && <Campo label="Titular de la tarjeta" style={{ gridColumn: '1/-1' }}><input style={inputSt} value={form.titular_tarjeta || ''} onChange={e => set('titular_tarjeta', e.target.value)} placeholder="Nombre del titular" /></Campo>}
+        {esTarjeta && (
+          <Campo label="Tarjeta (descripción)" style={{ gridColumn: esTarjetaCredito ? undefined : '1/-1' }}>
+            <input style={inputSt} value={form.nota_tarjeta} onChange={e => set('nota_tarjeta', e.target.value)} placeholder="Ej: VISA terminada 1234, Mastercard Platinum..." />
+          </Campo>
+        )}
+        {esTarjetaCredito && (
+          <Campo label="Cuotas">
+            <input style={inputSt} type="number" min="1" max="60" value={form.cuotas} onChange={e => set('cuotas', e.target.value)} placeholder="Ej: 3, 12..." />
+          </Campo>
+        )}
         {form.medio_pago === 'transferencia' && <Campo label="N° de operación (opcional)" style={{ gridColumn: '1/-1' }}><input style={inputSt} value={form.nro_operacion} onChange={e => set('nro_operacion', e.target.value)} placeholder="Opcional" /></Campo>}
         <Campo label="Observaciones (opcional)" style={{ gridColumn: '1/-1' }}><textarea style={{ ...inputSt, minHeight: 56, resize: 'vertical' }} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} /></Campo>
         <Campo label="Comprobante de pago (opcional)" style={{ gridColumn: '1/-1' }}>
@@ -2766,18 +2783,8 @@ function ModalSubidaMasiva({ gastos, onClose, onDone }) {
       if (!pagoId) { setEstados(prev => ({ ...prev, [gastoId]: 'error' })); done++; setProgreso({ done, total: seleccionados.length }); continue }
       setEstados(prev => ({ ...prev, [gastoId]: 'uploading' }))
       try {
-        const file = archivos[gastoId]
-        let blob = file, ext = (file.name.split('.').pop() || 'jpg')
-        if (file.type !== 'application/pdf') {
-          try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch {}
-        }
-        const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
-        const { error: upErr } = await Promise.race([
-          supabase.storage.from('comprobantes-pagos').upload(path, blob),
-          new Promise(r => setTimeout(() => r({ error: { message: 'timeout' } }), 30000))
-        ])
-        if (upErr) throw new Error(upErr.message)
-        const url = supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
+        const url = await subirArchivoStorage(archivos[gastoId])
+        if (!url) throw new Error('upload failed')
         await dbWrite('PATCH', 'pagos', { comprobante_url: url }, `id=eq.${pagoId}`)
         setEstados(prev => ({ ...prev, [gastoId]: 'ok' }))
       } catch (e) {
@@ -2919,7 +2926,7 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div>
                     <span style={{ fontWeight: 600, fontSize: 13, color: C.text }}>Pago {i + 1} · $ {fmt(p.monto)}</span>
-                    <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{p.fecha_pago} · {MEDIOS[p.medio_pago] ?? p.medio_pago}</span>
+                    <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{p.fecha_pago} · {MEDIOS[p.medio_pago] ?? p.medio_pago}{p.nota_tarjeta ? ` · ${p.nota_tarjeta}` : ''}{p.cuotas > 1 ? ` · ${p.cuotas} cuotas` : ''}</span>
                   </div>
                   {compUrl && <a href={compUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>Ver 🧾</a>}
                 </div>
@@ -2948,12 +2955,14 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
 
 // ── Modal Pago Múltiple ───────────────────────────────────────
 function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
-  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', banco_id: '', observaciones: '', comprobante_url: '' })
+  const [form, setForm] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', banco_id: '', nota_tarjeta: '', cuotas: '', observaciones: '', comprobante_url: '' })
   const [subiendo, setSubiendo] = useState(false)
   const [archivoNombre, setArchivoNombre] = useState('')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const total = gastos.reduce((s, g) => s + (g.monto || 0), 0)
-  const necesitaBanco = ['transferencia', 'cheque', 'tarjeta'].includes(form.medio_pago)
+  const necesitaBanco = ['transferencia', 'cheque', 'tarjeta', 'tarjeta_credito', 'tarjeta_debito'].includes(form.medio_pago)
+  const esTarjetaMP = ['tarjeta', 'tarjeta_credito', 'tarjeta_debito'].includes(form.medio_pago)
+  const esTarjetaCreditoMP = form.medio_pago === 'tarjeta_credito'
   const proveedorNombre = gastos[0]?.proveedores?.nombre
   const mismoProveedor = gastos.every(g => g.proveedor_id === gastos[0]?.proveedor_id)
 
@@ -2965,7 +2974,7 @@ function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
   }
 
   return (
-    <Modal title={`Pagar ${gastos.length} comprobantes`} onClose={onClose} onGuardar={() => onGuardar(form)} guardarLabel={`Confirmar pago $ ${fmt(total)}`}>
+    <Modal title={`Pagar ${gastos.length} comprobantes`} onClose={onClose} onGuardar={() => onGuardar({ ...form, banco_id: form.banco_id || null, nota_tarjeta: form.nota_tarjeta || null, cuotas: form.cuotas ? parseInt(form.cuotas) : null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null })} guardarLabel={`Confirmar pago $ ${fmt(total)}`}>
       {/* Resumen */}
       <div style={{ background: C.greenDim, border: `1px solid #B8E6CF`, borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
         <div style={{ fontSize: 11, color: C.green, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>
@@ -3007,6 +3016,16 @@ function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
               <option value="">— Seleccionar banco —</option>
               {(bancos || []).map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
             </select>
+          </Campo>
+        )}
+        {esTarjetaMP && (
+          <Campo label="Tarjeta (descripción)" style={{ gridColumn: esTarjetaCreditoMP ? undefined : '1/-1' }}>
+            <input style={inputSt} value={form.nota_tarjeta} onChange={e => set('nota_tarjeta', e.target.value)} placeholder="Ej: VISA terminada 1234..." />
+          </Campo>
+        )}
+        {esTarjetaCreditoMP && (
+          <Campo label="Cuotas">
+            <input style={inputSt} type="number" min="1" max="60" value={form.cuotas} onChange={e => set('cuotas', e.target.value)} placeholder="Ej: 12" />
           </Campo>
         )}
         <Campo label="Observaciones" style={{ gridColumn: '1/-1' }}>
