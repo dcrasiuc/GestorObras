@@ -2248,17 +2248,15 @@ function leerBase64(file) {
 }
 
 // Redimensiona la imagen (lado largo máx) y devuelve el canvas listo para exportar.
-// Reduce drásticamente el peso → más rápido en mobile y menos timeouts. La IA no pierde
-// precisión porque igual reescala internamente a ~1568px.
+// Usa createObjectURL en vez de readAsDataURL → sin conversión base64, mucho menos RAM.
+// Fundamental para fotos de alta resolución (Pixel 8 Pro, 50MP, etc.) en mobile.
 async function _canvasComprimido(file, maxLado = 1600) {
-  const dataUrl = await Promise.race([
-    new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(e.target.result); r.readAsDataURL(file) }),
-    new Promise((_, rej) => setTimeout(() => rej(new Error('FileReader timeout')), 12000))
-  ])
+  const objUrl = URL.createObjectURL(file)
   const img = await Promise.race([
-    new Promise((res, rej) => { const i = new Image(); i.onerror = rej; i.onload = () => res(i); i.src = dataUrl }),
-    new Promise((_, rej) => setTimeout(() => rej(new Error('Image load timeout')), 8000))
+    new Promise((res, rej) => { const i = new Image(); i.onerror = () => { URL.revokeObjectURL(objUrl); rej(new Error('img error')) }; i.onload = () => res(i); i.src = objUrl }),
+    new Promise((_, rej) => setTimeout(() => { URL.revokeObjectURL(objUrl); rej(new Error('Image load timeout')) }, 20000))
   ])
+  URL.revokeObjectURL(objUrl)
   let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height
   if (w > maxLado || h > maxLado) {
     if (w >= h) { h = Math.round(h * maxLado / w); w = maxLado }
@@ -2549,7 +2547,12 @@ async function subirArchivoStorage(file, onProgress) {
     if (file.type === 'application/pdf') {
       if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); return null }
     } else {
-      try { blob = await comprimirImagenBlob(file, 800, 0.75); ext = 'jpg' } catch { /* sube original */ }
+      try { blob = await comprimirImagenBlob(file, 600, 0.72); ext = 'jpg' } catch { /* sube original */ }
+      // Si la compresión falló y el original es muy pesado, avisamos
+      if (blob === file && file.size > 5 * 1024 * 1024) {
+        window._toast?.('La foto es muy grande. Tomá una foto con menos resolución o desde la galería con calidad reducida.')
+        return null
+      }
     }
     const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
 
