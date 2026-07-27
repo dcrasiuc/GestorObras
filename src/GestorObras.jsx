@@ -2610,7 +2610,12 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   const montoNum = parseFloat(form.monto) || 0
 
   return (
-    <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmt(saldoRestante)}` : `Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => onGuardar({ ...form, monto: montoNum, banco_id: form.banco_id || null, fecha_vencimiento_cheque: form.fecha_vencimiento_cheque || null, nro_cheque: form.nro_cheque || null, nro_operacion: form.nro_operacion || null, nota_tarjeta: form.nota_tarjeta || null, cuotas: form.cuotas ? parseInt(form.cuotas) : null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null })} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmt(montoNum)}`}>
+    <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmt(saldoRestante)}` : `Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => {
+          const p = { fecha_pago: form.fecha_pago, medio_pago: form.medio_pago, monto: montoNum, banco_id: form.banco_id || null, nro_operacion: form.nro_operacion || null, nro_cheque: form.nro_cheque || null, fecha_vencimiento_cheque: form.fecha_vencimiento_cheque || null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null }
+          if (form.nota_tarjeta) p.nota_tarjeta = form.nota_tarjeta
+          if (form.cuotas) p.cuotas = parseInt(form.cuotas)
+          onGuardar(p)
+        }} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmt(montoNum)}`}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12 }}>
         {/* Fila principal: proveedor + WA */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
