@@ -18,7 +18,9 @@ function useProveedores() {
 function useObras() {
   const [obras, setObras] = useState([])
   useEffect(() => {
-    supabase.from('obras').select('id, nombre').eq('estado', 'activa').order('nombre').then(({ data }) => {
+    // .neq('etapa','oferta'): las obras todavía en oferta/licitación (sin adjudicar) no se
+    // ofrecen acá — todavía no hay actividad real que justifique registrarles pagos de clientes.
+    supabase.from('obras').select('id, nombre').eq('estado', 'activa').neq('etapa', 'oferta').order('nombre').then(({ data }) => {
       if (data) setObras(data)
     })
   }, [])

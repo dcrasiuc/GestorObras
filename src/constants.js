@@ -37,7 +37,7 @@ export const SITUACIONES = [
 ]
 
 // ── Conceptos de gasto (por obra) ────────────────────────────
-export const CONCEPTOS = ['materiales', 'mano-obra', 'equipos', 'subcontratos', 'varios']
+export const CONCEPTOS = ['materiales', 'mano-obra', 'equipos', 'subcontratos', 'varios', 'seguros']
 
 // ── Conceptos generales de empresa ───────────────────────────
 export const CONCEPTOS_GENERALES = ['combustible', 'servicios', 'legal', 'oficina', 'varios_gral']
@@ -48,6 +48,7 @@ export const CONCEPTO_LABELS = {
   equipos:       'Equipos',
   subcontratos:  'Subcontratos',
   varios:        'Varios',
+  seguros:       'Seguros / Pólizas',
   // generales
   combustible:   'Combustible',
   servicios:     'Servicios',
@@ -62,6 +63,7 @@ export const CONCEPTO_COLORS = {
   equipos:      ['#FFF8ED', '#8A5200'],
   subcontratos: ['#EDF3FF', '#1A3F8A'],
   varios:       ['#F3F3F3', '#666666'],
+  seguros:      ['#E9FBFA', '#0E7C86'],
   // generales (gama gris azulado)
   combustible:  ['#EEF4FF', '#2D5FA8'],
   servicios:    ['#EEF4FF', '#2D5FA8'],
@@ -76,6 +78,7 @@ export const CONCEPTO_ICONS = {
   equipos:      '🚜',
   subcontratos: '🏢',
   varios:       '📦',
+  seguros:      '🛡️',
   // generales
   combustible:  '⛽',
   servicios:    '💡',

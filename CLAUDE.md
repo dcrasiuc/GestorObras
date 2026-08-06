@@ -1,11 +1,11 @@
 # GESTOR DE OBRAS — Contexto para Claude
-*Última actualización: Julio 2026*
+*Última actualización: 3 de agosto de 2026*
 
 ---
 
 ## ¿Qué es este proyecto?
 
-App de gestión de obras de construcción para **Daniel (SEATE S.R.L., Posadas, Misiones, Argentina)**. Permite registrar obras, gastos por obra, pagos, proveedores y clientes. Incluye análisis de comprobantes con IA (Claude).
+App de gestión de obras de construcción para **Daniel (SEATE S.R.L., Posadas, Misiones, Argentina)**. Permite registrar obras, gastos por obra, pagos, proveedores, clientes y pólizas/garantías de seguro por obra. Incluye análisis de comprobantes y de pólizas con IA (Claude).
 
 **Dueño:** Daniel  
 **Empresa:** SEATE S.R.L. (Posadas, Misiones, Argentina) — CUIT: 30715138022  
@@ -25,7 +25,7 @@ App de gestión de obras de construcción para **Daniel (SEATE S.R.L., Posadas, 
 | Auth | Supabase Auth | `storageKey: 'seate-auth'` en localStorage |
 | Storage | Supabase Storage | Bucket `comprobantes-pagos` (PUBLIC) — comprobantes de pago |
 
-**Tablas Supabase:** `obras`, `gastos`, `pagos`, `clientes`, `proveedores`, `bancos`, `usuarios`
+**Tablas Supabase:** `obras`, `gastos`, `pagos`, `clientes`, `proveedores`, `bancos`, `usuarios`, `polizas`, `poliza_documentos`
 
 ---
 
@@ -37,6 +37,7 @@ src/
 ├── App.jsx             # Router raíz (Login vs GestorObras)
 ├── GestorObras.jsx     # App principal (~3500+ líneas)
 ├── CuentaCorriente.jsx # Vista cuenta corriente por cliente/proveedor
+├── Seguros.jsx         # Control de pólizas/garantías por obra (módulo standalone)
 ├── Login.jsx           # Pantalla de login
 ├── utils.js            # dbWrite() — proxy de escrituras via Edge Function
 ├── supabaseClient.js   # Cliente Supabase (auth + reads)
@@ -269,14 +270,134 @@ ALTER TABLE pagos ADD CONSTRAINT pagos_medio_pago_check
 
 ---
 
+## Feature: Seguros — Control de Pólizas por Obra
+
+Módulo standalone en `src/Seguros.jsx` (mismo patrón que `CuentaCorriente.jsx`: hooks propios, sin depender del estado de `GestorObras.jsx`). Se accede vía botón "🛡️ Seguros" en la topbar desktop o desde "Más" en mobile (`panel === 'seguros'`).
+
+**Origen:** integración de un proyecto viejo (`seate-polizas`, standalone, Supabase separado `pkjibantkftjcqxldzim`) que hacía lo mismo pero sin ligar a las obras reales de gestor-obras. Se unificó todo a la base de gestor-obras (`oyqmowolwwjjuarxttuh`).
+
+### Por qué existe
+SEATE presenta garantías de seguro de caución ante organismos públicos (IPRODA, EBY, UCEF, Muni. Posadas, Vialidad Provincial) en distintas etapas de una obra: Mantenimiento de Oferta (mientras se licita), Ejecución de Contrato (al ganar y firmar), Fondo de Reparo (garantía posterior a la recepción). El objetivo es no seguir pagando una póliza que ya no corresponde, y llevar la cuenta corriente con cada aseguradora/corredor.
+
+### Columnas en `obras` (agregadas para Seguros)
+- `organismo TEXT` — IPRODA / EBY / UCEF / MUNI_POSADAS / VIALIDAD / Privado / Otro
+- `monto_contrato NUMERIC` — monto del contrato/licitación (distinto de `presupuesto`, que es para seguimiento de gastos)
+- `etapa TEXT DEFAULT 'ejecucion'` CHECK IN ('oferta', 'ejecucion') — separa obras que todavía están en licitación de las adjudicadas/en curso. **Importante:** `obras_resumen` (la vista que usa el panel principal de Obras) y el `useObras()` de `GestorObras.jsx` filtran `.neq('etapa','oferta')` — una obra "en oferta" cargada desde Seguros NO aparece en el panel de Obras, dropdowns de gastos/finanzas ni en `CuentaCorriente.jsx` hasta que se marca "adjudicada" (pasa a `etapa='ejecucion'`) desde Seguros. Recién ahí se "activa" en el resto de la app.
+- `estado_licitacion TEXT DEFAULT 'en_curso'` CHECK IN ('en_curso', 'recepcion_provisoria', 'recepcion_definitiva') — dispara las alertas de baja de póliza. Una obra es "vigente" (vista default de Seguros) mientras no llegue a `recepcion_definitiva`.
+- `recepcion_provisoria_url TEXT`, `recepcion_definitiva_url TEXT` — foto/PDF del acta de recepción de obra firmada con el organismo, cargada vía `ModalRecepcionObra` al marcar cada etapa. Es el documento que después se le presenta a la aseguradora para pedir la baja.
+
+### `organismo` vs. cliente vinculado (`obras.cliente_id`) — de dónde sacar "quién es" la obra
+`organismo` es un campo propio de Seguros que en la práctica **casi nadie completa** (se confirmó por SQL: en las 30 obras más recientes, `organismo` está `null` en todas). Lo que sí está cargado, para la mayoría de las obras reales, es `obras.cliente_id` (FK a `clientes`, el mismo campo "Cliente" que ya se ve en el panel principal de Obras) — para obra pública ese cliente ES el organismo (ej. "ENTIDAD BINACIONAL YACYRETA", "IPRODHA", "USCEPP"), y para obra privada es el cliente real. Por eso Seguros usa `nombreOrganismoObra(obra)` (en `Seguros.jsx`) como fuente de "quién es la obra": prioriza `obra.clientes.nombre` (requiere que la query de `useObrasSeguros()` haga `select('*, clientes(nombre)')`) y sólo cae a `organismo` como fallback legacy si no hay cliente vinculado. `FilaObra` y el `<select>` de obra en `ModalPoliza` muestran este valor en vez de `obra.organismo` directamente — antes de este fix, Seguros mostraba "Sin organismo" en casi todas las obras aunque el panel de Obras ya tuviera el cliente cargado. `candidatasObra()` (detección de obra duplicada) también compara el `organismo` que lee la IA contra este mismo nombre (fuzzy match), no sólo contra el enum `organismo`.
+
+### Tabla `polizas`
+`obra_id` (FK), `tipo_cobertura` (mantenimiento_oferta / ejecucion_contrato / anticipo_financiero / fondo_reparo / responsabilidad_civil / otro), `aseguradora` (compañía), `corredor` (broker/productor — **distinto** de la aseguradora), `nro_poliza`, `monto_asegurado`, `prima` (costo que cobra la aseguradora), `fecha_emision`, `fecha_inicio`, `fecha_vencimiento`, `estado_admin` (activa / baja_presentada / dada_de_baja / vencida — ver más abajo), `notas`.
+
+Campos "experto en seguros" (agregados en la 2ª ronda): `tipo_vigencia` (unica_vez = vigente hasta un hito de obra, no se renueva por plazo — típico en las 3 garantías de obra; renovable = vigencia por período fijo, ej. 12 meses, típico en responsabilidad_civil), `requiere_final_obra` (boolean — si para dar de baja hace falta presentarle a la aseguradora el acta de recepción de obra), `clausula_repeticion` (sin_repeticion / con_repeticion / no_especifica — si la aseguradora renuncia a repetir contra el tomador), `clausulas_especiales` (texto libre), `descripcion_ia` (resumen de 1-2 oraciones generado por la IA al leer el documento, editable a mano). Los valores por defecto de `tipo_vigencia`/`requiere_final_obra` según `tipo_cobertura` están en `inferirVigenciaYFinalObra()` en `Seguros.jsx` — la IA puede sugerir otra cosa si el texto de la póliza lo indica explícitamente.
+
+Campos de auto-renovación por período (3ª ronda): `se_autorenueva` (boolean/null) y `duracion_periodo_dias` (integer) — ver sección dedicada más abajo.
+
+`ModalPoliza` sirve tanto para alta como edición (prop `polizaExistente`; el handler `guardarPoliza` en `Seguros.jsx` hace PATCH si `form.id` viene seteado, POST si no). Eliminar una póliza (`eliminarPoliza`) borra sus `poliza_documentos` y desvincula sus `pagos_poliza` — los `gastos`/`pagos` ya generados por esos pagos NO se borran (la plata ya se gastó, queda en la contabilidad de la obra).
+
+### Estados administrativos (`estado_admin`) y el flujo de baja
+`activa` → `baja_presentada` (ya se le mandó a la aseguradora la recepción de obra pidiendo la baja, vía `ModalRecepcionObra`/botón "Marcar baja presentada") → `dada_de_baja` (la aseguradora YA confirmó la baja — se registra con `ModalConfirmarBaja`, opcionalmente adjuntando su nota firmada como documento tipo `baja_aseguradora`). `vencida` es un cierre aparte para plazo vencido sin gestión. Esto distingue explícitamente "se lo pedimos" de "ya lo confirmaron".
+
+### Tabla `poliza_documentos`
+`poliza_id` (FK, ON DELETE tratado a mano al eliminar la póliza), `tipo` (poliza / cuponera / factura / comprobante_pago / endoso / certificacion / legalizacion / baja_aseguradora / otro), `archivo_url`, `nombre_archivo`. `ListaDocumentos` en `Seguros.jsx` los lista con link "⬇️ Descargar" (atributo `download` en el `<a>`).
+
+**`comprobante_pago` NO es seleccionable en el modal genérico "+ Documento"** (`TIPOS_DOCUMENTO_POLIZA_SELECCIONABLES` filtra ese valor) — ese tipo de documento se adjunta exclusivamente desde "+ Registrar pago" (`ModalPagoPoliza`), donde queda en `pagos_poliza.comprobante_url` en vez de en esta tabla. Antes el modal genérico abría con ese tipo preseleccionado por defecto, lo que invitaba a cargar el comprobante en el lugar equivocado — se corrigió.
+
+**Descargar todo (.zip):** `descargarDocumentosZip(poliza, pagos)` en `Seguros.jsx` junta todos los `poliza_documentos` de la póliza MÁS los `comprobante_url` de sus `pagos_poliza`, los empaqueta con JSZip (cargado dinámicamente desde `https://esm.sh/jszip` — no es una dependencia del proyecto) y descarga un único `.zip` nombrado `{obra}_poliza_{nro}.zip`, con cada archivo dentro nombrado `{obra}_{nroPoliza}_{tipo}_N.ext` para poder identificarlos sin abrirlos. Botón "⬇️ Descargar todo (.zip)" junto a `ListaDocumentos` en `FilaPoliza` (solo aparece si hay algo para descargar).
+
+### Tabla `pagos_poliza` — cuenta corriente con aseguradoras/corredores
+`poliza_id`, `fecha_pago`, `monto`, `medio_pago`, `banco_id`, `nro_operacion`, `comprobante_url`, `observaciones`, `gasto_id` (FK a `gastos` — ver abajo). La vista "💳 Cuenta corriente" de `Seguros.jsx` (`CuentaCorrienteAseguradoras`) agrupa pólizas + pagos por `aseguradora` o por `corredor` (toggle), mostrando prima total, pagado y saldo teórico por grupo y por póliza (`agruparPolizas()`). Arriba del toggle, `ResumenSubtotales` muestra siempre — sin importar qué toggle esté activo — dos mini-tablas lado a lado con el saldo teórico subtotal por aseguradora Y por corredor a la vez, para no tener que ir cambiando la vista para comparar ambos.
+
+La prima "vigente" que entra en estos totales no es solo `polizas.prima` — es `primaConRenovaciones(poliza, renovaciones)` = prima original + toda renovación de período no anulada (ver sección siguiente).
+
+### Pago de póliza = gasto de la obra
+`ModalPagoPoliza` → `guardarPagoPoliza()` en `Seguros.jsx`: al registrar un pago de prima, se crea automáticamente (1) un `gastos` con `concepto: 'seguros'` y `pagado: true` en la obra correspondiente (SALVO que ya exista una factura pendiente para esa póliza, ver abajo), (2) un `pagos` linkeado a ese gasto, y (3) el `pagos_poliza` (linkeado al `gasto_id`). Así el pago aparece tanto en la contabilidad normal de la obra como en la cuenta corriente con la aseguradora. Requiere el concepto `'seguros'` en el CHECK de `gastos.concepto` y en `constants.js` (`CONCEPTOS`, `CONCEPTO_LABELS`, `CONCEPTO_COLORS`, `CONCEPTO_ICONS`).
+
+El campo "Comprobante de pago o cuponera" de `ModalPagoPoliza` acepta tanto un comprobante de transferencia como la cuponera de pago de la aseguradora — en ambos casos se lee con la misma IA que analiza comprobantes de gasto (`tipoAnalisis: 'comprobante'`) para autocompletar fecha/monto, y si el monto leído difiere >2% de `primaConRenovaciones()` de la póliza se muestra una advertencia (puede ser normal — pago parcial, reajuste — pero conviene revisarlo). Esto cubre el caso de pagar directo con el cupón sin que exista una factura separada.
+
+### Factura de póliza → gasto pendiente, reconciliado al pagar
+Botón dedicado "+ Factura" en `FilaPoliza` (separado de "+ Documento" y "+ Registrar pago" — antes todo entraba por un solo modal genérico y se prestaba a confusión/duplicación). `ModalFacturaPoliza` sube el archivo, lo analiza con la misma IA de comprobantes (`tipoAnalisis: 'comprobante'`, autocompleta fecha/monto/nro/tipo) y al guardar (`guardarFactura()`):
+1. Crea un `gastos` con `concepto: 'seguros'` y **`pagado: false`** (deuda pendiente, no un pago ya hecho).
+2. Crea el `poliza_documentos` (`tipo: 'factura'`) con `gasto_id` apuntando a ese gasto pendiente.
+
+Cuando después se registra el pago real (`guardarPagoPoliza()`), primero busca si hay algún `poliza_documentos` tipo `factura` de esa póliza con un `gasto_id` cuyo gasto siga `pagado: false` — si lo hay, **liquida ESE gasto** (PATCH `pagado: true` + monto/fecha del pago real) en vez de crear uno nuevo, para no duplicar el gasto de la obra. Si no hay factura pendiente, crea un gasto nuevo como antes.
+
+Por qué existe: la prima que la IA lee de la carátula de la póliza no siempre es información confiable (ver `prima_fuente` abajo) — la factura/cuponera real de la aseguradora es la fuente de verdad del monto a pagar, y puede no coincidir con lo que dice la póliza.
+
+### `prima_fuente` — trazabilidad del monto de prima (evita que la IA invente un número)
+Bug real detectado: en una póliza de Anticipo Financiero sin una prima explícitamente rotulada, la IA tomó el valor "T.C.N." (Total Costo Neto, un dato de desglose de gastos del corredor — Gtos Explot./Gtos Adquis./Gtos Cobranza/T.C.N. — que no es necesariamente la prima cobrada al tomador) y lo cargó como si fuera la prima, sin dejar rastro de por qué. El usuario no podía verificar de dónde había salido ese número.
+
+Fix: se agregó `prima_fuente TEXT` a `polizas` — la IA debe copiar ahí literalmente la etiqueta del documento de la que sacó el valor de `prima` (ej. "PRIMA", "PREMIO TOTAL", "T.C.N."), y el prompt ahora exige que `prima` quede en `null` si no hay una etiqueta EXPLÍCITA de "PRIMA"/"PREMIO" — preferible `null` a un dato inventado. En el formulario (`ModalPoliza`) y en `detectarAdvertencias()`, si `prima_fuente` no matchea `/PRIMA|PREMIO/i` se muestra una advertencia ámbar pidiendo verificar el monto contra la factura o cuponera real.
+
+### Auto-renovación por períodos (`se_autorenueva` / `duracion_periodo_dias`) y tabla `renovaciones_poliza`
+Muchas cauciones nominalmente "hasta la recepción" (`ejecucion_contrato`, `anticipo_financiero`, `fondo_reparo` — NO `mantenimiento_oferta` ni `responsabilidad_civil`, ver `APLICA_AUTORENOVACION_PERIODOS` en `Seguros.jsx`) en realidad las emite la aseguradora por períodos fijos cortos (90/180 días, "reajustable trimestralmente"). Si el período se cumple sin presentar la recepción de obra, la aseguradora renueva sola y cobra una prima NUEVA por el siguiente período — y así sucesivamente hasta que se presenta la recepción. Si la recepción tiene fecha anterior al corte de un período ya vencido, en muchos casos la aseguradora anula esa renovación retroactivamente y no la cobra.
+
+Modelado: `polizas.se_autorenueva` (boolean/null) y `polizas.duracion_periodo_dias` (integer) — cargados a mano o por IA (prompt del Edge Function instruye a la IA a responder SIEMPRE `false` para mantenimiento_oferta/responsabilidad_civil sin importar el texto). Tabla nueva `renovaciones_poliza` (el lado del CARGO/deuda, separado de `pagos_poliza` que es el lado del pago): `poliza_id`, `periodo_desde`, `periodo_hasta`, `monto` (propio, NO se asume igual a `polizas.prima` — puede diferir por reajuste), `anulada` (boolean, true = anulación retroactiva confirmada), `motivo_anulacion`, `gasto_id` (sin uso por ahora), `observaciones`.
+
+`primaConRenovaciones(poliza, renovaciones)` = `polizas.prima` + suma de renovaciones no anuladas — es la prima "vigente" real, usada en `FilaPoliza`, `agruparPolizas()`/cuenta corriente y en la comparación de `ModalPagoPoliza`. `calcularAlertas()` usa el corte de la ÚLTIMA renovación vigente (si hay alguna) en vez de `fecha_vencimiento` a secas, y da acción `'registrar_renovacion'` cuando el corte ya pasó — botón "Registrar cargo de renovación" → `ModalRenovacionPoliza` → `guardarRenovacion()`. Desde `FilaPoliza` (expandida) se puede anular una renovación (`onAnularRenovacion` → `window.prompt` con el motivo → PATCH `anulada: true`).
+
+### Motor de alertas administrativas (`calcularAlertas` en `Seguros.jsx`)
+Una póliza `activa` entra en alerta roja ("presentar_baja") cuando: `mantenimiento_oferta` y la obra ya pasó a `etapa='ejecucion'`; `ejecucion_contrato` (Cumplimiento de Contrato) y la obra está en `recepcion_provisoria`/`recepcion_definitiva`; `anticipo_financiero` y la obra está en `recepcion_definitiva` (con aviso distinto: verificar amortización, no es automático como cumplimiento); `fondo_reparo` y la obra está en `recepcion_definitiva`; la obra tiene `estado='finalizada'` en el panel principal de Obras (chequeo independiente de `estado_licitacion`, para pescar casos donde el equipo ya dio la obra por terminada en el día a día sin tramitar la baja en Seguros); o el vencimiento ya pasó o está a ≤30 días. Una póliza `baja_presentada` siempre alerta con acción "confirmar_baja".
+
+### Cumplimiento de Contrato vs. Anticipo Financiero (`tipo_cobertura`)
+Son dos garantías DISTINTAS aunque ambas sean seguros de caución de la misma obra — error común detectado en la v1 (la IA metía "anticipo financiero" dentro de `ejecucion_contrato`). Cumplimiento (`ejecucion_contrato`, label "Cumplimiento de Contrato") garantiza que se ejecute el contrato, no se amortiza, se cancela recién en recepción. Anticipo Financiero (`anticipo_financiero`, valor nuevo) garantiza la devolución del anticipo entregado por el organismo, y se va reduciendo a medida que se descuenta de los certificados de obra — no espera a la recepción. `inferirVigenciaYFinalObra()` les da defaults distintos (`requiere_final_obra: true` para cumplimiento, `false` para anticipo).
+
+### Cláusula de repetición — importante para no confundir
+En un seguro de caución la aseguradora SIEMPRE conserva el derecho de repetir contra el tomador (SEATE) — así funciona la caución, respaldada por la contragarantía. Lo que `clausula_repeticion` busca NO es eso: es si el documento renuncia a repetir contra el ORGANISMO/COMITENTE (típico en pólizas de Responsabilidad Civil, ej. "sin derecho de repetición contra el comitente"). El prompt de la Edge Function y el label del campo en `Seguros.jsx` dejan esto explícito para no generar falsos "con_repeticion" en pólizas de caución donde no aplica.
+
+### Matching de obra al leer una póliza con IA (evita duplicados)
+`matchFuerteObra()` hace un match exacto/substring y auto-selecciona. Si no hay match fuerte, `candidatasObra()` busca obras con alguna palabra significativa en común o mismo organismo y se le muestran al usuario como pregunta ("¿Es alguna de estas la misma obra?") antes de ofrecer "+ Crear obra" — se agregó después de que la IA creara una obra duplicada ("Mojones EBY" vs. "8360 Mojones") por leer un nombre distinto para la misma obra real.
+
+### `obras.requiere_poliza` (boolean, default true)
+Para obras menores o de clientes privados que no piden garantías de seguro. Se edita desde `ModalObra` en `GestorObras.jsx` (checkbox) o queda implícito en `true` para las creadas desde Seguros vía licitación. En `Seguros.jsx` se ve como badge "Sin póliza requerida" en `FilaObra`.
+
+### Revisión "experto" (`detectarAdvertencias` en `Seguros.jsx`)
+Aparte de las alertas administrativas (rojas), hay un chequeo de calidad de datos (ámbar, "🔎 Revisión de datos") client-side: falta aseguradora/nro_poliza/monto, corredor = aseguradora (posible error de carga), vencimiento anterior al inicio de vigencia, póliza renovable sin fecha de vencimiento, monto asegurado muy bajo respecto al monto de contrato de la obra. No depende de la IA — corre siempre sobre los datos ya guardados.
+
+### Carga de pólizas con IA "experta" (foto/PDF)
+`ModalPoliza` reutiliza el patrón de `ModalFoto` (compresión de imagen, PDF en base64, límite 25MB). Llama a la Edge Function `analizar-comprobante` con `tipoAnalisis: 'poliza'`, que usa un prompt de "experto en seguros de caución" (no solo transcribe, interpreta el tipo de garantía) para extraer: aseguradora, corredor, nro_poliza, tiene_endoso, tipo_cobertura, tipo_vigencia, requiere_final_obra, clausula_repeticion, clausulas_especiales, descripcion_ia, tomador, organismo, obra, monto_asegurado, prima, fecha_emision, fecha_inicio, fecha_vencimiento. Si la IA detecta una obra que no existe en la base, se ofrece crearla al vuelo (etapa `oferta`).
+
+### Vista `obras_resumen` (compartida con el panel principal)
+Se extendió (`create or replace view`, columnas nuevas al final para no romper el orden existente) para exponer `etapa`, `organismo`, `estado_licitacion`, `monto_contrato` — necesario para poder filtrar `etapa != 'oferta'` desde `GestorObras.jsx` sin tocar la tabla base.
+
+### UI: obras y pólizas colapsadas por defecto
+`FilaObra` y `FilaPoliza` arrancan con `expandido = false` (antes las pólizas dentro de una obra expandida se mostraban siempre completas, haciendo la vista muy larga con varias pólizas). Colapsada, una póliza solo muestra nro/aseguradora/corredor, badge de estado, tipo de cobertura y vencimiento — más las alertas rojas si las hay (esas se muestran siempre, plegado o no). El resto (descripción IA, badges secundarios, montos, cláusulas, documentos, botones de acción) aparece al hacer click en la fila o en "▸ Ver más detalle".
+
+### Limitaciones conocidas
+- Sin suscripción Realtime propia (a diferencia del canal `sync-multi-device` de `GestorObras.jsx`): los cambios se reflejan al instante en la pestaña donde se hicieron, pero otro dispositivo necesita recargar la sección para verlos.
+- `PanelObras` (panel "Obras" normal) todavía no muestra visualmente `etapa`/`organismo`/`monto_contrato` en las cards, aunque la vista ya expone esas columnas — solo falta agregarlas a la UI si se quiere ese detalle ahí también (hoy sólo se ve en Seguros).
+- Los datos del proyecto viejo `seate-polizas` (Supabase `pkjibantkftjcqxldzim`, pausado por límite de plan free) no se migraron: no se pudo restaurar sin pausar otro proyecto activo (`parmetal-crm`). Si tenía cargas reales, migrarlas a mano o liberar un proyecto activo y reintentar.
+- Se detectó y corrigió manualmente un caso de obra duplicada por el flujo de auto-creación de obra de la IA ("8360 Mojones" / "Mojones EBY" — mismo organismo, mismo proyecto real cargado dos veces). Si la IA sugiere crear una obra nueva, conviene revisar primero si no es una obra ya cargada con otro nombre antes de aceptar "+ Crear obra".
+
+---
+
+## Feature: Relevamientos y Cómputos — Etapa Inicial (`src/Relevamientos.jsx`)
+
+Módulo separado (armado inicialmente con Gemini, integrado a `GestorObras.jsx` como panel `relevamientos`) para la etapa de relevamiento de campo y cómputo/presupuesto previa a una obra — pensado para informes técnicos y presupuestos a organismos públicos (IPRODHA, USSECP/UCEF, EBY, Vialidad, Muni. Posadas), en base a los modelos reales de SEATE (INFOREM en Word, PRESUP en Excel) y al catálogo de precios "Revista Cifras".
+
+**Tablas** (aditivas, con RLS `solo_autenticados`): `relevamientos` (datos generales: título, organismo, escuela/lugar, GPS, `estado`), `relevamiento_items` (ítems de cómputo por sector: `sector`, `codigo_item`/`rubro`/`descripcion_item` de Cifras, `unidad`, `cantidad`, `computo_total`, `riesgo` — semáforo urgente/funcional/mantenimiento, agregado en esta etapa —, `es_restauracion`, `foto_url`, `notas_campo`), `relevamiento_mensajes` (historial de auditoría del chat con el "especialista", con columna `sector` agregada en esta etapa para poder scopearlo — antes no existía), `catalogo_cifras` (234 ítems con precio material/mano de obra cargados desde la Revista Cifras Agosto 2026). Bucket de Storage `relevamientos-fotos` (público, mismo patrón que `comprobantes`/`polizas-documentos`).
+
+**Flujo**: por cada "sector/ambiente" creado dinámicamente (sin sectores predefinidos), el técnico carga fotos (paneo general + detalle, sube de verdad a Storage) y dicta o escribe un relato (Web Speech API); "Procesar IA" genera ítems de cómputo y un mensaje de auditoría, y el chat permite corregir en lenguaje natural (ej. "se puede volver a amurar" reemplaza la provisión nueva por reparación). Todo eso (sectores derivados de sus ítems, fotos, ítems, mensajes) se persiste de verdad contra las tablas de arriba — al principio (versión de Gemini) todo vivía solo en `useState` de React y se perdía al recargar la página; se corrigió en esta etapa.
+
+**IA real conectada** (etapa siguiente a la simulación inicial de Gemini): `handleProcesarIA` ya no es un `if/else` por palabras clave — llama a `analizar-comprobante` con `tipoAnalisis: 'relevamiento'` (nuevo modo, junto a `comprobante`/`poliza`), que: (1) trae el catálogo completo de `catalogo_cifras` (234 ítems) server-side, (2) descarga las fotos del sector (ya subidas a `relevamientos-fotos` por el frontend) y las manda a Claude Vision junto con el relato, (3) le pide a un "equipo de especialistas" (mismo criterio que la simulación original: sanitarista, cubiertas/zinguería, aberturas/vidriería, electromecánico, mampostería, obras civiles/cauces EBY) que identifique trabajos y los matchee contra el catálogo, (4) el ítem que devuelve la IA solo puede citar un `codigo_item` que existe LITERALMENTE en el catálogo pasado — si no hay buen match, tiene que dejarlo en `null` en vez de inventar uno (mismo principio anti-alucinación que `prima_fuente` en Seguros). El precio (`precio_unitario`/`subtotal`) se completa server-side desde el catálogo real, nunca desde lo que "recuerde" el modelo — con esto la tarea de cómputo con precios reales quedó resuelta para los ítems que vienen de la IA. La carga manual ("+ Agregar Ítem Manual") también puede traer precio real, en 2 pasos: primero se elige un RUBRO REAL del catálogo (los 20 rubros que existen de verdad en `catalogo_cifras` — no la lista vieja de 13 hardcodeada a mano, que no coincidía exactamente, ej. el catálogo separa "INSTALACION SANITARIA / INCENDIO", "CIELORRASOS", "CONTRAPISOS", "ZOCALOS" como rubros propios); recién ahí aparece un segundo `<select>` con TODOS los ítems de ese rubro (no un buscador de texto libre) para poder revisarlos uno por uno y estar seguro de si el ítem que se necesita está o no en Revista Cifras antes de cargarlo como texto libre. Elegir un ítem real autocompleta rubro/unidad/precio; "Ninguno de estos" o el rubro "— No sé el rubro / no está en Cifras —" pasan a un ítem de texto libre, que se guarda sin precio. El "control de olvidos" (alertas_omision) también está conectado: si la IA nota algo típico sin verificar, se guarda como un segundo mensaje de auditoría con ⚠️. Pendiente: no se pudo probar en vivo desde este entorno (el sandbox y el bridge del dispositivo no tienen salida de red hacia el dominio de Supabase Functions) — probarlo desde la app real y revisar los logs de la función si falla algo. Sigue pendiente la generación real de los informes Word/Excel (los botones finales todavía no tienen acción).
+
+**Otras notas**: `obras.requiere_poliza` (boolean, default `true`) se agregó junto con este módulo para poder marcar obras que no requieren garantías de seguro — está en el form de `ModalObra` (`GestorObras.jsx`) y ya está wireado en `Seguros.jsx`: `FilaObra` muestra el badge "Sin póliza requerida" y, si la obra no tiene pólizas cargadas, el mensaje cambia de "todavía no tiene pólizas cargadas" (que lee como pendiente) a una aclaración de que no hace falta cargarle — no hay ningún alerta que "exija" pólizas hoy (las alertas de `calcularAlertas` son solo sobre pólizas YA cargadas que vencen/necesitan renovarse, nunca sobre la ausencia de pólizas), así que no había una alarma que silenciar más allá de ese mensaje. Los paneos/fotos de un sector se guardan como URLs separadas por coma en `foto_url` de cada ítem generado en esa tanda (la tabla no tiene una relación 1-a-muchos separada para fotos). Un sector recién creado sin ningún ítem cargado todavía no persiste en la base (los sectores se derivan de `relevamiento_items.sector`) — recién queda guardado al cargarle el primer ítem.
+
+**Visibilidad en beta (`GestorObras.jsx`)**: para poder deployar y probar en el celular sin exponer Seguros/Relevamientos a todos los usuarios todavía, se agregó un flag `enBeta = usuario?.email === 'dcrasiuc@gmail.com'` (definido dos veces: una vez arriba de todo en el componente `GestorObras`, y otra vez adentro de `PanelMas` porque ahí no se recibe el flag como prop sino que se recalcula del mismo `usuario`). Con `enBeta` en `false` desaparecen los dos botones "🛡️ Seguros"/"📋 Relevamientos" de la topbar desktop y las dos entradas correspondientes en "Más opciones" (mobile) — para cualquier otro usuario logueado, ambos módulos quedan invisibles en la navegación (aunque el panel en sí sigue existiendo si se fuerza el estado `panel` desde afuera; esto es solo un gate de UI para pruebas, no un control de seguridad — la protección real de datos sigue siendo RLS). Cuando se quiera liberar los módulos a todos, hay que buscar `enBeta` en `GestorObras.jsx` (2 apariciones de la definición + 4 usos) y sacar la condición.
+
+---
+
 ## Edge Function: `analizar-comprobante`
 
 Ubicación: `src/supabase/functions/analizar-comprobante/index.ts`  
 URL deploy: `https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante`
 
 **Modo dual:**
-- Si `body.table` presente → **modo DB write proxy** (tabla, método, payload, filter, returning)
-- Si `body.base64` presente → **modo IA** (analiza imagen de comprobante con Claude Anthropic)
+- Si `body.table` presente → **modo DB write proxy** (tabla, método, payload, filter, returning) — genérico, sirve para cualquier tabla incluidas `polizas`/`poliza_documentos`
+- Si `body.base64` presente → **modo IA**: `body.tipoAnalisis` = `'comprobante'` (default) o `'poliza'`, cada uno con su propio prompt y su propio bucket de destino (`comprobantes` vs `polizas-documentos`)
 
 **La Edge Function pasa el JWT del usuario** en todas las escrituras a Supabase (`authHeader = req.headers.get('Authorization')`), por lo que respeta las políticas RLS.
 
@@ -399,6 +520,8 @@ git push origin main
 - **Permisos multi-usuario**: administrador vs. operario (columna `rol` en `usuarios`)
 - **Informe PDF** por obra (resumen de gastos y estado)
 - **Módulo vencimiento de tarjeta de compras** (pendiente de diseño)
+- **CuentaCorriente de clientes**: cobros por obra (hoy `CuentaCorriente.jsx` cubre proveedores; falta el lado clientes)
+- **Seguros**: badge de etapa/organismo en `PanelObras` (hoy solo se ve en la sección Seguros); Realtime propio para la sección; migrar datos del proyecto viejo `seate-polizas` si tenía cargas reales
 
 ---
 
@@ -425,3 +548,7 @@ git add -A && git commit -m "mensaje" && git push
 - **Build en sandbox**: El sandbox Linux de Cowork no tiene los binarios correctos para `npm run build`. Siempre decirle al usuario que haga el build en su PC Windows.
 - **`seate-auth`**: El storageKey del cliente Supabase. Si hay problemas de auth, verificar que localStorage tiene este key con un objeto que incluye `access_token`.
 - **Fotos mobile de alta resolución**: Pixel 8 Pro saca fotos de 50MP. La compresión usa `createObjectURL` (no `readAsDataURL`/base64) para evitar OOM en mobile.
+- **Migración de PC (julio 2026)**: Daniel migró a una PC nueva. Como el proyecto vive en GitHub y el deploy es automático vía Cloudflare Pages, la migración fue simplemente clonar el repo. Ubicación: `C:\Users\dcras\Documents\Proyectos\gestor-obras`. El archivo `.env.local` no está en git (se copia manualmente a cada PC nueva).
+- **HISTORIAL.md**: además de este archivo, el repo tiene `HISTORIAL.md` con la narrativa cronológica completa del proyecto por etapas. Mantener ambos archivos coherentes al agregar features nuevas.
+- **Deploy de Edge Functions vía Supabase MCP**: cuando Claude tiene el connector de Supabase disponible (Cowork), puede desplegar la Edge Function directamente con `deploy_edge_function` sin pasar por el dashboard — mucho más rápido que pedirle a Daniel que lo haga manualmente. Igual sigue valiendo la limitación de que el build de la app (`npm run build`) se hace desde la PC Windows.
+- **Límite de proyectos Supabase free tier**: la cuenta de Daniel tiene como máximo 2 proyectos activos simultáneos. Si hace falta restaurar un proyecto pausado (ej. `seate-polizas`), puede hacer falta pausar otro primero (ej. `parmetal-crm`).

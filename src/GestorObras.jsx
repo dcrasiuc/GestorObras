@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
+import Seguros from './Seguros'
 import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
 import { exportarExcel } from './exportExcel'
 import './toast'
+import Relevamientos from './Relevamientos'
 
 // ── Imputación de gastos por obra (distribución multi-obra) ───
 // Si el gasto tiene distribución, devuelve cada parte; si no, 100% a su obra principal.
@@ -81,8 +83,11 @@ function useObras(usuarioId, esAdmin) {
     if (showLoading) setLoading(true)
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
+      // .neq('etapa','oferta'): las obras todavía en oferta/licitación (cargadas desde Seguros,
+      // no adjudicadas todavía) no deben aparecer en el panel principal de Obras ni en los
+      // dropdowns de gastos/finanzas — recién se "activan" acá cuando se marcan adjudicadas.
       if (esAdmin) {
-        const { data, error } = await supabase.from('obras_resumen').select('*').order('nombre')
+        const { data, error } = await supabase.from('obras_resumen').select('*').neq('etapa', 'oferta').order('nombre')
         if (error) console.error('useObras admin error:', error)
         else setObras(data ?? [])
       } else {
@@ -92,7 +97,7 @@ function useObras(usuarioId, esAdmin) {
           .eq('usuario_id', usuarioId)
         const ids = (asignadas ?? []).map(a => a.obra_id)
         if (ids.length === 0) { setObras([]); if (failsafe) clearTimeout(failsafe); if (showLoading) setLoading(false); return }
-        const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).order('nombre')
+        const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).neq('etapa', 'oferta').order('nombre')
         if (error) console.error('useObras error:', error)
         else setObras(data ?? [])
       }
@@ -251,6 +256,8 @@ function NotifPendientes({ gastos, esAdmin, onVerPendientes }) {
 // ── App ───────────────────────────────────────────────────────
 export default function GestorObras({ usuario }) {
   const esAdmin = usuario?.perfil?.rol === 'admin'
+  // Módulos en prueba (beta): visibles solo para el usuario de Daniel mientras se testea en producción.
+  const enBeta = usuario?.email === 'dcrasiuc@gmail.com'
   const [panel, setPanel] = useState('inicio')
   const [pendingModal, setPendingModal] = useState(null)
   const [filtroObraId, setFiltroObraId] = useState('')
@@ -458,6 +465,8 @@ export default function GestorObras({ usuario }) {
                 )
               })}
               <button onClick={() => setPanel('contactos')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'contactos' ? 600 : 400, background: panel === 'contactos' ? C.purpleDim : C.surface, color: panel === 'contactos' ? C.purple : C.textMuted }}>👥 Contactos</button>
+              {enBeta && <button onClick={() => setPanel('seguros')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'seguros' ? 600 : 400, background: panel === 'seguros' ? C.purpleDim : C.surface, color: panel === 'seguros' ? C.purple : C.textMuted }}>🛡️ Seguros</button>}
+              {enBeta && <button onClick={() => setPanel('relevamientos')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'relevamientos' ? 600 : 400, background: panel === 'relevamientos' ? C.purpleDim : C.surface, color: panel === 'relevamientos' ? C.purple : C.textMuted }}>📋 Relevamientos</button>}
               {esAdmin && <button onClick={() => setPanel('admin')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'admin' ? 600 : 400, background: panel === 'admin' ? C.purpleDim : C.surface, color: panel === 'admin' ? C.purple : C.textMuted }}>⚙️ Admin</button>}
             </nav>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 8, flexShrink: 0 }}>
@@ -541,7 +550,9 @@ export default function GestorObras({ usuario }) {
               onEliminarProveedor={async p => { if (!window.confirm(`¿Eliminar proveedor "${p.nombre}"?`)) return; await dbWrite('DELETE', 'proveedores', null, `id=eq.${p.id}`); recargarListas() }}
             />}
             {panel === 'admin'     && esAdmin && <PanelAdmin bancos={bancos} recargarListas={recargarListas} />}
-            {panel === 'mas'       && <PanelMas esAdmin={esAdmin} onContactos={() => setPanel('contactos')} onAdmin={() => setPanel('admin')} onLogout={handleLogout} usuario={usuario} />}
+            {panel === 'seguros'   && <Seguros />}
+            {panel === 'relevamientos' && <Relevamientos onVolver={() => setPanel('obras')} />}
+            {panel === 'mas'       && <PanelMas esAdmin={esAdmin} onContactos={() => setPanel('contactos')} onSeguros={() => setPanel('seguros')} onRelevamientos={() => setPanel('relevamientos')} onAdmin={() => setPanel('admin')} onLogout={handleLogout} usuario={usuario} />}
           </div>
         </div>
 
@@ -562,8 +573,8 @@ export default function GestorObras({ usuario }) {
       {/* ── MODALES ── */}
       {modal === 'obra' && <ModalObra itemEdit={itemEditando} clientes={clientes} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) return window._toast?.('El nombre es obligatorio')
-        const { id, nombre, cliente_id, estado, presupuesto } = d
-        const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0 }
+        const { id, nombre, cliente_id, estado, presupuesto, requiere_poliza } = d
+        const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requiere_poliza !== false }
         if (id) {
           await dbWrite('PATCH', 'obras', payload, `id=eq.${id}`)
           setObras(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o))
@@ -1015,16 +1026,25 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
 }
 
 // ── Panel Más (mobile) ────────────────────────────────────────
-function PanelMas({ esAdmin, onContactos, onAdmin, onLogout, usuario }) {
+function PanelMas({ esAdmin, onContactos, onSeguros, onAdmin, onLogout, usuario, onRelevamientos }) {
+  // Módulos en prueba (beta): visibles solo para el usuario de Daniel mientras se testea en producción.
+  const enBeta = usuario?.email === 'dcrasiuc@gmail.com'
+  const opciones = [
+    { icon: '👥', label: 'Contactos', sub: 'Clientes y proveedores', action: onContactos },
+    ...(enBeta ? [{ icon: '🛡️', label: 'Seguros', sub: 'Pólizas y garantías por obra', action: onSeguros }] : []),
+    ...(enBeta ? [{ icon: '📋', label: 'Relevamientos', sub: 'Relevamientos de obra e informes', action: onRelevamientos }] : []),
+  ]
+
+  if (esAdmin) {
+    opciones.push({ icon: '⚙️', label: 'Administración', sub: 'Bancos y configuración', action: onAdmin })
+  }
+
   return (
     <div>
       <PageTitle titulo="Más opciones" sub="" />
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden', marginTop: 20 }}>
-        {[
-          { icon: '👥', label: 'Contactos', sub: 'Clientes y proveedores', action: onContactos },
-          ...(esAdmin ? [{ icon: '⚙️', label: 'Administración', sub: 'Bancos y configuración', action: onAdmin }] : []),
-        ].map((item, i, arr) => (
-          <button key={item.label} onClick={item.action} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '16px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${C.borderFaint}` : 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: "'Outfit', sans-serif" }}>
+        {opciones.map((item, i) => (
+          <button key={item.label} onClick={item.action} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '16px', border: 'none', borderBottom: i < opciones.length - 1 ? `1px solid ${C.borderFaint}` : 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: "'Outfit', sans-serif" }}>
             <div style={{ width: 40, height: 40, borderRadius: 12, background: C.purpleDim, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>{item.icon}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{item.label}</div>
@@ -2024,7 +2044,7 @@ function PanelAdmin({ bancos, recargarListas }) {
     setLoadingUsuarios(true)
     const [resU, resO, resA] = await Promise.all([
       supabase.from('usuarios').select('*').order('nombre'),
-      supabase.from('obras').select('id, nombre, estado').order('nombre'),
+      supabase.from('obras').select('id, nombre, estado').neq('etapa', 'oferta').order('nombre'),
       supabase.from('obra_usuarios').select('*'),
     ])
     if (resU.data) setUsuarios(resU.data)
@@ -2456,7 +2476,7 @@ function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
 }
 
 function ModalObra({ itemEdit, clientes, onClose, onGuardar }) {
-  const [form, setForm] = useState(itemEdit || { nombre: '', cliente_id: '', estado: 'activa', presupuesto: '' })
+  const [form, setForm] = useState(itemEdit || { nombre: '', cliente_id: '', estado: 'activa', presupuesto: '', requiere_poliza: true })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <Modal title={itemEdit ? 'Editar Obra' : 'Nueva Obra'} onClose={onClose} onGuardar={() => onGuardar(form)}>
@@ -2465,6 +2485,12 @@ function ModalObra({ itemEdit, clientes, onClose, onGuardar }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
         <Campo label="Presupuesto"><input style={inputSt} type="number" value={form.presupuesto} onChange={e => set('presupuesto', e.target.value)} placeholder="0" /></Campo>
         <Campo label="Estado"><select style={inputSt} value={form.estado} onChange={e => set('estado', e.target.value)}>{['activa','pausada','finalizada'].map(v => <option key={v} value={v}>{v.charAt(0).toUpperCase()+v.slice(1)}</option>)}</select></Campo>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textMuted, cursor: 'pointer' }}>
+          <input type="checkbox" checked={form.requiere_poliza !== false} onChange={e => set('requiere_poliza', e.target.checked)} style={{ accentColor: C.purple }} />
+          Requiere garantías / pólizas de seguro (desmarcar en obras menores o de clientes privados que no las piden — se ve así en la sección Seguros)
+        </label>
       </div>
     </Modal>
   )
