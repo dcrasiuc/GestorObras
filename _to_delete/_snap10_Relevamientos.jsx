@@ -70,35 +70,34 @@ async function _comprimirImagenBlobRelevamiento(file, maxLado = 1280, calidad = 
     new Promise((_, rej) => setTimeout(() => rej(new Error('toBlob timeout')), 10000))
   ])
 }
-// Convierte un blob a base64 puro (sin el prefijo "data:...;base64,") para mandarlo a la Edge
-// Function — mismo patrón que `leerBase64` en GestorObras.jsx.
-function _leerBase64Relevamiento(blob) {
-  return new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = e => res(String(e.target.result).split(',')[1]); r.readAsDataURL(blob) })
+// Cuando la compresión falla (ej. HEIC de iPhone que el navegador no puede decodificar en un
+// <canvas>) se sube el archivo original tal cual — hay que etiquetarlo con SU extensión real, no
+// asumir .jpg, porque después el Informe Técnico (Word) decide cómo incrustar la foto según esto.
+function _extPorTipoArchivo(file) {
+  const tipo = (file?.type || '').toLowerCase()
+  if (tipo.includes('png')) return 'png'
+  if (tipo.includes('webp')) return 'webp'
+  if (tipo.includes('heic')) return 'heic'
+  if (tipo.includes('heif')) return 'heif'
+  if (tipo.includes('gif')) return 'gif'
+  if (tipo.includes('bmp')) return 'bmp'
+  if (tipo.includes('jpeg') || tipo.includes('jpg')) return 'jpg'
+  const m = /\.([a-zA-Z0-9]+)$/.exec(file?.name || '')
+  return m ? m[1].toLowerCase() : 'jpg'
 }
 async function subirFotoRelevamiento(file, carpeta = 'sectores') {
   try {
-    // Antes esto subía DIRECTO a Storage desde el cliente (supabase.storage.upload) — el mismo
-    // patrón que ya había fallado/tardado en otros lugares de la app por el carrier que
-    // bloquea/estanca POSTs directos desde mobile (reportado como "tarda mucho en subir fotos",
-    // dos veces). Ahora pasa por la Edge Function (modo "subir_archivo", server-to-server) igual
-    // que el comprobante de pago — mismo fix, mismo motivo.
-    let blob = file, mimeType = 'image/jpeg'
-    try { blob = await _comprimirImagenBlobRelevamiento(file); mimeType = 'image/jpeg' } catch { mimeType = file?.type || 'image/jpeg' /* sube el original si falla la compresión, con su tipo real */ }
-    const base64 = await _leerBase64Relevamiento(blob)
-    const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+    let blob = file, ext = 'jpg'
+    try { blob = await _comprimirImagenBlobRelevamiento(file); ext = 'jpg' } catch { ext = _extPorTipoArchivo(file) /* sube el original si falla la compresión, con su extensión real */ }
+    const path = `${carpeta}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
     const intentar = () => Promise.race([
-      fetch(fnUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` },
-        body: JSON.stringify({ tipoAnalisis: 'subir_archivo', base64, mimeType, bucket: 'relevamientos-fotos', carpeta }),
-      }).then(async r => ({ ok: r.ok, data: await r.json().catch(() => null) })),
-      new Promise(res => setTimeout(() => res({ ok: false, data: { error: 'timeout' } }), 60000)),
+      supabase.storage.from('relevamientos-fotos').upload(path, blob, { upsert: true }),
+      new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 60000))
     ])
     let res = await intentar()
-    if (!res.ok || res.data?.error) { await new Promise(r => setTimeout(r, 1500)); res = await intentar() }
-    if (!res.ok || res.data?.error || !res.data?.url) { window._toast?.('No se pudo subir la foto. Verificá la conexión e intentá de nuevo.', 'error'); return null }
-    return res.data.url
+    if (res?.error) { await new Promise(r => setTimeout(r, 1500)); res = await intentar() }
+    if (res?.error) { window._toast?.('No se pudo subir la foto. Verificá la conexión e intentá de nuevo.', 'error'); return null }
+    return supabase.storage.from('relevamientos-fotos').getPublicUrl(path).data.publicUrl
   } catch (e) {
     console.warn('subirFotoRelevamiento:', e?.message || e)
     window._toast?.('No se pudo subir la foto.', 'error')

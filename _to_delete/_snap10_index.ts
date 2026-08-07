@@ -48,7 +48,7 @@ fecha_vencimiento (YYYY-MM-DD, fin de vigencia/vencimiento — si tipo_vigencia 
 function promptRelevamiento(sector: string, relato: string, catalogoTexto: string) {
   return `Sos un EQUIPO DE ESPECIALISTAS TÉCNICOS EN CONSTRUCCIÓN (🚰 Especialista Sanitarista, 🏗️ Especialista en Cubiertas y Zinguería, 🪟 Especialista en Aberturas y Vidriería, ⚡ Especialista Electromecánico, 🧱 Especialista en Mampostería y Revoques, 🚜 Especialista en Obras Civiles y Cauces EBY) que releva escuelas y edificios públicos para SEATE S.R.L., una constructora de Posadas, Misiones.
 
-Te paso las fotos del sector, cada una identificada con una etiqueta de texto "Foto N:" justo antes de la imagen (N = 1, 2, 3...), y/o un relato dictado por el técnico de UN sector/ambiente puntual ("${sector}"). Tenés que:
+Te paso fotos y/o un relato dictado por el técnico de UN sector/ambiente puntual ("${sector}"). Tenés que:
 1. Elegir cuál de esas especialidades corresponde mejor a lo relevado (usá el título con emoji tal cual está arriba).
 2. Identificar qué trabajos hacen falta a partir de las fotos y el relato.
 3. Para cada trabajo, elegir el ítem MÁS PARECIDO del catálogo de precios "Revista Cifras" de abajo (formato codigo|rubro|descripcion|unidad) y ESTIMAR la cantidad en la unidad de ESE ítem — esto es una PROPUESTA que el técnico va a revisar y corregir antes de guardarla, así que priorizá ser transparente sobre tu razonamiento antes que "acertar":
@@ -65,17 +65,11 @@ Te paso las fotos del sector, cada una identificada con una etiqueta de texto "F
    - Si es_restauracion=true pero NO hay codigo_item (no matcheó contra el catálogo), dejá coeficiente_reparacion en null — no hay precio de referencia contra el cual calcular un porcentaje.
    - Si es_restauracion=false, coeficiente_reparacion siempre null (se cobra el 100% del ítem nuevo).
 6. Control de omisiones: si de las fotos notás que faltaría verificar algo típico de este tipo de sector y no fue mencionado en el relato (luces, llaves de paso, tomas, cielorraso, etc.), decilo en alertas_omision; si no notás nada para alertar, dejalo en null.
-7. Para cada ítem, indicá en "fotos_relevantes" los números de foto (según las etiquetas "Foto N:") que mejor documentan ESE trabajo puntual — mirá el contenido real de cada foto y asignala al ítem que corresponda, en vez de repetir automáticamente todas las fotos del sector en todos los ítems:
-   - Si una foto muestra con claridad un trabajo específico (ej. un revestimiento dañado que hay que demoler, una canilla que gotea), asignala SOLO al/los ítem(s) que esa foto documenta — no a los demás ítems del sector que no tienen que ver con lo que se ve en esa foto.
-   - Una foto de vista general del ambiente (que no muestra un detalle puntual sino el conjunto — ej. una toma amplia del living) puede asignarse a más de un ítem si genuinamente les da contexto a varios trabajos de ese ambiente — no hace falta que sea una relación estrictamente 1 a 1, pero tampoco hay que forzarla en ítems con los que no tiene relación visual real.
-   - Es normal y esperado que fotos distintas del mismo sector terminen en ítems distintos (ej. la foto de la pared con revestimiento roto va con el ítem de demolición/remoción, y una foto de una canilla goteando va con el ítem de plomería) — no es necesario ni correcto que TODAS las fotos terminen en TODOS los ítems.
-   - Si ningún ítem en particular corresponde a una foto (por ejemplo, quedó borrosa o no aporta nada), simplemente no la incluyas en ningún "fotos_relevantes" — no hace falta usar todas las fotos.
-   - Array vacío [] si ninguna foto documenta ese ítem puntual.
 
 MUY IMPORTANTE sobre el catálogo — NUNCA INVENTES UN CÓDIGO: el campo codigo_item de cada ítem que devuelvas TIENE QUE SER un código que existe LITERALMENTE en la lista de abajo. Si no hay ningún ítem del catálogo que corresponda razonablemente a lo que ves, poné codigo_item en null y completá rubro/descripcion_item con tu propio texto libre describiendo el trabajo — es preferible null a un código inventado o adivinado.
 
 Respondé SOLO con JSON válido sin texto extra ni backticks, con esta forma exacta:
-{"especialista": "🚰 Especialista Sanitarista" (el título con emoji que corresponda), "mensaje_auditoria": "1-2 oraciones en español, tono técnico profesional, explicando qué identificaste y qué ítems aplicaste", "alertas_omision": "texto breve o null", "items": [{"codigo_item": "184" o null, "rubro": "...", "descripcion_item": "...", "unidad": "unid", "cantidad": 1, "confianza_medicion": "alta"|"media"|"baja" (alta = medida explícita en el relato o referencia de escala muy clara; media = referencia de escala razonable pero aproximada; baja = sin ninguna referencia confiable, pura estimación visual), "riesgo": "urgente", "es_restauracion": false, "coeficiente_reparacion": 0.25 o null (SOLO un número si es_restauracion=true y hay codigo_item; null en cualquier otro caso), "fotos_relevantes": [1,3] o [] (los números de las fotos —según las etiquetas "Foto N:"— que documentan específicamente este ítem; ver punto 7), "justificacion": "explicá SIEMPRE de dónde sale la cantidad, y si es restauración también de dónde sale el porcentaje de reparación"}]}
+{"especialista": "🚰 Especialista Sanitarista" (el título con emoji que corresponda), "mensaje_auditoria": "1-2 oraciones en español, tono técnico profesional, explicando qué identificaste y qué ítems aplicaste", "alertas_omision": "texto breve o null", "items": [{"codigo_item": "184" o null, "rubro": "...", "descripcion_item": "...", "unidad": "unid", "cantidad": 1, "confianza_medicion": "alta"|"media"|"baja" (alta = medida explícita en el relato o referencia de escala muy clara; media = referencia de escala razonable pero aproximada; baja = sin ninguna referencia confiable, pura estimación visual), "riesgo": "urgente", "es_restauracion": false, "coeficiente_reparacion": 0.25 o null (SOLO un número si es_restauracion=true y hay codigo_item; null en cualquier otro caso), "justificacion": "explicá SIEMPRE de dónde sale la cantidad, y si es restauración también de dónde sale el porcentaje de reparación"}]}
 
 Relato del técnico sobre "${sector}": ${relato?.trim() || '(sin relato escrito — basate solo en las fotos)'}
 
@@ -88,17 +82,17 @@ ${catalogoTexto}`
 // cantidad, por qué se eligió tal precio, etc. NUNCA inventa números nuevos: solo puede explicar
 // en base a los ítems reales que el cliente le manda (ya validados contra el catálogo antes).
 function promptConsultaRelevamiento(sector: string, itemsTexto: string, historialTexto: string) {
-  return `Sos el mismo equipo de especialistas técnicos en construcción que ya generó un cómputo de materiales/mano de obra para el sector "${sector}" de un relevamiento de campo de SEATE S.R.L. (constructora de Posadas, Misiones). El técnico de campo ya tiene ese cómputo delante (incluye ítems ya confirmados Y también propuestas todavía sin confirmar) y te está preguntando algo puntual sobre él — de dónde sale una cantidad, por qué se aplicó tal precio o porcentaje de reparación, cuántas fotos quedaron documentando un ítem, etc.
+  return `Sos el mismo equipo de especialistas técnicos en construcción que ya generó un cómputo de materiales/mano de obra para el sector "${sector}" de un relevamiento de campo de SEATE S.R.L. (constructora de Posadas, Misiones). El técnico de campo ya tiene ese cómputo delante y te está preguntando algo puntual sobre él — de dónde sale una cantidad, por qué se aplicó tal precio o porcentaje de reparación, etc.
 
-REGLA MÁS IMPORTANTE: respondé ÚNICAMENTE en base a los ítems reales de abajo (ya fueron calculados y validados contra el catálogo de precios antes de llegar a vos) — nunca inventes ni recalcules un número distinto al que ya está ahí. Si la pregunta es sobre un ítem que no encontrás en la lista, o pide un dato que no está entre los campos de abajo, decilo explícitamente en vez de inventar una respuesta. Sobre las fotos: solo sabés CUÁNTAS fotos quedaron asociadas a cada ítem (campo "fotos" de abajo) — no podés ver el contenido de esas fotos en esta conversación, así que si te preguntan qué muestra una foto puntual, decilo explícitamente y sugerí revisarla en pantalla; si preguntan por qué un ítem no tiene ninguna foto (fotos=0) o le parece que falta, explicá que el técnico puede revisar/ajustar qué foto quedó asignada a cada ítem antes de confirmarlo.
+REGLA MÁS IMPORTANTE: respondé ÚNICAMENTE en base a los ítems reales de abajo (ya fueron calculados y validados contra el catálogo de precios antes de llegar a vos) — nunca inventes ni recalcules un número distinto al que ya está ahí. Si la pregunta es sobre un ítem que no encontrás en la lista, o pide un dato que no está entre los campos de abajo, decilo explícitamente en vez de inventar una respuesta.
 
-Ítems del cómputo de este sector — formato codigo|rubro|descripcion|unidad|cantidad|precio unitario|% aplicado (100% = precio de ítem nuevo, menos si es reparación)|fotos asociadas|justificación original de la IA:
+Ítems del cómputo de este sector — formato codigo|rubro|descripcion|unidad|cantidad|precio unitario|% aplicado (100% = precio de ítem nuevo, menos si es reparación)|justificación original de la IA:
 ${itemsTexto || '(todavía no hay ítems calculados en este sector)'}
 
 Historial reciente de la conversación con el técnico:
 ${historialTexto || '(sin mensajes previos)'}
 
-Respondé la última pregunta del técnico de forma breve, técnica y concreta (2-4 oraciones), citando el número real del ítem correspondiente (cantidad, precio unitario, % de reparación si aplica, cantidad de fotos si preguntan por eso) y retomando la justificación original si ayuda a explicar de dónde sale. No repitas todo el cómputo del sector, andá directo a lo que pregunta. Si el técnico no está de acuerdo con un número o con qué foto quedó asignada a un ítem, no lo cambies vos — decile que puede corregirlo directamente en la pantalla de revisión del ítem. Respondé SOLO con el texto de tu respuesta en español, sin JSON ni backticks ni encabezados.`
+Respondé la última pregunta del técnico de forma breve, técnica y concreta (2-4 oraciones), citando el número real del ítem correspondiente (cantidad, precio unitario, % de reparación si aplica) y retomando la justificación original si ayuda a explicar de dónde sale. No repitas todo el cómputo del sector, andá directo a lo que pregunta. Si el técnico no está de acuerdo con un número, no lo cambies vos — decile que puede corregir la cantidad o el % directamente en la pantalla de revisión del ítem. Respondé SOLO con el texto de tu respuesta en español, sin JSON ni backticks ni encabezados.`
 }
 
 serve(async (req) => {
@@ -160,17 +154,13 @@ serve(async (req) => {
     // ── Modo "subir_archivo": solo sube un archivo a Storage server-to-server, sin IA ──
     // Antes, el comprobante de pago (ModalPago en GestorObras.jsx) se subía DIRECTO desde el
     // cliente con supabase.storage.upload() — el mismo patrón que ya había fallado en mobile para
-    // documentos de pólizas, y que se había migrado a subir server-side vía esta función por esa
-    // razón. El comprobante de pago había quedado afuera de esa migración y seguía fallando ("da
-    // error" reportado en PC y mobile). Las fotos de relevamiento (`subirFotoRelevamiento` en
-    // Relevamientos.jsx) también se sumaron después: el upload directo a Storage sufría el mismo
-    // problema de carrier que bloquea/estanca POSTs desde mobile, lo que se sentía como "tarda
-    // mucho en subir fotos" — server-side evita ese problema igual que con el comprobante de pago.
-    // Bucket restringido a una lista fija para no abrir esta función a subir a cualquier bucket
-    // arbitrario.
+    // fotos de relevamiento y documentos de pólizas, y que se había migrado a subir server-side vía
+    // esta función por esa razón. El comprobante de pago había quedado afuera de esa migración y
+    // seguía fallando ("da error" reportado en PC y mobile). Bucket restringido a una lista fija
+    // para no abrir esta función a subir a cualquier bucket arbitrario.
     if (body.tipoAnalisis === 'subir_archivo') {
       const { base64: b64Archivo, mimeType: mimeArchivo, bucket, carpeta } = body
-      const bucketsPermitidos = ['comprobantes-pagos', 'relevamientos-fotos']
+      const bucketsPermitidos = ['comprobantes-pagos']
       if (!bucketsPermitidos.includes(bucket)) {
         return new Response(JSON.stringify({ error: 'Bucket no permitido.' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -261,25 +251,16 @@ serve(async (req) => {
       const catalogoTexto = catalogo.map((c) => `${c.codigo_item}|${c.rubro}|${c.descripcion}|${c.unidad}`).join('\n')
 
       // Descargar cada foto (ya subida a Storage por el frontend) y pasarla a base64 para Claude Vision.
-      // Cada una se etiqueta "Foto N:" ANTES de la imagen, con N = su posición 1-based en `urls`
-      // (no en las que se pudieron descargar con éxito) — así el número que la IA devuelve en
-      // "fotos_relevantes" de cada ítem coincide exactamente con la posición de esa URL en el
-      // array `fotoUrls` que mandó el cliente, y del lado del cliente se puede volver a mapear
-      // número → URL real sin ambigüedad aunque alguna foto haya fallado al descargar acá.
-      const fotosEnviadas = urls.slice(0, 6)
       const imagenesContent: any[] = []
-      for (let i = 0; i < fotosEnviadas.length; i++) {
-        const url = fotosEnviadas[i]
-        const numeroFoto = i + 1
+      for (const url of urls.slice(0, 6)) {
         try {
           const imgResp = await fetch(url)
           if (!imgResp.ok) { console.error('No se pudo descargar foto:', url, imgResp.status); continue }
           const buf = new Uint8Array(await imgResp.arrayBuffer())
           let binary = ''
-          for (let j = 0; j < buf.length; j++) binary += String.fromCharCode(buf[j])
+          for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i])
           const b64 = btoa(binary)
           const ct = (imgResp.headers.get('content-type') || 'image/jpeg').split(';')[0]
-          imagenesContent.push({ type: 'text', text: `Foto ${numeroFoto}:` })
           imagenesContent.push({ type: 'image', source: { type: 'base64', media_type: ct, data: b64 } })
         } catch (e) {
           console.error('Excepción descargando foto:', url, e.message)
@@ -288,7 +269,7 @@ serve(async (req) => {
 
       const userContent: any[] = [
         ...imagenesContent,
-        { type: 'text', text: `Analizá el sector "${sector}" con las fotos de arriba (si hay) y el relato del sistema. Recordá indicar en "fotos_relevantes" de cada ítem los números de foto reales que lo documentan.` },
+        { type: 'text', text: `Analizá el sector "${sector}" con las fotos de arriba (si hay) y el relato del sistema.` },
       ]
 
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -296,16 +277,13 @@ serve(async (req) => {
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          // Antes 2000 — al sumarle "fotos_relevantes" a cada ítem (v42) la respuesta creció y
-          // empezó a cortarse a mitad del JSON en sectores con varios ítems, lo que producía
-          // "La IA no devolvió un JSON válido" (502) reportado por el técnico en producción.
-          max_tokens: 4096,
+          max_tokens: 2000,
           system: promptRelevamiento(sector || '', relato || '', catalogoTexto),
           messages: [{ role: 'user', content: userContent }],
         }),
       })
       const data = await resp.json()
-      console.log('Anthropic status (relevamiento):', resp.status, 'fotos:', imagenesContent.length, 'catalogo items:', catalogo.length, 'stop_reason:', data?.stop_reason)
+      console.log('Anthropic status (relevamiento):', resp.status, 'fotos:', imagenesContent.length, 'catalogo items:', catalogo.length)
 
       if (!resp.ok || data?.type === 'error') {
         console.error('Anthropic error (relevamiento):', JSON.stringify(data?.error))
@@ -316,35 +294,15 @@ serve(async (req) => {
       }
 
       let parsed: any = null
-      const textoRta = data?.content?.map((b: any) => b.text || '').join('') || ''
-      const limpio = textoRta.replace(/```json|```/g, '').trim()
       try {
-        parsed = JSON.parse(limpio)
+        const textoRta = data?.content?.map((b: any) => b.text || '').join('') || ''
+        parsed = JSON.parse(textoRta.replace(/```json|```/g, '').trim())
       } catch (e) {
-        // Fallback: a veces Claude agrega texto antes/después del JSON pese a la instrucción —
-        // probamos extraer solo el bloque entre la primera "{" y la última "}" antes de rendirnos.
-        const inicio = limpio.indexOf('{')
-        const fin = limpio.lastIndexOf('}')
-        if (inicio >= 0 && fin > inicio) {
-          try { parsed = JSON.parse(limpio.slice(inicio, fin + 1)) } catch (e2) { /* sigue null */ }
-        }
-        if (!parsed) {
-          console.error(
-            'No se pudo parsear JSON de Claude (relevamiento):', e.message,
-            '- stop_reason:', data?.stop_reason,
-            '- primeros 500 chars:', limpio.slice(0, 500),
-            '- últimos 300 chars:', limpio.slice(-300),
-          )
-          const cortada = data?.stop_reason === 'max_tokens'
-          return new Response(JSON.stringify({
-            error: cortada
-              ? 'La respuesta de la IA se cortó por ser demasiado larga — probá procesar con menos fotos o un relato más corto por vez.'
-              : 'La IA no devolvió un JSON válido — probá de nuevo.',
-          }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: 502,
-          })
-        }
+        console.error('No se pudo parsear JSON de Claude (relevamiento):', e.message)
+        return new Response(JSON.stringify({ error: 'La IA no devolvió un JSON válido — probá de nuevo.' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 502,
+        })
       }
 
       // Completa el precio real del catálogo — nunca confiar en un precio que "recuerde" el modelo.
@@ -359,19 +317,12 @@ serve(async (req) => {
           ? coefNum
           : 1
         const precioNuevo = catEntry?.precio_unitario_total ?? null
-        // fotos_relevantes: solo números de foto que realmente se enviaron (1..fotosEnviadas.length),
-        // sin duplicados — si la IA devuelve algo fuera de rango o repetido, se descarta en vez de
-        // dejar que el cliente intente mapear un índice que no corresponde a ninguna foto real.
-        const fotosRelevantes = Array.isArray(it.fotos_relevantes)
-          ? [...new Set(it.fotos_relevantes.map((n: any) => parseInt(n)).filter((n: number) => Number.isFinite(n) && n >= 1 && n <= fotosEnviadas.length))]
-          : []
         return {
           codigo_item: catEntry ? catEntry.codigo_item : null,
           rubro: catEntry ? catEntry.rubro : (it.rubro || 'VARIOS'),
           descripcion_item: catEntry ? catEntry.descripcion : (it.descripcion_item || 'Ítem relevado'),
           unidad: catEntry ? catEntry.unidad : (it.unidad || 'unid'),
           cantidad: parseFloat(it.cantidad) || 1,
-          fotos_relevantes: fotosRelevantes,
           confianza_medicion: ['alta', 'media', 'baja'].includes(it.confianza_medicion) ? it.confianza_medicion : 'media',
           riesgo: ['urgente', 'funcional', 'mantenimiento'].includes(it.riesgo) ? it.riesgo : 'funcional',
           es_restauracion: esRestauracion,
@@ -410,8 +361,7 @@ serve(async (req) => {
       const itemsTexto = (Array.isArray(itemsContexto) ? itemsContexto : [])
         .map((it: any) => {
           const pct = it.coeficiente_ajuste != null ? Math.round(it.coeficiente_ajuste * 100) : 100
-          const fotos = Number.isFinite(parseInt(it.fotos)) ? parseInt(it.fotos) : 0
-          return `${it.codigo_item ?? 's/código'}|${it.rubro ?? ''}|${it.descripcion_item ?? ''}|${it.unidad ?? ''}|${it.cantidad ?? ''}|${it.precio_unitario != null ? '$' + it.precio_unitario : 's/precio'}|${pct}%|${fotos} foto(s)|${it.justificacion ?? it.notas_campo ?? ''}`
+          return `${it.codigo_item ?? 's/código'}|${it.rubro ?? ''}|${it.descripcion_item ?? ''}|${it.unidad ?? ''}|${it.cantidad ?? ''}|${it.precio_unitario != null ? '$' + it.precio_unitario : 's/precio'}|${pct}%|${it.justificacion ?? it.notas_campo ?? ''}`
         })
         .join('\n')
       const historialTexto = (Array.isArray(historial) ? historial : [])
