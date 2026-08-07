@@ -508,7 +508,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
 
   const [chatTexto, setChatTexto] = useState('')
   const [consultandoChat, setConsultandoChat] = useState(false)
-  const [mensajes, setMensajes] = useState([]) // { id, sector, emisor: 'tecnico'|'agente_ia', mensaje }
+  const [mensajes, setMensajes] = useState([]) // { id, sector, emisor: 'tecnico'|'ia', mensaje }
   const [historialOculto, setHistorialOculto] = useState(false)
   const [grabandoAudioChat, setGrabandoAudioChat] = useState(false)
 
@@ -876,7 +876,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
 
       const mensajesGuardados = []
       for (const texto of mensajesTexto) {
-        const row = await dbWrite('POST', 'relevamiento_mensajes', { relevamiento_id: relevamiento.id, sector: sectorActivo, emisor: 'agente_ia', mensaje: texto }, null, true)
+        const row = await dbWrite('POST', 'relevamiento_mensajes', { relevamiento_id: relevamiento.id, sector: sectorActivo, emisor: 'ia', mensaje: texto }, null, true)
         if (row) mensajesGuardados.push({ id: row.id, sector: row.sector, emisor: row.emisor, mensaje: row.mensaje })
       }
       setMensajes((prev) => [...prev, ...mensajesGuardados])
@@ -1010,7 +1010,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
       const historialParaIA = [...mensajesDelSector, mensajeTecnico]
       const rtaTexto = await consultarSectorConIA({ sector: sectorActivo, pregunta: txt, itemsContexto, historial: historialParaIA })
       const rta = `**${especialistaActual.titulo}**: ${rtaTexto}`
-      const filaIa = await dbWrite('POST', 'relevamiento_mensajes', { relevamiento_id: relevamiento.id, sector: sectorActivo, emisor: 'agente_ia', mensaje: rta }, null, true).catch((err) => { console.error(err); return null })
+      const filaIa = await dbWrite('POST', 'relevamiento_mensajes', { relevamiento_id: relevamiento.id, sector: sectorActivo, emisor: 'ia', mensaje: rta }, null, true).catch((err) => { console.error(err); return null })
       if (filaIa) setMensajes((prev) => [...prev, { id: filaIa.id, sector: filaIa.sector, emisor: filaIa.emisor, mensaje: filaIa.mensaje }])
     } catch (err) {
       console.error(err)
@@ -1476,7 +1476,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
               {mensajesDelSector.map((msg) => (
                 <div key={msg.id} style={{ backgroundColor: C.bg, padding: '10px 12px', borderRadius: '8px', fontSize: '12px', border: `1px solid ${C.border}` }}>
-                  {msg.emisor === 'agente_ia' ? '🤖 ' : '👤 **Técnico**: '}{msg.mensaje}
+                  {msg.emisor === 'ia' ? '🤖 ' : '👤 **Técnico**: '}{msg.mensaje}
                 </div>
               ))}
             </div>
