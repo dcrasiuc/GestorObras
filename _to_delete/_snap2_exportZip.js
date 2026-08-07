@@ -1,9 +1,8 @@
 // ── Exportación de comprobantes a ZIP para el contador ──────────
-// Arma un .zip con las facturas (imagen_url de cada gasto) de los gastos dentro de un rango de
-// fechas, más un listado en Excel con el detalle contable de lo que se está incluyendo — pedido
-// explícito de los usuarios para no tener que mandarle los comprobantes al contador uno por uno.
-// Nota: a pedido de los usuarios, este export NO incluye comprobantes de pago (ni la carpeta ni
-// la columna de archivo de pago) ni la obra/estado de pago — solo las facturas y sus datos.
+// Arma un .zip con las facturas (imagen_url de cada gasto) y los comprobantes de pago
+// (comprobante_url de cada pago) de los gastos dentro de un rango de fechas, más un listado en
+// Excel con el detalle contable de lo que se está incluyendo — pedido explícito de los usuarios
+// para no tener que mandarle los comprobantes al contador uno por uno.
 import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
 import { getTipoLabel, fmt } from './utils'
@@ -43,13 +42,12 @@ async function descargarYAgregar(carpeta, url, nombreBase) {
 }
 
 /**
- * Arma y descarga un .zip con las facturas de los gastos cuya fecha cae dentro de
- * [fechaDesde, fechaHasta] (ambos YYYY-MM-DD, cualquiera puede venir vacío = sin límite),
+ * Arma y descarga un .zip con las facturas/comprobantes de pago de los gastos cuya fecha cae
+ * dentro de [fechaDesde, fechaHasta] (ambos YYYY-MM-DD, cualquiera puede venir vacío = sin límite),
  * más un "Listado para el contador.xlsx" con el detalle de cada gasto incluido.
- * No incluye comprobantes de pago ni datos de obra/estado de pago (a pedido de los usuarios).
  * onProgress(i, total) opcional, para reflejar avance en la UI mientras se descargan los archivos.
- * Devuelve { count, incluidos, faltantes }: count = gastos en el rango, incluidos = facturas que
- * se pudieron sumar al zip, faltantes = facturas que no se pudieron descargar/no existían.
+ * Devuelve { count, incluidos, faltantes }: count = gastos en el rango, incluidos = archivos que
+ * se pudieron sumar al zip, faltantes = comprobantes que no se pudieron descargar/no existían.
  */
 export async function exportarZipComprobantes(gastos, fechaDesde, fechaHasta, onProgress) {
   const enRango = (gastos || []).filter(g =>
@@ -59,6 +57,7 @@ export async function exportarZipComprobantes(gastos, fechaDesde, fechaHasta, on
 
   const zip = new JSZip()
   const carpetaFacturas = zip.folder('Facturas')
+  const carpetaPagos = zip.folder('Comprobantes de pago')
   const listado = []
   let incluidos = 0
   let faltantes = 0
@@ -76,14 +75,25 @@ export async function exportarZipComprobantes(gastos, fechaDesde, fechaHasta, on
       if (nombre) { archivoFactura = `Facturas/${nombre}`; incluidos++ } else faltantes++
     }
 
+    const pagosConComprobante = (g.pagos || []).filter(p => p.comprobante_url)
+    const archivosPago = []
+    for (let idx = 0; idx < pagosConComprobante.length; idx++) {
+      const sufijo = pagosConComprobante.length > 1 ? `_pago${idx + 1}` : '_pago'
+      const nombre = await descargarYAgregar(carpetaPagos, pagosConComprobante[idx].comprobante_url, base + sufijo)
+      if (nombre) { archivosPago.push(`Comprobantes de pago/${nombre}`); incluidos++ } else faltantes++
+    }
+
     listado.push({
       'Fecha': g.fecha,
+      'Obra': g.obras?.nombre ?? (g.es_gasto_general ? 'Gasto general' : '—'),
       'Proveedor': proveedor,
       'Concepto': CONCEPTO_LABELS[g.concepto] ?? g.concepto ?? '',
       'Tipo comprobante': getTipoLabel(g.tipo_comprobante),
       'Nº comprobante': g.nro_comprobante || '',
       'Monto': fmt(g.monto),
+      'Estado': g.pagado ? 'Pagado' : 'Pendiente',
       'Archivo factura': archivoFactura || 'Sin adjuntar',
+      'Archivo(s) de pago': archivosPago.join(' | ') || 'Sin adjuntar',
     })
   }
 
