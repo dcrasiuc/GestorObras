@@ -802,6 +802,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
 
     setProcesando(true)
     const fotoUrlsListas = fotosSector.filter((f) => f.urlSubida).map((f) => f.urlSubida)
+    const fotoUrlCompuesta = fotoUrlsListas.join(',') || null
 
     try {
       // La IA lee de verdad las fotos + el relato y devuelve ítems matcheados contra el catálogo
@@ -819,33 +820,25 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
 
       setItemsPropuestos((prev) => [
         ...prev,
-        ...itemsIA.map((it) => {
-          // La IA elige, foto por foto, cuáles documentan ESTE ítem puntual (índices 1-based sobre
-          // fotoUrlsListas, en el mismo orden en que se mandaron) — ya no se le pega el combo
-          // completo de fotos del sector a todos los ítems por igual.
-          const urlsElegidas = Array.isArray(it.fotos_relevantes)
-            ? it.fotos_relevantes.map((n) => fotoUrlsListas[n - 1]).filter(Boolean)
-            : []
-          return {
-            rubro: it.rubro,
-            item: it.descripcion_item,
-            descripcionDetallada: it.justificacion || '',
-            un: it.unidad,
-            cant: it.cantidad, // editable — es la estimación de la IA, no un valor final
-            riesgo: it.riesgo,
-            esRestauracion: it.es_restauracion,
-            codigoItem: it.codigo_item, // puede venir null a propósito — no inventar código
-            fotoUrl: urlsElegidas.length ? urlsElegidas.join(',') : null,
-            // Si es restauración con match de catálogo, precio_unitario_ajustado ya viene con el %
-            // de reparación aplicado (calculado en el backend); si no, es el mismo precio del ítem
-            // nuevo (coeficiente 1). precioReferenciaNuevo se guarda aparte para poder mostrar
-            // "precio de un ítem nuevo" vs "precio de la reparación" en la revisión.
-            precioUnitario: it.precio_unitario_ajustado ?? it.precio_unitario_total ?? null,
-            precioReferenciaNuevo: it.precio_unitario_total ?? null,
-            coeficienteAjuste: Number.isFinite(parseFloat(it.coeficiente_ajuste)) ? parseFloat(it.coeficiente_ajuste) : 1,
-            confianzaMedicion: it.confianza_medicion || 'media',
-          }
-        }),
+        ...itemsIA.map((it) => ({
+          rubro: it.rubro,
+          item: it.descripcion_item,
+          descripcionDetallada: it.justificacion || '',
+          un: it.unidad,
+          cant: it.cantidad, // editable — es la estimación de la IA, no un valor final
+          riesgo: it.riesgo,
+          esRestauracion: it.es_restauracion,
+          codigoItem: it.codigo_item, // puede venir null a propósito — no inventar código
+          fotoUrl: fotoUrlCompuesta,
+          // Si es restauración con match de catálogo, precio_unitario_ajustado ya viene con el %
+          // de reparación aplicado (calculado en el backend); si no, es el mismo precio del ítem
+          // nuevo (coeficiente 1). precioReferenciaNuevo se guarda aparte para poder mostrar
+          // "precio de un ítem nuevo" vs "precio de la reparación" en la revisión.
+          precioUnitario: it.precio_unitario_ajustado ?? it.precio_unitario_total ?? null,
+          precioReferenciaNuevo: it.precio_unitario_total ?? null,
+          coeficienteAjuste: Number.isFinite(parseFloat(it.coeficiente_ajuste)) ? parseFloat(it.coeficiente_ajuste) : 1,
+          confianzaMedicion: it.confianza_medicion || 'media',
+        })),
       ])
 
       const especialistaTexto = resultado.especialista || especialistaActual.titulo
@@ -961,9 +954,6 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
         precio_unitario: it.precioUnitario,
         coeficiente_ajuste: it.coeficienteAjuste,
         justificacion: it.descripcionDetallada,
-        // Cuántas fotos quedaron asociadas a este ítem — así el técnico puede preguntarle a la
-        // IA "¿por qué le pusiste/no le pusiste foto a este ítem?" y tiene con qué responder.
-        fotos: it.fotoUrl ? it.fotoUrl.split(',').filter(Boolean).length : 0,
       })
       const itemsContexto = [
         ...itemsPropuestos.map(aContexto),

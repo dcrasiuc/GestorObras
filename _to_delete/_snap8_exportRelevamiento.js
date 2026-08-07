@@ -46,43 +46,39 @@ function descargarBlob(blob, nombreArchivo) {
   setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
-// Nombre de hoja de Excel válido: sin \ / ? * [ ] : , máximo 31 caracteres, sin repetirse dentro
-// del mismo libro (si dos sectores generan el mismo nombre truncado, se numeran).
-function _nombreHojaSector(sector, usados) {
-  const base = String(sector || 'Sector').replace(/[\\/?*[\]:]/g, '-').trim().slice(0, 28) || 'Sector'
-  let nombre = base
-  let i = 2
-  while (usados.has(nombre.toLowerCase())) { nombre = `${base} (${i})`.slice(0, 31); i++ }
-  usados.add(nombre.toLowerCase())
-  return nombre
-}
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// PRESUPUESTO (Excel) — mismo esquema que el PRESUP real de SEATE: agrupado por rubro, con
+// fórmulas de Excel reales (no valores fijos) y coeficientes SEATE: +15% Gastos Generales sobre
+// el costo, +10% Beneficio sobre costo+GG, +23.5% Impuestos sobre el subtotal. Además un "Anexo
+// por Sector" con la misma info agrupada por sector/ambiente en vez de por rubro.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+export function exportarPresupuestoRelevamiento(relevamiento, items) {
+  const itemsValidos = (items || []).filter((i) => i.item)
+  const rubros = [...new Set(itemsValidos.map((i) => i.rubro).filter(Boolean))]
+  let itemsSinPrecioCount = 0
 
-// Arma la hoja de un sector/ambiente: mismo esquema de ítems agrupados por rubro (concepto de
-// Revista Cifras) que antes tenía la única hoja "PRESUPUESTO", pero acotado a los ítems de ESE
-// sector, con sus propias fórmulas de Excel (PRECIO PARCIAL, subtotal por rubro, % de incidencia
-// dentro del sector). No aplica acá los coeficientes de Gastos Generales/Beneficio/Impuestos —
-// esos son coeficientes de OBRA completa, se aplican una sola vez en la hoja general, no por
-// ambiente — devuelve el costo "crudo" de materiales/mano de obra de ese sector.
-function _construirHojaSector(sector, itemsDelSector, contarSinPrecio) {
-  const rubros = [...new Set(itemsDelSector.map((i) => i.rubro).filter(Boolean))]
-
+  // ── Hoja PRESUPUESTO ──
   const aoa = []
-  aoa.push([sector, ''])
+  aoa.push(['PRESUPUESTO', ''])
+  aoa.push(['COMITENTE:', labelOrganismo(relevamiento.organismo)])
+  aoa.push(['OBRA:', relevamiento.titulo_obra || ''])
+  aoa.push(['LUGAR:', [relevamiento.escuela_lugar, relevamiento.localidad].filter(Boolean).join(' — ')])
+  aoa.push(['Fecha:', new Date().toLocaleDateString('es-AR')])
   aoa.push([])
   aoa.push(['N°', 'ITEM', 'UN.', 'CANT', 'PRECIO UNITARIO', 'PRECIO PARCIAL', 'PRECIO TOTAL', '% INC'])
 
-  const rubroFilas = []
-  const itemFilaInfo = []
+  const rubroFilas = [] // { filaRubro, primerItemFila, ultimoItemFila } — todas 1-based (fila real de Excel)
+  const itemFilaInfo = [] // { fila, conPrecio }
 
   rubros.forEach((rubro, rIdx) => {
     const filaRubro = aoa.length + 1
     aoa.push([`${rIdx + 1}`, rubro, '', '', '', '', '', ''])
-    const itemsDelRubro = itemsDelSector.filter((i) => i.rubro === rubro)
+    const itemsDelRubro = itemsValidos.filter((i) => i.rubro === rubro)
     let primerItemFila = null
     let ultimoItemFila = null
     itemsDelRubro.forEach((it, iIdx) => {
       const conPrecio = it.precioUnitario != null
-      if (!conPrecio) contarSinPrecio()
+      if (!conPrecio) itemsSinPrecioCount++
       const filaItem = aoa.length + 1
       aoa.push([
         `${rIdx + 1}.${iIdx + 1}`,
@@ -104,98 +100,70 @@ function _construirHojaSector(sector, itemsDelSector, contarSinPrecio) {
 
   const finRubrosFila = aoa.length
   aoa.push([])
-  const filaCostoSector = aoa.length + 1
-  aoa.push(['', `COSTO TOTAL — ${sector}`, '', '', '', '', '', ''])
+  const filaCosto = aoa.length + 1
+  aoa.push(['', 'COSTO TOTAL', '', '', '', '', '', ''])
+  const filaGG = aoa.length + 1
+  aoa.push(['', 'Gastos Generales', 0.15, '', '', '', '', ''])
+  const filaBen = aoa.length + 1
+  aoa.push(['', 'Beneficio', 0.10, '', '', '', '', ''])
+  const filaSub = aoa.length + 1
+  aoa.push(['', 'Sub total', '', '', '', '', '', ''])
+  const filaImp = aoa.length + 1
+  aoa.push(['', 'Impuestos (IVA + IB)', 0.235, '', '', '', '', ''])
+  const filaFinal = aoa.length + 1
+  aoa.push(['', 'PRECIO FINAL', '', '', '', '', '', ''])
 
   const ws = XLSX.utils.aoa_to_sheet(aoa)
+
+  // Fórmulas reales (igual que el PRESUP real: nada queda como número fijo, todo se puede
+  // reabrir y editar en Excel sin perder la relación entre celdas).
   itemFilaInfo.forEach(({ fila, conPrecio }) => {
     if (conPrecio) ws[`F${fila}`] = { t: 'n', f: `D${fila}*E${fila}` }
   })
   rubroFilas.forEach(({ filaRubro, primerItemFila, ultimoItemFila }) => {
     ws[`G${filaRubro}`] = { t: 'n', f: `SUM(F${primerItemFila}:F${ultimoItemFila})` }
-    ws[`H${filaRubro}`] = { t: 'n', f: `G${filaRubro}/$G$${filaCostoSector}` }
+    ws[`H${filaRubro}`] = { t: 'n', f: `G${filaRubro}/$G$${filaCosto}` }
   })
-  ws[`G${filaCostoSector}`] = rubroFilas.length
+  ws[`G${filaCosto}`] = rubroFilas.length
     ? { t: 'n', f: `SUM(G${rubroFilas[0].filaRubro}:G${finRubrosFila})` }
     : { t: 'n', v: 0 }
+  ws[`G${filaGG}`] = { t: 'n', f: `G${filaCosto}*C${filaGG}` }
+  ws[`G${filaBen}`] = { t: 'n', f: `(G${filaCosto}+G${filaGG})*C${filaBen}` }
+  ws[`G${filaSub}`] = { t: 'n', f: `G${filaCosto}+G${filaGG}+G${filaBen}` }
+  ws[`G${filaImp}`] = { t: 'n', f: `G${filaSub}*C${filaImp}` }
+  ws[`G${filaFinal}`] = { t: 'n', f: `G${filaSub}+G${filaImp}` }
+
   ws['!cols'] = [{ wch: 6 }, { wch: 55 }, { wch: 8 }, { wch: 8 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 8 }]
 
-  return { ws, celdaCosto: `G${filaCostoSector}` }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// PRESUPUESTO (Excel) — UNA HOJA POR SECTOR/AMBIENTE (agrupada por rubro/concepto de Revista
-// Cifras, con fórmulas reales de Excel — no valores fijos) MÁS una hoja "RESUMEN GENERAL" que
-// consolida el costo de todos los sectores con fórmulas que apuntan a la celda de costo de cada
-// hoja de sector (ej. ='Living'!G12) y recién ahí aplica los coeficientes de obra completa:
-// +15% Gastos Generales, +10% Beneficio (sobre costo+GG), +23.5% Impuestos (sobre el subtotal) —
-// igual que el PRESUP real de SEATE. Como son fórmulas de verdad y no una copia estática, si se
-// edita una cantidad o un precio en la hoja de un ambiente, ese total y el consolidado general se
-// recalculan solos al reabrir/recalcular el Excel.
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-export function exportarPresupuestoRelevamiento(relevamiento, items) {
-  const itemsValidos = (items || []).filter((i) => i.item)
-  let itemsSinPrecioCount = 0
-  const contarSinPrecio = () => { itemsSinPrecioCount++ }
-  const sectores = [...new Set(itemsValidos.map((i) => i.sector || 'General'))]
-
-  // ── Una hoja por sector (todavía no se agregan al libro — primero hay que saber sus nombres
-  // finales y la celda de costo de cada una para poder armar las fórmulas de la hoja general) ──
-  const usadosNombresHoja = new Set()
-  const hojasSector = sectores.map((sector) => {
-    const itemsDelSector = itemsValidos.filter((i) => (i.sector || 'General') === sector)
-    const { ws, celdaCosto } = _construirHojaSector(sector, itemsDelSector, contarSinPrecio)
-    const nombreHoja = _nombreHojaSector(sector, usadosNombresHoja)
-    return { sector, nombreHoja, ws, celdaCosto }
-  })
-
-  // ── Hoja RESUMEN GENERAL — primera del libro, con fórmulas cross-sheet hacia cada sector ──
-  const aoaGeneral = []
-  aoaGeneral.push(['PRESUPUESTO GENERAL', ''])
-  aoaGeneral.push(['COMITENTE:', labelOrganismo(relevamiento.organismo)])
-  aoaGeneral.push(['OBRA:', relevamiento.titulo_obra || ''])
-  aoaGeneral.push(['LUGAR:', [relevamiento.escuela_lugar, relevamiento.localidad].filter(Boolean).join(' — ')])
-  aoaGeneral.push(['Fecha:', new Date().toLocaleDateString('es-AR')])
-  aoaGeneral.push([])
-  aoaGeneral.push(['SECTOR / AMBIENTE', 'COSTO'])
-  const filaPrimerSector = aoaGeneral.length + 1
-  hojasSector.forEach(({ sector }) => aoaGeneral.push([sector, '']))
-  const filaUltimoSector = Math.max(aoaGeneral.length, filaPrimerSector)
-  aoaGeneral.push([])
-  const filaCosto = aoaGeneral.length + 1
-  aoaGeneral.push(['', 'COSTO TOTAL', '', '', '', '', '', ''])
-  const filaGG = aoaGeneral.length + 1
-  aoaGeneral.push(['', 'Gastos Generales', 0.15, '', '', '', '', ''])
-  const filaBen = aoaGeneral.length + 1
-  aoaGeneral.push(['', 'Beneficio', 0.10, '', '', '', '', ''])
-  const filaSub = aoaGeneral.length + 1
-  aoaGeneral.push(['', 'Sub total', '', '', '', '', '', ''])
-  const filaImp = aoaGeneral.length + 1
-  aoaGeneral.push(['', 'Impuestos (IVA + IB)', 0.235, '', '', '', '', ''])
-  const filaFinal = aoaGeneral.length + 1
-  aoaGeneral.push(['', 'PRECIO FINAL', '', '', '', '', '', ''])
-
-  const wsGeneral = XLSX.utils.aoa_to_sheet(aoaGeneral)
-  hojasSector.forEach(({ nombreHoja, celdaCosto }, idx) => {
-    const filaEnGeneral = filaPrimerSector + idx
-    // Referencia cross-sheet real (no un número copiado) — por eso hay que citar el nombre de
-    // hoja entre comillas simples (con la comilla duplicada si el nombre del sector la tuviera,
-    // tal cual lo pide la sintaxis de fórmulas de Excel para nombres de hoja entre comillas).
-    wsGeneral[`B${filaEnGeneral}`] = { t: 'n', f: `'${nombreHoja.replace(/'/g, "''")}'!${celdaCosto}` }
-  })
-  wsGeneral[`G${filaCosto}`] = hojasSector.length
-    ? { t: 'n', f: `SUM(B${filaPrimerSector}:B${filaUltimoSector})` }
-    : { t: 'n', v: 0 }
-  wsGeneral[`G${filaGG}`] = { t: 'n', f: `G${filaCosto}*C${filaGG}` }
-  wsGeneral[`G${filaBen}`] = { t: 'n', f: `(G${filaCosto}+G${filaGG})*C${filaBen}` }
-  wsGeneral[`G${filaSub}`] = { t: 'n', f: `G${filaCosto}+G${filaGG}+G${filaBen}` }
-  wsGeneral[`G${filaImp}`] = { t: 'n', f: `G${filaSub}*C${filaImp}` }
-  wsGeneral[`G${filaFinal}`] = { t: 'n', f: `G${filaSub}+G${filaImp}` }
-  wsGeneral['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 16 }, { wch: 8 }]
-
   const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, wsGeneral, 'RESUMEN GENERAL')
-  hojasSector.forEach(({ nombreHoja, ws }) => XLSX.utils.book_append_sheet(wb, ws, nombreHoja))
+  XLSX.utils.book_append_sheet(wb, ws, 'PRESUPUESTO')
+
+  // ── Hoja Anexo por Sector (misma info, agrupada por sector/ambiente en vez de por rubro) ──
+  const sectores = [...new Set(itemsValidos.map((i) => i.sector).filter(Boolean))]
+  const aoaAnexo = [['SECTOR / AMBIENTE', 'N°', 'ITEM', 'UN.', 'CANT', 'PRECIO UNITARIO', 'PRECIO PARCIAL']]
+  sectores.forEach((sector) => {
+    const itemsDelSector = itemsValidos.filter((i) => i.sector === sector)
+    let totalSector = 0
+    itemsDelSector.forEach((it, iIdx) => {
+      const conPrecio = it.precioUnitario != null
+      const parcial = conPrecio ? num(it.cant) * num(it.precioUnitario) : null
+      if (parcial != null) totalSector += parcial
+      aoaAnexo.push([
+        iIdx === 0 ? sector : '',
+        `${iIdx + 1}`,
+        it.item,
+        it.un,
+        num(it.cant),
+        conPrecio ? num(it.precioUnitario) : 'A cotizar',
+        conPrecio ? num(parcial) : 'Sin precio de catálogo',
+      ])
+    })
+    aoaAnexo.push(['', '', `Subtotal ${sector}`, '', '', '', num(totalSector)])
+    aoaAnexo.push([])
+  })
+  const wsAnexo = XLSX.utils.aoa_to_sheet(aoaAnexo)
+  wsAnexo['!cols'] = [{ wch: 22 }, { wch: 6 }, { wch: 50 }, { wch: 8 }, { wch: 8 }, { wch: 16 }, { wch: 16 }]
+  XLSX.utils.book_append_sheet(wb, wsAnexo, 'Anexo por Sector')
 
   const fecha = new Date().toISOString().slice(0, 10)
   XLSX.writeFile(wb, `Presupuesto_${slugArchivo(relevamiento.titulo_obra)}_${fecha}.xlsx`)
