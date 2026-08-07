@@ -55,6 +55,7 @@ Te paso las fotos del sector, cada una identificada con una etiqueta de texto "F
    - Si el relato dicta una medida explícita (ej. "son 35 metros cuadrados", "un paño de 4 por 2.5"), usá ESA medida tal cual — no la reinterpretes ni la redondees a otra cosa.
    - Si NO hay medida explícita en el relato, estimá a partir de una referencia de escala visible en la foto (una puerta ≈0.90-2.10m, un ladrillo común ≈0.25m, una baldosa ≈0.30-0.40m, el ancho de una persona, etc.) y CONTÁ en "justificacion" qué referencia usaste y el cálculo aproximado — ej. "Estimé ~10m² tomando como referencia el marco de la puerta (≈2.10m de alto) para calcular que el paño de pared mide aprox. 4m x 2.5m".
    - Si no hay ninguna referencia de escala confiable en la foto ni en el relato, decilo explícitamente en la justificación (ej. "Sin referencia de escala clara en la foto, cantidad estimada muy aproximada") y marcá "confianza_medicion":"baja".
+   - MUY IMPORTANTE — no agrandes el alcance del trabajo: cuantificá SOLO la parte puntual que el relato describe o que se ve dañada/afectada en la foto (ej. "cerámicos caídos" = el paño de cerámicos que se ve roto/faltante, NO todo el revestimiento del baño; "puerta con cerradura rota" = esa puerta, NO todas las puertas del sector). Nunca asumas que hace falta reponer/intervenir todo el ambiente completo salvo que el relato lo diga explícitamente (ej. "hay que rehacer todo el revestimiento del baño") o que la foto muestre daño generalizado en TODA la superficie visible. Ante la duda entre una cantidad puntual y una más abarcativa, elegí la más chica y marcá "confianza_medicion":"baja" explicando en la justificación qué parte quedó sin cuantificar por falta de certeza — es preferible que el técnico agrande la cantidad a mano (fácil de corregir) a que la IA la infle sola (más difícil de notar en la revisión).
 4. Clasificar el riesgo de cada ítem: "urgente" (riesgo para alumnos/usuarios — vidrio roto, cableado expuesto, pérdida de agua activa, etc.), "funcional" (no urgente pero afecta el uso normal) o "mantenimiento" (estético/preventivo).
 5. Marcar es_restauracion=true si el relato indica que se puede reparar/recuperar lo existente en vez de proveer algo nuevo (ej. "se puede volver a amurar", "se puede reparar", "está dañado pero no hace falta cambiarlo").
    - Cuando es_restauracion=true Y elegiste un codigo_item real del catálogo (el catálogo tiene precios de PROVISIÓN E INSTALACIÓN NUEVA, no de reparación): estimá también "coeficiente_reparacion", un número de 0 a 1 que representa qué porcentaje del precio de ese ítem NUEVO es razonable cobrar por la reparación — el precio final de la reparación se calcula como precio_del_nuevo × coeficiente_reparacion. Guía orientativa (ajustá según lo que describa el relato/la foto, no uses siempre el mismo número):
@@ -300,6 +301,12 @@ serve(async (req) => {
           // empezó a cortarse a mitad del JSON en sectores con varios ítems, lo que producía
           // "La IA no devolvió un JSON válido" (502) reportado por el técnico en producción.
           max_tokens: 4096,
+          // Sin temperature, el default es 1 (máxima variabilidad) — el técnico reportó que la
+          // misma foto/relato daba resultados bien distintos entre una corrida y otra (una vez
+          // cuantificaba solo las cerámicas rotas, otra vez "todo el baño"). Bajarlo a 0.2 hace que
+          // corridas repetidas sobre el mismo insumo converjan a resultados más parecidos entre sí
+          // — sigue sin ser 100% determinístico, pero reduce mucho ese salto de un extremo al otro.
+          temperature: 0.2,
           system: promptRelevamiento(sector || '', relato || '', catalogoTexto),
           messages: [{ role: 'user', content: userContent }],
         }),
