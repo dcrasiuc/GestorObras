@@ -8,7 +8,14 @@ const corsHeaders = {
 // Prompts de extracción por tipo de documento analizado
 const PROMPTS = {
   comprobante: (hoy: string) =>
-    `Extraés datos de comprobantes para una app de gestión de obras de construcción. Respondé SOLO con JSON válido sin texto extra ni backticks. Campos: fecha (YYYY-MM-DD, si no hay usá ${hoy}), proveedor (nombre del emisor), cuit (CUIT o CUIL del emisor tal como aparece en el documento — solo dígitos sin guiones, ej: "20123456789", null si no se ve), receptor (nombre o razón social del CLIENTE/comprador a quien se emite el comprobante, null si no se ve), cuit_receptor (CUIT del CLIENTE/comprador/receptor — solo dígitos sin guiones, null si no se ve), nro_comprobante (número tal como aparece en el documento, ej: "0001-00012345", null si no se ve), tipo_comprobante (mirá el encabezado del documento y respondé: "factura_a" si dice FACTURA A o Tipo A, "factura_b" si dice FACTURA B o Tipo B, "factura_c" si dice FACTURA C o Tipo C, "recibo" si dice RECIBO, "ticket" si dice TICKET o TIQUE, null si no podés determinarlo con certeza), concepto (uno de: materiales, mano-obra, equipos, subcontratos, varios — inferilo del contenido), monto (número total del comprobante sin símbolo de moneda), iva_monto (importe de IVA discriminado en el comprobante, solo el número sin símbolo, null si no está discriminado), descripcion (1 frase breve del contenido).`,
+    `Extraés datos de comprobantes de compra (facturas, recibos, tickets) para una app de gestión de obras de construcción en Argentina. Mirá la imagen con cuidado ANTES de responder — priorizá leer bien por sobre responder rápido — y prestá atención a estos errores comunes de lectura:
+
+- FORMATO NUMÉRICO ARGENTINO: el punto "." separa miles y la coma "," separa decimales (ej: "15.450,00" es QUINCE MIL CUATROCIENTOS CINCUENTA, no "15,45"). Convertí siempre al valor numérico real, nunca copies el string tal cual está escrito.
+- "monto" es SIEMPRE el TOTAL FINAL a pagar: si el comprobante muestra varios importes (Subtotal, IVA, Percepciones, Total), tomá el TOTAL final (normalmente el último renglón, el que dice "TOTAL" y suele ser el importe más grande) — nunca un subtotal parcial antes de impuestos.
+- FECHA: los comprobantes argentinos casi siempre usan DD/MM/AAAA — no lo confundas con MM/DD/AAAA.
+- Si la imagen está borrosa, cortada, girada, con reflejo, o algún dato puntual no se distingue con certeza, es preferible dejar ESE campo en null (o el valor parcial que sí se alcanza a leer) antes que inventar un número o una letra que no estás seguro de haber leído bien.
+
+Respondé SOLO con JSON válido sin texto extra ni backticks. Campos: fecha (YYYY-MM-DD, si no hay usá ${hoy}), proveedor (nombre del emisor), cuit (CUIT o CUIL del emisor tal como aparece en el documento — solo dígitos sin guiones, ej: "20123456789", null si no se ve), receptor (nombre o razón social del CLIENTE/comprador a quien se emite el comprobante, null si no se ve), cuit_receptor (CUIT del CLIENTE/comprador/receptor — solo dígitos sin guiones, null si no se ve), nro_comprobante (número tal como aparece en el documento, ej: "0001-00012345", null si no se ve), tipo_comprobante (mirá el encabezado del documento y respondé: "factura_a" si dice FACTURA A o Tipo A, "factura_b" si dice FACTURA B o Tipo B, "factura_c" si dice FACTURA C o Tipo C, "recibo" si dice RECIBO, "ticket" si dice TICKET o TIQUE, null si no podés determinarlo con certeza), concepto (uno de: materiales, mano-obra, equipos, subcontratos, varios — inferilo del contenido), monto (número TOTAL final del comprobante, sin símbolo de moneda, ya convertido de formato argentino a un número normal), iva_monto (importe de IVA discriminado en el comprobante, solo el número sin símbolo, null si no está discriminado), descripcion (1 frase breve del contenido), confianza ("alta"|"media"|"baja" — qué tan segura estás de la lectura completa del comprobante: "baja" si la imagen está borrosa, cortada, con reflejo, o si algún dato clave —monto, fecha o CUIT— no se pudo leer con certeza y tuviste que estimarlo).`,
 
   poliza: (hoy: string) =>
     `Sos un EXPERTO EN SEGUROS DE CAUCIÓN Y GARANTÍAS DE OBRA PÚBLICA, analizando pólizas para una empresa constructora (SEATE S.R.L.). Leé la carátula del documento con criterio profesional — no solo copiés texto, INTERPRETÁ el tipo de garantía y sus condiciones. Respondé SOLO con JSON válido sin texto extra ni backticks. Campos:
@@ -142,6 +149,63 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
+    }
+
+    // ── Modo "subir_archivo": solo sube un archivo a Storage server-to-server, sin IA ──
+    // Antes, el comprobante de pago (ModalPago en GestorObras.jsx) se subía DIRECTO desde el
+    // cliente con supabase.storage.upload() — el mismo patrón que ya había fallado en mobile para
+    // fotos de relevamiento y documentos de pólizas, y que se había migrado a subir server-side vía
+    // esta función por esa razón. El comprobante de pago había quedado afuera de esa migración y
+    // seguía fallando ("da error" reportado en PC y mobile). Bucket restringido a una lista fija
+    // para no abrir esta función a subir a cualquier bucket arbitrario.
+    if (body.tipoAnalisis === 'subir_archivo') {
+      const { base64: b64Archivo, mimeType: mimeArchivo, bucket, carpeta } = body
+      const bucketsPermitidos = ['comprobantes-pagos']
+      if (!bucketsPermitidos.includes(bucket)) {
+        return new Response(JSON.stringify({ error: 'Bucket no permitido.' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400,
+        })
+      }
+      if (!b64Archivo) {
+        return new Response(JSON.stringify({ error: 'Falta el archivo.' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400,
+        })
+      }
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+        const storageKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY')!
+        const ext = (mimeArchivo || '').includes('pdf') ? 'pdf' : ((mimeArchivo || 'image/jpeg').split('/')[1] || 'jpg')
+        const key = `${carpeta || 'archivos'}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+        const bytes = Uint8Array.from(atob(b64Archivo), c => c.charCodeAt(0))
+        const up = await fetch(`${supabaseUrl}/storage/v1/object/${bucket}/${key}`, {
+          method: 'POST',
+          headers: {
+            'apikey': storageKey,
+            'Authorization': `Bearer ${storageKey}`,
+            'Content-Type': mimeArchivo || 'application/octet-stream',
+            'x-upsert': 'true',
+          },
+          body: bytes,
+        })
+        if (!up.ok) {
+          const errTxt = await up.text()
+          console.error('subir_archivo upload error:', up.status, errTxt)
+          return new Response(JSON.stringify({ error: 'No se pudo subir el archivo al storage.' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 502,
+          })
+        }
+        const url = `${supabaseUrl}/storage/v1/object/public/${bucket}/${key}`
+        return new Response(JSON.stringify({ url }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      } catch (e) {
+        console.error('subir_archivo exception:', e.message)
+        return new Response(JSON.stringify({ error: e.message }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 500,
+        })
+      }
     }
 
     // ── Modo IA: análisis de comprobante, póliza o relevamiento ──

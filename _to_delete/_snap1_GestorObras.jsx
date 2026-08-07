@@ -5,7 +5,6 @@ import Seguros from './Seguros'
 import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
 import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
 import { exportarExcel } from './exportExcel'
-import { exportarZipComprobantes } from './exportZip'
 import './toast'
 import Relevamientos from './Relevamientos'
 
@@ -259,10 +258,6 @@ export default function GestorObras({ usuario }) {
   const esAdmin = usuario?.perfil?.rol === 'admin'
   // Módulos en prueba (beta): visibles solo para el usuario de Daniel mientras se testea en producción.
   const enBeta = usuario?.email === 'dcrasiuc@gmail.com'
-  // El listado de comprobantes para el contador (export ZIP) lo puede emitir un admin, o puntualmente
-  // Marcelo (Juan Marcelo Marques, rol "operador") aunque no sea admin.
-  const esMarcelo = usuario?.email === 'marques.juan.marcelo@gmail.com'
-  const puedeExportarContador = esAdmin || esMarcelo
   const [panel, setPanel] = useState('inicio')
   const [pendingModal, setPendingModal] = useState(null)
   const [filtroObraId, setFiltroObraId] = useState('')
@@ -532,7 +527,7 @@ export default function GestorObras({ usuario }) {
           <div className="fade-up" key={panel}>
             {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} gastosGeneralesPorObra={gastosGeneralesPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} onVerDetalle={o => setObraDetalle(o)} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} puedeExportarContador={puedeExportarContador} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onExportarZip={() => abrirModal('exportarZip')} onRevertirPago={async g => { if (!window.confirm(`¿Revertir pago de ${g.proveedores?.nombre ?? 'este gasto'}? Quedará como pendiente/parcial.`)) return; await dbWrite('PATCH', 'gastos', { pagado: false }, `id=eq.${g.id}`); setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: false } : x)); recargarGastos(false) }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onRevertirPago={async g => { if (!window.confirm(`¿Revertir pago de ${g.proveedores?.nombre ?? 'este gasto'}? Quedará como pendiente/parcial.`)) return; await dbWrite('PATCH', 'gastos', { pagado: false }, `id=eq.${g.id}`); setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: false } : x)); recargarGastos(false) }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
             {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
             {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
@@ -594,7 +589,7 @@ export default function GestorObras({ usuario }) {
         cerrarModal(); recargarObras(true)
       }} />}
 
-      {modal === 'gasto' && obras.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obras} proveedores={proveedores} gastos={gastos} obraIdDefecto={filtroObraId} onClose={cerrarModal}
+      {modal === 'gasto' && obras.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
@@ -617,7 +612,7 @@ export default function GestorObras({ usuario }) {
         }}
       />}
 
-      {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} gastos={gastos} obraIdDefecto={filtroObraId} onClose={cerrarModal}
+      {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           // distribucion no es columna de gastos: se separa y se guarda en comprobante_obras
@@ -700,7 +695,6 @@ export default function GestorObras({ usuario }) {
       {obraDetalle && <ModalDetalleObra obra={obraDetalle} gastos={todosGastos} remitosPorObra={remitosPorObra} onClose={() => setObraDetalle(null)} />}
       <NotifPendientes gastos={todosGastos} esAdmin={esAdmin} onVerPendientes={() => { setPanel('gastos') }} />
       {modal === 'subidaMasiva' && <ModalSubidaMasiva gastos={todosGastos} onClose={cerrarModal} onDone={() => { cerrarModal(); recargarGastos(true) }} />}
-      {modal === 'exportarZip' && <ModalExportarZip gastos={todosGastos} onClose={cerrarModal} />}
     </>
   )
 }
@@ -1297,7 +1291,7 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
   )
 }
 
-function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, puedeExportarContador, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante, onSubidaMasiva, onExportarZip, onRevertirPago }) {
+function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante, onSubidaMasiva, onRevertirPago }) {
   // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
@@ -1348,9 +1342,8 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
   return (
     <div>
       <PageHeader titulo="Gastos" sub={`Total: $ ${fmt(total)}`}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
           {esAdmin && <BtnSecondary onClick={onSubidaMasiva}>📂 Comp. pagos</BtnSecondary>}
-          {puedeExportarContador && <BtnSecondary onClick={onExportarZip}>📦 Exportar ZIP</BtnSecondary>}
           <BtnSecondary onClick={onNuevoFoto}>📎 Comprobante</BtnSecondary>
           <BtnPrimary onClick={onNuevoManual}>+ Gasto</BtnPrimary>
         </div>
@@ -2262,40 +2255,11 @@ function PanelAdmin({ bancos, recargarListas }) {
   )
 }
 
-// ── Detección de comprobantes duplicados ────────────────────────
-// Los usuarios reportaron que el sistema no avisaba si un comprobante ya estaba cargado, y de
-// hecho pasaba: se duplicaba el mismo gasto dos veces. "Fuerte": mismo proveedor + mismo número
-// de comprobante (comparación insensible a mayúsculas/espacios) — prácticamente siempre es el
-// mismo comprobante cargado dos veces, así que ADEMÁS de mostrarse pide confirmación explícita
-// antes de guardar. "Débil": mismo proveedor + misma fecha + mismo monto pero sin nro_comprobante
-// para comparar (o distinto) — más heurístico, coincidencia real posible, así que solo se avisa
-// sin bloquear. excludeId es el id del propio gasto cuando se está editando (para no compararse
-// contra sí mismo).
-function buscarGastoDuplicado(gastos, form, excludeId) {
-  if (!form?.proveedor_id) return { fuerte: null, debil: null }
-  const nro = String(form.nro_comprobante || '').trim().toLowerCase()
-  const monto = parseFloat(form.monto) || 0
-  const candidatos = (gastos || []).filter(g => g.id !== excludeId && g.proveedor_id === form.proveedor_id)
-  const fuerte = nro
-    ? candidatos.find(g => String(g.nro_comprobante || '').trim().toLowerCase() === nro) || null
-    : null
-  const debil = !fuerte && monto > 0
-    ? candidatos.find(g => g.fecha === form.fecha && Math.abs((parseFloat(g.monto) || 0) - monto) < 0.5) || null
-    : null
-  return { fuerte, debil }
-}
-
-function ModalGasto({ itemEdit, obras, proveedores, gastos, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
+// ── Modales ───────────────────────────────────────────────────
+function ModalGasto({ itemEdit, obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: true, iva_monto: 0, es_gasto_general: false })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const dup = buscarGastoDuplicado(gastos, form, itemEdit?.id)
-  return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => {
-      if (dup.fuerte) {
-        const prov = proveedores.find(p => p.id === form.proveedor_id)?.nombre || 'este proveedor'
-        if (!window.confirm(`Ya hay un gasto cargado a ${prov} con el mismo Nº de comprobante (${dup.fuerte.nro_comprobante}, $${fmt(dup.fuerte.monto)}, ${dup.fuerte.fecha}).\n\n¿Guardar de todas formas?`)) return
-      }
-      onGuardar(form)
-    }}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} duplicado={dup} /></Modal>
+  return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => onGuardar(form)}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} /></Modal>
 }
 
 // ── Helpers de archivo (compresión de imágenes antes de subir) ──
@@ -2339,7 +2303,7 @@ async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.7) {
   ])
 }
 
-function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
+function ModalFoto({ obras, proveedores, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [step, setStep] = useState('upload')
   const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true, es_gasto_general: false })
   const [preview, setPreview] = useState(null)
@@ -2413,10 +2377,6 @@ function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuard
         const ivaMonto = parseFloat(parsed.iva_monto) || 0
         setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva, a_nombre_seate: aNombreSeate, iva_monto: ivaMonto }))
         if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) }, parsed.cuit || null, sitIA)
-        // La IA autoevalúa qué tan segura está de la lectura (imagen borrosa, cortada, dato dudoso,
-        // etc.) — si dice que es baja, se lo hacemos notar al usuario para que revise a mano antes
-        // de guardar, en vez de dejar pasar silenciosamente un dato mal leído.
-        if (parsed.confianza === 'baja') window._toast?.('⚠️ La IA no está segura de haber leído bien esta factura — revisá los datos antes de guardar', 'info')
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
         if (error) window._toast?.('IA no disponible — completá los datos manualmente')
@@ -2430,16 +2390,8 @@ function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuard
     }
   }
 
-  const dup = step === 'review' ? buscarGastoDuplicado(gastos, form, null) : { fuerte: null, debil: null }
-
   return (
-    <Modal title="Cargar comprobante" onClose={onClose} onGuardar={step === 'review' ? () => {
-        if (dup.fuerte) {
-          const prov = proveedores.find(p => p.id === form.proveedor_id)?.nombre || 'este proveedor'
-          if (!window.confirm(`Ya hay un gasto cargado a ${prov} con el mismo Nº de comprobante (${dup.fuerte.nro_comprobante}, $${fmt(dup.fuerte.monto)}, ${dup.fuerte.fecha}).\n\n¿Guardar de todas formas?`)) return
-        }
-        onGuardar({ ...form, proveedor_id: form.proveedor_id || null, monto: parseFloat(form.monto) || 0 })
-      } : null} guardarLabel="Guardar gasto">
+    <Modal title="Cargar comprobante" onClose={onClose} onGuardar={step === 'review' ? () => onGuardar({ ...form, proveedor_id: form.proveedor_id || null, monto: parseFloat(form.monto) || 0 }) : null} guardarLabel="Guardar gasto">
       {step === 'upload' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, border: `1.5px solid ${C.purple}`, borderRadius: 12, padding: '18px 24px', textAlign: 'center', cursor: 'pointer', background: C.purpleDim }}>
@@ -2476,7 +2428,7 @@ function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuard
         <div>
           {preview && <img src={preview} alt="" style={{ maxHeight: 80, borderRadius: 6, marginBottom: 12, display: 'block' }} />}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: C.purpleDim, color: C.purple, fontSize: 11, borderRadius: 99, marginBottom: 14, fontWeight: 600 }}>✨ Revisá los datos antes de guardar</div>
-          <FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} duplicado={dup} />
+          <FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} />
         </div>
       )}
     </Modal>
@@ -2613,53 +2565,44 @@ function ModalProveedor({ itemEdit, onClose, onGuardar }) {
 }
 
 // ── Subida de comprobante de pago (shared) ───────────────────
-// Comprime imagen a 600px (suficiente para un recibo), reintenta 1 vez si falla, timeout de 60s
-// por intento. Devuelve la URL pública o null si falló.
-// Antes esto subía DIRECTO desde el cliente con supabase.storage.upload() — el mismo patrón que ya
-// había fallado en mobile para fotos de relevamiento y documentos de pólizas, migrados hace rato a
-// subir server-side vía la Edge Function. El comprobante de pago había quedado afuera de esa
-// migración y por eso seguía dando error seguido, tanto en mobile como en PC. Ahora pasa por el
-// mismo modo "subir_archivo" de la Edge Function (server-to-server, service role key) que ya usan
-// los demás módulos.
+// Comprime imagen a 800px (suficiente para un recibo), reintenta 1 vez si falla,
+// timeout de 60s por intento. Devuelve la URL pública o null si falló.
 async function subirArchivoStorage(file, onProgress) {
   try {
-    let blob = file, mimeType = file.type || 'image/jpeg'
+    let blob = file, ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
     if (file.type === 'application/pdf') {
       if (file.size > 25 * 1024 * 1024) { window._toast?.('El PDF es muy pesado (máx ~25 MB).'); return null }
-      mimeType = 'application/pdf'
     } else {
-      try { blob = await comprimirImagenBlob(file, 600, 0.72); mimeType = 'image/jpeg' } catch { /* sube original */ }
+      try { blob = await comprimirImagenBlob(file, 600, 0.72); ext = 'jpg' } catch { /* sube original */ }
       // Si la compresión falló y el original es muy pesado, avisamos
       if (blob === file && file.size > 5 * 1024 * 1024) {
         window._toast?.('La foto es muy grande. Tomá una foto con menos resolución o desde la galería con calidad reducida.')
         return null
       }
     }
-    const base64 = await leerBase64(blob)
+    const path = `pagos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
 
-    const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
     const intentarUpload = () => Promise.race([
-      fetch(fnUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` },
-        body: JSON.stringify({ tipoAnalisis: 'subir_archivo', base64, mimeType, bucket: 'comprobantes-pagos', carpeta: 'pagos' }),
-      }).then(async r => ({ ok: r.ok, data: await r.json().catch(() => null) })),
-      new Promise(res => setTimeout(() => res({ ok: false, data: { error: 'timeout' } }), 60000)),
+      supabase.storage.from('comprobantes-pagos').upload(path, blob, { upsert: true }),
+      new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 60000))
     ])
 
     let res = await intentarUpload()
     // Reintento automático si fue timeout o error de red
-    if (!res.ok || res.data?.error) {
+    if (res?.error) {
       onProgress?.('Reintentando subida...')
       await new Promise(r => setTimeout(r, 1500))
       res = await intentarUpload()
     }
-    if (!res.ok || res.data?.error || !res.data?.url) {
-      window._toast?.('No se pudo subir el comprobante. Verificá la conexión e intentá de nuevo.')
+    if (res?.error) {
+      const esAuth = res.error.message?.includes('jwt') || res.error.message?.includes('unauthorized') || res.error.statusCode === '401'
+      const msg = esAuth
+        ? 'Sesión expirada. Cerrá sesión y volvé a ingresar.'
+        : 'No se pudo subir el comprobante. Verificá la conexión e intentá de nuevo.'
+      window._toast?.(msg)
       return null
     }
-    return res.data.url
+    return supabase.storage.from('comprobantes-pagos').getPublicUrl(path).data.publicUrl
   } catch (e) {
     console.warn('subirArchivoStorage:', e?.message || e)
     window._toast?.('No se pudo subir el comprobante. Verificá la conexión e intentá de nuevo.')
@@ -2979,53 +2922,6 @@ function ModalSubidaMasiva({ gastos, onClose, onDone }) {
   )
 }
 
-// ── Modal Exportar ZIP de comprobantes ───────────────────────
-// Pedido de los usuarios: poder juntar en un .zip las facturas y comprobantes de pago de un rango
-// de fechas para pasárselo al contador de una sola vez, con un listado en Excel adjunto.
-function ModalExportarZip({ gastos, onClose }) {
-  const hace30Dias = () => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10) }
-  const [fechaDesde, setFechaDesde] = useState(hace30Dias())
-  const [fechaHasta, setFechaHasta] = useState(hoy())
-  const [progreso, setProgreso] = useState(null)
-  const cantidadEnRango = gastos.filter(g => (!fechaDesde || g.fecha >= fechaDesde) && (!fechaHasta || g.fecha <= fechaHasta)).length
-
-  return (
-    <Modal
-      title="📦 Exportar comprobantes a ZIP"
-      onClose={onClose}
-      guardarLabel="Generar ZIP"
-      onGuardar={async () => {
-        if (cantidadEnRango === 0) throw new Error('No hay gastos cargados en ese rango de fechas.')
-        setProgreso({ i: 0, total: cantidadEnRango })
-        try {
-          const res = await exportarZipComprobantes(gastos, fechaDesde, fechaHasta, (i, total) => setProgreso({ i, total }))
-          const detalle = res.faltantes > 0 ? ` — ${res.faltantes} comprobante(s) no se pudieron incluir (sin archivo adjunto o falló la descarga)` : ''
-          window._toast?.(`ZIP generado: ${res.incluidos} archivo(s) de ${res.count} gasto(s)${detalle}`, res.faltantes > 0 ? 'info' : 'ok')
-          onClose()
-        } finally {
-          setProgreso(null)
-        }
-      }}
-    >
-      <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>
-        Arma un .zip con las facturas y comprobantes de pago de los gastos del rango elegido, más un listado en Excel con el detalle — para pasarle todo junto al contador.
-      </p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <Campo label="Desde"><input style={inputSt} type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} /></Campo>
-        <Campo label="Hasta"><input style={inputSt} type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} /></Campo>
-      </div>
-      <div style={{ marginTop: 12, fontSize: 12, color: C.textMuted }}>
-        {cantidadEnRango} gasto{cantidadEnRango === 1 ? '' : 's'} en este rango.
-      </div>
-      {progreso && (
-        <div style={{ marginTop: 10, fontSize: 12, color: C.purple }}>
-          Descargando comprobante {progreso.i} de {progreso.total}...
-        </div>
-      )}
-    </Modal>
-  )
-}
-
 // ── Modal Adjuntar Comprobante de Pago ───────────────────────
 function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
   const [subiendo, setSubiendo] = useState(null) // pagoId que está subiendo
@@ -3191,7 +3087,7 @@ function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
 }
 
 // ── FormGasto ─────────────────────────────────────────────────
-function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado }) {
+function FormGasto({ form, set, obras, proveedores, onNuevoProveedor }) {
   const handleProveedorChange = (provId) => {
     set('proveedor_id', provId)
     if (!provId) return
@@ -3213,18 +3109,6 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado 
   const esGeneral = !!form.es_gasto_general
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-      {(duplicado?.fuerte || duplicado?.debil) && (
-        <div style={{ gridColumn: '1/-1', padding: '10px 14px', borderRadius: 10, background: duplicado.fuerte ? '#FFEAEA' : '#FFF8ED', border: `1.5px solid ${duplicado.fuerte ? '#D0021B' : '#E8C070'}` }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: duplicado.fuerte ? '#D0021B' : '#8A5200' }}>
-            {duplicado.fuerte ? '⚠️ Posible comprobante duplicado' : '~ Ya hay un gasto muy parecido cargado'}
-          </div>
-          <div style={{ fontSize: 12, color: duplicado.fuerte ? '#D0021B' : '#8A5200', marginTop: 2 }}>
-            {duplicado.fuerte
-              ? `Mismo proveedor y mismo Nº de comprobante (${duplicado.fuerte.nro_comprobante}) que un gasto del ${duplicado.fuerte.fecha} por $${fmt(duplicado.fuerte.monto)}.`
-              : `Mismo proveedor, misma fecha (${duplicado.debil.fecha}) y mismo monto ($${fmt(duplicado.debil.monto)}) que otro gasto ya cargado — podría ser una coincidencia real, revisá antes de guardar.`}
-          </div>
-        </div>
-      )}
       {/* Toggle gasto general */}
       <div style={{ gridColumn: '1/-1' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '10px 14px', borderRadius: 10, background: esGeneral ? '#EEF4FF' : C.surface, border: `1.5px solid ${esGeneral ? '#2D5FA8' : C.border}`, transition: 'all 0.15s' }}>

@@ -12,7 +12,6 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",
     "docx": "8.5.0",
-    "jszip": "3.10.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "xlsx": "^0.18.5"
