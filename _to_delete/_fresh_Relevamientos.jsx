@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient'
 import { dbWrite, fmt } from './utils'
 import { C } from './constants'
 import './toast'
+import { exportarPresupuestoRelevamiento, generarInformeTecnicoRelevamiento } from './exportRelevamiento'
 
 // Llama a la Edge Function analizar-comprobante en modo "relevamiento": la IA lee de verdad las
 // fotos del sector (ya subidas a Storage) + el relato dictado, y devuelve ítems matcheados contra
@@ -27,7 +28,7 @@ async function analizarSectorConIA({ fotoUrls, relato, sector }) {
 // ── Compresión y subida de fotos de relevamiento a Storage ("relevamientos-fotos") ─────────────
 // Mismo patrón usado en Seguros.jsx (subirDocumentoStorage): comprime a JPG antes de subir,
 // reintenta una vez si falla, y devuelve la URL pública o null.
-async function _canvasComprimidoRelevamiento(file, maxLado = 1600) {
+async function _canvasComprimidoRelevamiento(file, maxLado = 1280) {
   const objUrl = URL.createObjectURL(file)
   const img = await Promise.race([
     new Promise((res, rej) => { const i = new Image(); i.onerror = () => { URL.revokeObjectURL(objUrl); rej(new Error('img error')) }; i.onload = () => res(i); i.src = objUrl }),
@@ -41,7 +42,7 @@ async function _canvasComprimidoRelevamiento(file, maxLado = 1600) {
   canvas.getContext('2d').drawImage(img, 0, 0, w, h)
   return canvas
 }
-async function _comprimirImagenBlobRelevamiento(file, maxLado = 1600, calidad = 0.72) {
+async function _comprimirImagenBlobRelevamiento(file, maxLado = 1280, calidad = 0.65) {
   const canvas = await _canvasComprimidoRelevamiento(file, maxLado)
   return await Promise.race([
     new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob null')), 'image/jpeg', calidad)),
@@ -462,6 +463,9 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
   // confirmar con certeza si el ítem existe en Revista Cifras antes de escribir uno libre.
   const [rubroFiltro, setRubroFiltro] = useState('')
 
+  const [generandoInforme, setGenerandoInforme] = useState(false)
+  const [generandoPresupuesto, setGenerandoPresupuesto] = useState(false)
+
   const sectorActualObj = sectores.find((s) => s.nombre === sectorActivo)
   const mensajesDelSector = mensajes.filter((m) => m.sector === sectorActivo)
 
@@ -876,6 +880,48 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
     setRubrosAcumulados((prev) => [...prev, _filaDbAItem(row)])
     cerrarModalManual()
     if (window._toast) window._toast('Ítem cargado manualmente con éxito', 'ok')
+  }
+
+  // Genera el Informe Técnico (Word) con los ítems y mensajes de auditoría ya persistidos de
+  // TODO el relevamiento (todos los sectores, no solo el activo) — ver exportRelevamiento.js.
+  const handleGenerarInforme = async () => {
+    if (rubrosAcumulados.length === 0) {
+      window._toast?.('Cargá al menos un ítem antes de generar el informe.', 'error')
+      return
+    }
+    setGenerandoInforme(true)
+    try {
+      await generarInformeTecnicoRelevamiento(relevamiento, rubrosAcumulados, mensajes)
+      window._toast?.('Informe Técnico generado', 'ok')
+    } catch (err) {
+      console.error(err)
+      window._toast?.('No se pudo generar el informe: ' + err.message, 'error')
+    } finally {
+      setGenerandoInforme(false)
+    }
+  }
+
+  // Genera el Presupuesto (Excel, 2 hojas: PRESUPUESTO por rubro + Anexo por Sector) — los ítems
+  // sin precio de catálogo quedan marcados "A cotizar" en vez de inventarles un precio.
+  const handleExportarPresupuesto = () => {
+    if (rubrosAcumulados.length === 0) {
+      window._toast?.('Cargá al menos un ítem antes de exportar el presupuesto.', 'error')
+      return
+    }
+    setGenerandoPresupuesto(true)
+    try {
+      const { itemsSinPrecioCount } = exportarPresupuestoRelevamiento(relevamiento, rubrosAcumulados)
+      if (itemsSinPrecioCount > 0) {
+        window._toast?.(`Presupuesto exportado — ${itemsSinPrecioCount} ítem(s) sin precio de catálogo quedaron marcados "A cotizar".`, 'info')
+      } else {
+        window._toast?.('Presupuesto exportado', 'ok')
+      }
+    } catch (err) {
+      console.error(err)
+      window._toast?.('No se pudo exportar el presupuesto: ' + err.message, 'error')
+    } finally {
+      setGenerandoPresupuesto(false)
+    }
   }
 
   return (
@@ -1344,11 +1390,19 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
 
       {/* Botones Finales */}
       <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
-        <button style={{ backgroundColor: C.surface, color: C.purple, border: `1px solid ${C.purple}`, padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-          📄 Generar Informe Técnico General (PDF/Word)
+        <button
+          onClick={handleGenerarInforme}
+          disabled={generandoInforme}
+          style={{ backgroundColor: C.surface, color: C.purple, border: `1px solid ${C.purple}`, padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: generandoInforme ? 'default' : 'pointer', opacity: generandoInforme ? 0.6 : 1 }}
+        >
+          {generandoInforme ? 'Generando informe...' : '📄 Generar Informe Técnico General (Word)'}
         </button>
-        <button style={{ backgroundColor: C.green, color: '#FFF', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-          📊 Exportar Presupuesto y Anexo por Sector
+        <button
+          onClick={handleExportarPresupuesto}
+          disabled={generandoPresupuesto}
+          style={{ backgroundColor: C.green, color: '#FFF', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: generandoPresupuesto ? 'default' : 'pointer', opacity: generandoPresupuesto ? 0.6 : 1 }}
+        >
+          {generandoPresupuesto ? 'Exportando...' : '📊 Exportar Presupuesto y Anexo por Sector'}
         </button>
       </div>
     </div>

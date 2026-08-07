@@ -25,27 +25,6 @@ async function analizarSectorConIA({ fotoUrls, relato, sector }) {
   return data // { especialista, mensaje_auditoria, alertas_omision, items: [...] }
 }
 
-// Llama a la Edge Function en modo "consulta_relevamiento": chat real sobre un cómputo ya
-// generado (propuesto o confirmado) para un sector — le manda los ítems reales (no lo que "cree
-// recordar" el modelo) para que pueda explicar de dónde sale una cantidad o un precio, en vez de
-// la simulación anterior que solo reaccionaba a palabras clave sin responder nada de verdad.
-async function consultarSectorConIA({ sector, pregunta, itemsContexto, historial }) {
-  const fnUrl = 'https://oyqmowolwwjjuarxttuh.supabase.co/functions/v1/analizar-comprobante'
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('La IA tardó demasiado en responder. Probá de nuevo.')), 30000))
-  const respRaw = await Promise.race([
-    fetch(fnUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` },
-      body: JSON.stringify({ tipoAnalisis: 'consulta_relevamiento', sector, pregunta, itemsContexto, historial }),
-    }),
-    timeout,
-  ])
-  const data = await respRaw.json()
-  if (!respRaw.ok || data?.error) throw new Error(data?.error || `HTTP ${respRaw.status}`)
-  return data.respuesta // string
-}
-
 // ── Compresión y subida de fotos de relevamiento a Storage ("relevamientos-fotos") ─────────────
 // Mismo patrón usado en Seguros.jsx (subirDocumentoStorage): comprime a JPG antes de subir,
 // reintenta una vez si falla, y devuelve la URL pública o null.
@@ -114,22 +93,15 @@ function _filaDbAItem(i) {
     fotoUrl: i.foto_url,
     precioUnitario: i.precio_unitario ?? null,
     subtotal: i.subtotal ?? null,
-    // % del precio de un ítem nuevo que se cobró por la reparación (1 = precio completo/ítem nuevo).
-    coeficienteAjuste: i.coeficiente_ajuste ?? 1,
   }
 }
 // Persiste un ítem de cómputo en relevamiento_items y devuelve la fila insertada (o null si falló).
 // codigoItem: si viene explícitamente en null (la IA no encontró match en el catálogo y prefirió
 // no inventar un código), se respeta ese null y NO se intenta adivinar uno con la regex — solo se
 // usa el fallback por regex cuando el llamador ni siquiera pasó la clave (carga manual).
-// coeficienteAjuste: para ítems de restauración/reparación, la fracción (0 a 1] del precio del
-// ítem nuevo equivalente que se considera razonable cobrar por reparar el existente en vez de
-// reemplazarlo. precioUnitario ya debe venir con ese ajuste aplicado (es el precio efectivo).
-async function _persistirItem(relevamientoId, { rubro, item, descripcionDetallada, un, cant, sector, riesgo, esRestauracion, codigoItem, fotoUrl, precioUnitario, coeficienteAjuste }) {
+async function _persistirItem(relevamientoId, { rubro, item, descripcionDetallada, un, cant, sector, riesgo, esRestauracion, codigoItem, fotoUrl, precioUnitario }) {
   const cantidadNum = parseFloat(cant) || 0
   const precioNum = precioUnitario != null && precioUnitario !== '' ? parseFloat(precioUnitario) : null
-  const coefNum = parseFloat(coeficienteAjuste)
-  const coeficienteAjusteNum = Number.isFinite(coefNum) && coefNum > 0 && coefNum <= 1 ? coefNum : 1
   const payload = {
     relevamiento_id: relevamientoId,
     sector,
@@ -147,7 +119,6 @@ async function _persistirItem(relevamientoId, { rubro, item, descripcionDetallad
     riesgo: riesgo || 'funcional',
     precio_unitario: precioNum,
     subtotal: precioNum != null ? +(cantidadNum * precioNum).toFixed(2) : null,
-    coeficiente_ajuste: coeficienteAjusteNum,
   }
   try {
     return await dbWrite('POST', 'relevamiento_items', payload, null, true)
@@ -476,22 +447,10 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
   const [relato, setRelato] = useState('')
   const [rubrosAcumulados, setRubrosAcumulados] = useState([])
   const [procesando, setProcesando] = useState(false)
-  // Ítems que propuso la IA para el sector activo pero TODAVÍA no se guardaron en la base — el
-  // técnico revisa/corrige la cantidad de cada uno (medición estimada) antes de confirmarlos.
-  // Cada elemento: { rubro, item, descripcionDetallada, un, cant, riesgo, esRestauracion,
-  // codigoItem, precioUnitario, confianzaMedicion }.
-  const [itemsPropuestos, setItemsPropuestos] = useState([])
-  const [confirmandoPropuestos, setConfirmandoPropuestos] = useState(false)
-  // Cuando el sector está cerrado, el cómputo arranca compacto (colapsado) para que la pantalla
-  // no quede tan larga — se puede expandir a pedido. Mientras el sector sigue abierto (en edición)
-  // siempre se ve completo. Se resetea a colapsado cada vez que se cambia de sector.
-  const [verDetalleCerrado, setVerDetalleCerrado] = useState(false)
-  useEffect(() => { setVerDetalleCerrado(false) }, [sectorActivo])
   const [grabandoAudio, setGrabandoAudio] = useState(false)
   const [cargandoDatos, setCargandoDatos] = useState(true)
 
   const [chatTexto, setChatTexto] = useState('')
-  const [consultandoChat, setConsultandoChat] = useState(false)
   const [mensajes, setMensajes] = useState([]) // { id, sector, emisor: 'tecnico'|'ia', mensaje }
   const [historialOculto, setHistorialOculto] = useState(false)
   const [grabandoAudioChat, setGrabandoAudioChat] = useState(false)
@@ -499,8 +458,6 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
   const [modalManual, setModalNuevoManual] = useState(false)
   const [itemManual, setItemManual] = useState({ rubro: 'INSTALACION SANITARIA', item: '', descripcionDetallada: '', un: 'unid', cant: 1, esRestauracion: false, riesgo: 'urgente', codigoItem: null, precioUnitario: null })
   const [catalogoCifras, setCatalogoCifras] = useState([])
-  const [catalogoCargando, setCatalogoCargando] = useState(false)
-  const [catalogoError, setCatalogoError] = useState(false)
   // '' = todavía no eligió rubro; '__libre__' = "no está en ningún rubro del catálogo, cargar libre";
   // cualquier otro valor = un rubro REAL de catalogo_cifras, para poder listar sus ítems y
   // confirmar con certeza si el ítem existe en Revista Cifras antes de escribir uno libre.
@@ -514,30 +471,14 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
 
   // Carga el catálogo real (234 ítems) recién al abrir el modal manual, para buscarlo/matchearlo
   // ahí — antes la carga manual no tenía forma de matchear contra catalogo_cifras y quedaba sin
-  // precio siempre. Failsafe de 12s + try/catch (mismo patrón que useObras/useGastos y los hooks
-  // de Seguros.jsx): sin esto, con conexión celular inestable la consulta podía colgar y el
-  // selector de rubro se quedaba en "Cargando catálogo..." para siempre, sin ninguna salida.
-  const cargarCatalogoCifras = useCallback(async () => {
-    setCatalogoCargando(true)
-    setCatalogoError(false)
-    const failsafe = setTimeout(() => { setCatalogoCargando(false); setCatalogoError(true) }, 12000)
-    try {
-      const { data, error } = await supabase.from('catalogo_cifras').select('codigo_item,rubro,descripcion,unidad,precio_material,precio_mano_obra,precio_unitario_total').order('codigo_item')
-      if (error) throw error
-      setCatalogoCifras(data || [])
-    } catch (e) {
-      console.error('Error al cargar catalogo_cifras:', e)
-      setCatalogoError(true)
-    } finally {
-      clearTimeout(failsafe)
-      setCatalogoCargando(false)
-    }
-  }, [])
-
+  // precio siempre.
   useEffect(() => {
     if (!modalManual || catalogoCifras.length > 0) return
-    cargarCatalogoCifras()
-  }, [modalManual, catalogoCifras.length, cargarCatalogoCifras])
+    supabase.from('catalogo_cifras').select('codigo_item,rubro,descripcion,unidad,precio_material,precio_mano_obra,precio_unitario_total').order('codigo_item').then(({ data, error }) => {
+      if (error) { console.error('Error al cargar catalogo_cifras:', error); return }
+      setCatalogoCifras(data || [])
+    })
+  }, [modalManual, catalogoCifras.length])
 
   // Rubros REALES del catálogo (no una lista fija a mano) — son 20 en la Revista Cifras, distintos
   // de los que había hardcodeados antes (que no coincidían exactamente: p. ej. el catálogo separa
@@ -792,10 +733,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
     try {
       // La IA lee de verdad las fotos + el relato y devuelve ítems matcheados contra el catálogo
       // real de precios (catalogo_cifras, 234 ítems) — ver Edge Function analizar-comprobante,
-      // modo "relevamiento". Los ítems NO se guardan todavía: quedan como propuesta para que el
-      // técnico revise/corrija la cantidad (medición estimada) antes de confirmarlos — antes se
-      // guardaban directo y una medición mal estimada por la IA (ej. 45m² en vez de 35m²) quedaba
-      // persistida sin que nadie la revisara primero.
+      // modo "relevamiento".
       const resultado = await analizarSectorConIA({ fotoUrls: fotoUrlsListas, relato: relato.trim(), sector: sectorActivo })
       const itemsIA = resultado.items || []
       if (itemsIA.length === 0) {
@@ -803,28 +741,21 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
         return
       }
 
-      setItemsPropuestos((prev) => [
-        ...prev,
-        ...itemsIA.map((it) => ({
-          rubro: it.rubro,
-          item: it.descripcion_item,
-          descripcionDetallada: it.justificacion || '',
-          un: it.unidad,
-          cant: it.cantidad, // editable — es la estimación de la IA, no un valor final
-          riesgo: it.riesgo,
-          esRestauracion: it.es_restauracion,
-          codigoItem: it.codigo_item, // puede venir null a propósito — no inventar código
-          fotoUrl: fotoUrlCompuesta,
-          // Si es restauración con match de catálogo, precio_unitario_ajustado ya viene con el %
-          // de reparación aplicado (calculado en el backend); si no, es el mismo precio del ítem
-          // nuevo (coeficiente 1). precioReferenciaNuevo se guarda aparte para poder mostrar
-          // "precio de un ítem nuevo" vs "precio de la reparación" en la revisión.
-          precioUnitario: it.precio_unitario_ajustado ?? it.precio_unitario_total ?? null,
-          precioReferenciaNuevo: it.precio_unitario_total ?? null,
-          coeficienteAjuste: Number.isFinite(parseFloat(it.coeficiente_ajuste)) ? parseFloat(it.coeficiente_ajuste) : 1,
-          confianzaMedicion: it.confianza_medicion || 'media',
-        })),
-      ])
+      const filas = await Promise.all(itemsIA.map((it) => _persistirItem(relevamiento.id, {
+        rubro: it.rubro,
+        item: it.descripcion_item,
+        descripcionDetallada: it.justificacion || '',
+        un: it.unidad,
+        cant: it.cantidad,
+        sector: sectorActivo,
+        riesgo: it.riesgo,
+        esRestauracion: it.es_restauracion,
+        codigoItem: it.codigo_item, // puede venir null a propósito — no inventar código
+        fotoUrl: fotoUrlCompuesta,
+        precioUnitario: it.precio_unitario_total,
+      })))
+      const filasOk = filas.filter(Boolean)
+      setRubrosAcumulados((prev) => [...prev, ...filasOk.map(_filaDbAItem)])
 
       const especialistaTexto = resultado.especialista || especialistaActual.titulo
       const mensajesTexto = [`**${especialistaTexto}**: ${resultado.mensaje_auditoria || 'Análisis completado.'}`]
@@ -836,12 +767,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
         if (row) mensajesGuardados.push({ id: row.id, sector: row.sector, emisor: row.emisor, mensaje: row.mensaje })
       }
       setMensajes((prev) => [...prev, ...mensajesGuardados])
-      // Se limpia el relato y las fotos de este sector ya procesado — si no, al dictar/cargar algo
-      // NUEVO y volver a apretar "Procesar IA" se reenviaba el relato viejo junto con el nuevo y la
-      // IA volvía a proponer los mismos ítems ya propuestos, duplicando el cómputo.
-      setRelato('')
-      setFotosSector([])
-      if (window._toast) window._toast(`${especialistaTexto} propone ${itemsIA.length} ítem(s) — revisá la medición antes de confirmar`, 'ok')
+      if (window._toast) window._toast(`Análisis por ${especialistaTexto} incorporado a "${sectorActivo}"`, 'ok')
     } catch (err) {
       console.error(err)
       window._toast?.('No se pudo analizar con IA: ' + err.message, 'error')
@@ -850,111 +776,33 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
     }
   }
 
-  // Edita en pantalla la cantidad de un ítem TODAVÍA no confirmado (propuesta de la IA).
-  const handleCambiarCantidadPropuesta = (idx, nuevaCant) => {
-    setItemsPropuestos((prev) => prev.map((it, i) => (i === idx ? { ...it, cant: nuevaCant } : it)))
-  }
-  // Edita el % del precio del ítem nuevo que se va a cobrar por la reparación (solo aplica a
-  // ítems de restauración con un precio de referencia de catálogo). Recalcula precioUnitario en
-  // base al nuevo %, redondeado a 2 decimales. Si el % ingresado no es válido, no toca nada.
-  const handleCambiarCoeficientePropuesta = (idx, valorPorcentaje) => {
-    const pct = parseFloat(valorPorcentaje)
-    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return
-    setItemsPropuestos((prev) => prev.map((it, i) => {
-      if (i !== idx) return it
-      const coef = pct / 100
-      const nuevoPrecio = it.precioReferenciaNuevo != null ? +(it.precioReferenciaNuevo * coef).toFixed(2) : it.precioUnitario
-      return { ...it, coeficienteAjuste: coef, precioUnitario: nuevoPrecio }
-    }))
-  }
-  const handleQuitarPropuesto = (idx) => {
-    setItemsPropuestos((prev) => prev.filter((_, i) => i !== idx))
-  }
-  // Guarda de verdad en relevamiento_items los ítems que quedaron en la lista de propuestas (los
-  // que el técnico haya sacado con "✕" ya no están acá) con la cantidad que haya confirmado o
-  // corregido — recién acá se persiste, nunca antes.
-  const handleConfirmarPropuestos = async () => {
-    const aGuardar = itemsPropuestos
-    if (aGuardar.length === 0) {
-      window._toast?.('No queda ningún ítem propuesto para guardar.', 'error')
-      return
-    }
-    setConfirmandoPropuestos(true)
-    try {
-      const filas = await Promise.all(aGuardar.map((it) => _persistirItem(relevamiento.id, {
-        rubro: it.rubro,
-        item: it.item,
-        descripcionDetallada: it.descripcionDetallada,
-        un: it.un,
-        cant: it.cant,
-        sector: sectorActivo,
-        riesgo: it.riesgo,
-        esRestauracion: it.esRestauracion,
-        codigoItem: it.codigoItem,
-        fotoUrl: it.fotoUrl,
-        precioUnitario: it.precioUnitario,
-        coeficienteAjuste: it.coeficienteAjuste,
-      })))
-      const filasOk = filas.filter(Boolean)
-      setRubrosAcumulados((prev) => [...prev, ...filasOk.map(_filaDbAItem)])
-      setItemsPropuestos([])
-      if (window._toast) window._toast(`${filasOk.length} ítem(s) confirmados y guardados`, 'ok')
-    } finally {
-      setConfirmandoPropuestos(false)
-    }
-  }
-  const handleDescartarPropuestos = () => {
-    if (!window.confirm('¿Descartar todos los ítems propuestos por la IA para este sector? No se va a guardar nada.')) return
-    setItemsPropuestos([])
-  }
-
-  // Pregunta real al especialista sobre el cómputo YA generado de este sector (ej. "¿por qué
-  // 12 metros de cable?", "¿de dónde sale que la instalación de 12 spots vale $1.100.000?").
-  // Antes esto era una simulación: contestaba un texto fijo y solo reaccionaba a las palabras
-  // "amurar"/"reparar"/"fijar" (modificando un ítem hardcodeado de lavatorio) — nunca respondía
-  // nada de verdad. Ahora se le mandan a la IA los ítems reales del sector (propuestos sin
-  // confirmar + ya guardados) para que explique en base a esos números, sin inventar ninguno
-  // nuevo. La IA solo explica — no modifica ítems por chat; para corregir un número, el técnico
-  // lo edita directamente en la cantidad/% de la pantalla de revisión o del ítem guardado.
   const handleEnviarConsultaChat = async (e) => {
     e.preventDefault()
-    if (!chatTexto.trim() || consultandoChat) return
+    if (!chatTexto.trim()) return
     const txt = chatTexto.trim()
     setChatTexto('')
 
     const filaTecnico = await dbWrite('POST', 'relevamiento_mensajes', { relevamiento_id: relevamiento.id, sector: sectorActivo, emisor: 'tecnico', mensaje: txt }, null, true).catch((err) => { console.error(err); return null })
-    const mensajeTecnico = filaTecnico
-      ? { id: filaTecnico.id, sector: filaTecnico.sector, emisor: filaTecnico.emisor, mensaje: filaTecnico.mensaje }
-      : { id: `local-${Math.random().toString(36).slice(2)}`, sector: sectorActivo, emisor: 'tecnico', mensaje: txt }
-    setMensajes((prev) => [...prev, mensajeTecnico])
+    if (filaTecnico) setMensajes((prev) => [...prev, { id: filaTecnico.id, sector: filaTecnico.sector, emisor: filaTecnico.emisor, mensaje: filaTecnico.mensaje }])
 
-    setConsultandoChat(true)
-    try {
-      const aContexto = (it) => ({
-        codigo_item: it.codigoItem,
-        rubro: it.rubro,
-        descripcion_item: it.item,
-        unidad: it.un,
-        cantidad: it.cant,
-        precio_unitario: it.precioUnitario,
-        coeficiente_ajuste: it.coeficienteAjuste,
-        justificacion: it.descripcionDetallada,
-      })
-      const itemsContexto = [
-        ...itemsPropuestos.map(aContexto),
-        ...rubrosAcumulados.filter((i) => i.sector === sectorActivo).map(aContexto),
-      ]
-      const historialParaIA = [...mensajesDelSector, mensajeTecnico]
-      const rtaTexto = await consultarSectorConIA({ sector: sectorActivo, pregunta: txt, itemsContexto, historial: historialParaIA })
-      const rta = `**${especialistaActual.titulo}**: ${rtaTexto}`
+    setTimeout(async () => {
+      let rta = `**${especialistaActual.titulo}**: Entendido ("${txt}"). Ajustamos el cómputo del sector en base a tu indicación técnica.`
+      const itemAActualizar = rubrosAcumulados.find((i) => i.sector === sectorActivo && i.rubro === 'INSTALACION SANITARIA' && i.item.includes('184. Lavatorio'))
+
+      if ((txt.toLowerCase().includes('amurar') || txt.toLowerCase().includes('reparar') || txt.toLowerCase().includes('fijar')) && itemAActualizar) {
+        const cambios = { descripcion_item: 'Reparación y re-amurado de lavatorio/bacha existente', notas_campo: 'Re-amurado, fijación sobre paramento y sellado de bacha existente', unidad: 'gl', cantidad: 1, computo_total: 1, es_restauracion: true }
+        try {
+          await dbWrite('PATCH', 'relevamiento_items', cambios, `id=eq.${itemAActualizar.id}`)
+          setRubrosAcumulados((prev) => prev.map((i) => (i.id === itemAActualizar.id ? { ...i, item: cambios.descripcion_item, descripcionDetallada: cambios.notas_campo, un: cambios.unidad, cant: cambios.cantidad, esRestauracion: true } : i)))
+          rta = `**${especialistaActual.titulo}**: ¡Perfecto! Modifiqué la tabla de abajo: cambié la provisión de bacha nueva por el ítem **"Reparación y re-amurado de lavatorio existente (gl)"**.`
+        } catch (err) {
+          console.error(err)
+        }
+      }
+
       const filaIa = await dbWrite('POST', 'relevamiento_mensajes', { relevamiento_id: relevamiento.id, sector: sectorActivo, emisor: 'ia', mensaje: rta }, null, true).catch((err) => { console.error(err); return null })
       if (filaIa) setMensajes((prev) => [...prev, { id: filaIa.id, sector: filaIa.sector, emisor: filaIa.emisor, mensaje: filaIa.mensaje }])
-    } catch (err) {
-      console.error(err)
-      window._toast?.('No se pudo consultar a la IA: ' + err.message, 'error')
-    } finally {
-      setConsultandoChat(false)
-    }
+    }, 800)
   }
 
   // Los mensajes ahora son el historial de auditoría persistido en relevamiento_mensajes — ya no
@@ -964,11 +812,9 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
   }
 
   const handleCerrarSector = () => {
-    if (itemsPropuestos.length > 0 && !window.confirm('Tenés ítems propuestos por la IA sin confirmar en este sector — se van a perder si lo cerrás. ¿Continuar?')) return
     setSectores((prev) =>
       prev.map((s) => (s.nombre === sectorActivo ? { ...s, cerrado: true } : s))
     )
-    setItemsPropuestos([])
     if (window._toast) window._toast(`Sector "${sectorActivo}" cerrado con éxito`, 'ok')
   }
 
@@ -1117,11 +963,9 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
               <div
                 key={s.nombre}
                 onClick={() => {
-                  if (itemsPropuestos.length > 0 && !window.confirm('Tenés ítems propuestos por la IA sin confirmar en el sector actual — se van a perder si cambiás de sector. ¿Continuar?')) return
                   setSectorActivo(s.nombre)
                   setFotosSector([])
                   setRelato('')
-                  setItemsPropuestos([])
                 }}
                 style={{
                   display: 'inline-flex',
@@ -1251,111 +1095,6 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
             >
               {procesando ? 'Procesando Fotos y Relato con IA...' : `✨ Procesar e Equiparar Cifras para ${sectorActivo}`}
             </button>
-
-            {/* Ítems propuestos por la IA — TODAVÍA no guardados. El técnico revisa/corrige la
-                cantidad de cada uno (medición estimada) antes de confirmar — así una estimación
-                mal calculada por la IA no queda guardada sin que nadie la mire primero. */}
-            {itemsPropuestos.length > 0 && (
-              <div style={{ marginTop: '16px', backgroundColor: '#FFF8ED', border: `1px solid #E8C070`, borderRadius: '10px', padding: '14px' }}>
-                <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#8A5200', marginBottom: '4px' }}>
-                  📐 La IA propone {itemsPropuestos.length} ítem(s) — revisá la medición antes de confirmar
-                </div>
-                <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: C.textMuted }}>
-                  Ninguno de estos ítems está guardado todavía. Corregí la cantidad si hace falta, sacá los que no correspondan, y confirmá para recién ahí guardarlos.
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
-                  {itemsPropuestos.map((it, idx) => {
-                    const badgeConfianza = {
-                      alta: { texto: '✓ Medición confiable', bg: C.greenDim, color: C.green },
-                      media: { texto: '~ Estimación aproximada', bg: '#FFF3D6', color: '#8A5200' },
-                      baja: { texto: '⚠ Sin referencia de escala clara', bg: '#FFEAEA', color: '#D0021B' },
-                    }[it.confianzaMedicion] || { texto: '~ Estimación aproximada', bg: '#FFF3D6', color: '#8A5200' }
-                    return (
-                      <div key={idx} style={{ backgroundColor: C.surface, padding: '10px 12px', borderRadius: '8px', border: `1px solid ${C.border}` }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
-                          <div style={{ flex: 1, minWidth: '180px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '2px' }}>
-                              <span style={{ fontSize: '10px', color: C.purple, fontWeight: 'bold', textTransform: 'uppercase' }}>
-                                {it.codigoItem ? `#${it.codigoItem} — ` : ''}{it.rubro}
-                              </span>
-                              <span style={{ backgroundColor: badgeConfianza.bg, color: badgeConfianza.color, padding: '1px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' }}>
-                                {badgeConfianza.texto}
-                              </span>
-                            </div>
-                            <span style={{ fontSize: '13px', fontWeight: 'bold', color: C.text, display: 'block' }}>{it.item}</span>
-                            {it.descripcionDetallada && (
-                              <span style={{ fontSize: '12px', color: C.textMuted, fontStyle: 'italic', display: 'block', marginTop: '2px' }}>
-                                {it.descripcionDetallada}
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => handleQuitarPropuesto(idx)}
-                            title="Quitar esta propuesta"
-                            style={{ backgroundColor: 'transparent', border: 'none', color: '#D0021B', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-                          <span style={{ fontSize: '11px', color: C.textMuted }}>La IA estimó:</span>
-                          <input
-                            type="number"
-                            value={it.cant}
-                            onChange={(e) => handleCambiarCantidadPropuesta(idx, e.target.value)}
-                            style={{ width: '80px', padding: '5px', borderRadius: '6px', border: `1px solid ${C.purple}`, fontWeight: 'bold', textAlign: 'center' }}
-                          />
-                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: C.purple }}>{it.un}</span>
-                          {it.precioUnitario != null && (
-                            <span style={{ fontSize: '12px', color: C.textMuted, marginLeft: 'auto' }}>
-                              ${fmt(it.precioUnitario)}/{it.un} → ${fmt((parseFloat(it.cant) || 0) * it.precioUnitario)}
-                            </span>
-                          )}
-                        </div>
-                        {it.esRestauracion && it.precioReferenciaNuevo != null && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', paddingTop: '8px', borderTop: `1px dashed ${C.border}`, flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '11px', color: '#8A5200', fontWeight: 'bold' }}>🔧 Reparación (no reemplazo):</span>
-                            <span style={{ fontSize: '11px', color: C.textMuted }}>
-                              Ítem nuevo equivalente: ${fmt(it.precioReferenciaNuevo)}/{it.un}
-                            </span>
-                            <span style={{ fontSize: '11px', color: C.textMuted }}>×</span>
-                            <input
-                              type="number"
-                              min="1"
-                              max="100"
-                              value={Math.round((it.coeficienteAjuste ?? 1) * 100)}
-                              onChange={(e) => handleCambiarCoeficientePropuesta(idx, e.target.value)}
-                              style={{ width: '56px', padding: '5px', borderRadius: '6px', border: '1px solid #8A5200', fontWeight: 'bold', textAlign: 'center' }}
-                            />
-                            <span style={{ fontSize: '11px', color: C.textMuted }}>% =</span>
-                            <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#8A5200' }}>
-                              ${fmt(it.precioUnitario)}/{it.un}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    onClick={handleDescartarPropuestos}
-                    style={{ backgroundColor: 'transparent', border: `1px solid ${C.border}`, padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', color: C.textMuted, fontSize: '13px' }}
-                  >
-                    Descartar todos
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmarPropuestos}
-                    disabled={confirmandoPropuestos}
-                    style={{ backgroundColor: C.green, color: '#FFF', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: confirmandoPropuestos ? 'default' : 'pointer', fontSize: '13px', opacity: confirmandoPropuestos ? 0.6 : 1 }}
-                  >
-                    {confirmandoPropuestos ? 'Guardando...' : `✓ Confirmar y guardar ${itemsPropuestos.length} ítem(s)`}
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         ) : (
           <div style={{ backgroundColor: C.greenDim, border: `1px solid ${C.green}`, padding: '14px', borderRadius: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1405,22 +1144,17 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
             </div>
           )}
 
-          <p style={{ margin: '0 0 8px 0', fontSize: '11px', color: C.textMuted }}>
-            Preguntale al especialista sobre este cómputo — ej. "¿por qué 12 metros de cable?" o "¿de dónde sale el precio de los spots?".
-          </p>
           <form onSubmit={handleEnviarConsultaChat} style={{ display: 'flex', gap: '8px' }}>
             <input
               type="text"
-              placeholder="Preguntale al especialista sobre un ítem..."
+              placeholder="Escribí o dictá tu respuesta al especialista..."
               value={chatTexto}
               onChange={(e) => setChatTexto(e.target.value)}
-              disabled={consultandoChat}
               style={{ flex: 1, padding: '8px', borderRadius: '6px', border: `1px solid ${C.border}`, fontSize: '12px' }}
             />
             <button
               type="button"
               onClick={alternarDictadoChat}
-              disabled={consultandoChat}
               style={{
                 backgroundColor: grabandoAudioChat ? '#D0021B' : C.purpleDim,
                 color: grabandoAudioChat ? '#FFF' : C.purple,
@@ -1431,77 +1165,46 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
                 fontWeight: 'bold',
                 cursor: 'pointer',
               }}
-              title="Dictar pregunta por voz"
+              title="Dictar respuesta por voz"
             >
               {grabandoAudioChat ? '🎙️...' : '🎙️'}
             </button>
-            <button
-              type="submit"
-              disabled={consultandoChat}
-              style={{ backgroundColor: C.purple, color: '#FFF', border: 'none', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: consultandoChat ? 'default' : 'pointer', opacity: consultandoChat ? 0.6 : 1 }}
-            >
-              {consultandoChat ? 'Consultando...' : 'Preguntar'}
+            <button type="submit" style={{ backgroundColor: C.purple, color: '#FFF', border: 'none', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>
+              Responder IA
             </button>
           </form>
         </div>
       )}
 
       {/* Cómputo e Ítems del Sector */}
-      {sectorActivo && (() => {
-        const itemsDelSector = rubrosAcumulados.filter((i) => i.sector === sectorActivo)
-        const totalSectorHeader = itemsDelSector.filter((i) => i.subtotal != null).reduce((acc, i) => acc + i.subtotal, 0)
-        const sectorCerrado = !!sectorActualObj?.cerrado
-        const compacto = sectorCerrado && !verDetalleCerrado
-        return (
+      {sectorActivo && (
         <div style={{ backgroundColor: C.surface, padding: '16px', borderRadius: '12px', border: `1px solid ${C.border}`, marginBottom: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: compacto ? 0 : '12px', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <h3 style={{ margin: 0, fontSize: '16px', color: C.purple }}>
               📋 Ítems de Cómputo para: {sectorActivo}
             </h3>
-            {!sectorCerrado && (
-              <button
-                onClick={() => setModalNuevoManual(true)}
-                style={{ backgroundColor: C.purpleDim, color: C.purple, border: `1px solid ${C.purple}`, padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
-              >
-                + Agregar Ítem Manual
-              </button>
-            )}
+            <button
+              onClick={() => setModalNuevoManual(true)}
+              style={{ backgroundColor: C.purpleDim, color: C.purple, border: `1px solid ${C.purple}`, padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
+            >
+              + Agregar Ítem Manual
+            </button>
           </div>
 
-          {itemsDelSector.length === 0 ? (
-            <p style={{ color: C.textMuted, fontSize: '13px', margin: '12px 0 0 0' }}>
+          {rubrosAcumulados.filter((i) => i.sector === sectorActivo).length === 0 ? (
+            <p style={{ color: C.textMuted, fontSize: '13px', margin: 0 }}>
               No hay ítems en este sector aún. Procesá fotos y relato arriba o agregá manualmente.
             </p>
-          ) : compacto ? (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', paddingTop: '10px', borderTop: `1px solid ${C.border}` }}>
-              <span style={{ fontSize: '13px', color: C.textMuted }}>
-                {itemsDelSector.length} ítem{itemsDelSector.length !== 1 ? 's' : ''}{totalSectorHeader > 0 ? ` — $${fmt(totalSectorHeader)}` : ''}
-              </span>
-              <button
-                onClick={() => setVerDetalleCerrado(true)}
-                style={{ backgroundColor: 'transparent', border: `1px solid ${C.border}`, color: C.purple, padding: '5px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
-              >
-                Ver detalle ▾
-              </button>
-            </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-              {sectorCerrado && (
-                <button
-                  onClick={() => setVerDetalleCerrado(false)}
-                  style={{ alignSelf: 'flex-end', backgroundColor: 'transparent', border: 'none', color: C.purple, cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', padding: 0, marginBottom: '2px' }}
-                >
-                  Ocultar detalle ▴
-                </button>
-              )}
-              {itemsDelSector
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {rubrosAcumulados
+                .filter((i) => i.sector === sectorActivo)
                 .map((item) => (
                   <div key={item.id} style={{ backgroundColor: C.bg, padding: '10px 14px', borderRadius: '8px', border: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                     <div style={{ flex: 1, minWidth: '180px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
                         <span style={{ fontSize: '10px', color: C.purple, fontWeight: 'bold', textTransform: 'uppercase' }}>
-                          {item.codigoItem ? `#${item.codigoItem} — ` : ''}{item.rubro}
-                          {item.esRestauracion && ` • RESTAURACIÓN/RECUPERO${item.coeficienteAjuste != null && item.coeficienteAjuste < 1 ? ` (~${Math.round(item.coeficienteAjuste * 100)}% de un ítem nuevo)` : ''}`}
+                          {item.codigoItem ? `#${item.codigoItem} — ` : ''}{item.rubro} {item.esRestauracion && '• RESTAURACIÓN/RECUPERO'}
                         </span>
                         {item.riesgo === 'urgente' && (
                           <span style={{ backgroundColor: '#FFEAEA', color: '#D0021B', padding: '1px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' }}>
@@ -1543,16 +1246,18 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
                     </div>
                   </div>
                 ))}
-              {totalSectorHeader > 0 && (
-                <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: 'bold', color: C.text, padding: '4px 6px' }}>
-                  Subtotal del sector (ítems con precio de catálogo): ${fmt(totalSectorHeader)}
-                </div>
-              )}
+              {(() => {
+                const totalSector = rubrosAcumulados.filter((i) => i.sector === sectorActivo && i.subtotal != null).reduce((acc, i) => acc + i.subtotal, 0)
+                return totalSector > 0 ? (
+                  <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: 'bold', color: C.text, padding: '4px 6px' }}>
+                    Subtotal del sector (ítems con precio de catálogo): ${fmt(totalSector)}
+                  </div>
+                ) : null
+              })()}
             </div>
           )}
         </div>
-        )
-      })()}
+      )}
 
       {/* Modal Carga Manual */}
       {modalManual && (
@@ -1565,29 +1270,14 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
                 <select
                   value={rubroFiltro}
                   onChange={(e) => handleElegirRubroFiltro(e.target.value)}
-                  disabled={catalogoCargando || (catalogoError && catalogoCifras.length === 0)}
                   style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${C.border}` }}
                 >
-                  <option value="">
-                    {catalogoCifras.length ? '— Elegí un rubro —' : catalogoError ? 'No se pudo cargar el catálogo' : 'Cargando catálogo...'}
-                  </option>
+                  <option value="">{catalogoCifras.length ? '— Elegí un rubro —' : 'Cargando catálogo...'}</option>
                   {rubrosCatalogo.map((r) => (
                     <option key={r} value={r}>{r} ({catalogoCifras.filter((c) => c.rubro === r).length})</option>
                   ))}
                   <option value="__libre__">— No sé el rubro / no está en Cifras —</option>
                 </select>
-                {catalogoError && catalogoCifras.length === 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                    <span style={{ fontSize: '11px', color: '#D0021B' }}>No se pudo cargar el catálogo — revisá tu conexión.</span>
-                    <button
-                      type="button"
-                      onClick={cargarCatalogoCifras}
-                      style={{ backgroundColor: 'transparent', border: `1px solid ${C.purple}`, color: C.purple, borderRadius: '6px', padding: '3px 10px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
-                    >
-                      Reintentar
-                    </button>
-                  </div>
-                )}
               </div>
 
               {rubroFiltro && rubroFiltro !== '__libre__' && (

@@ -44,48 +44,20 @@ function promptRelevamiento(sector: string, relato: string, catalogoTexto: strin
 Te paso fotos y/o un relato dictado por el técnico de UN sector/ambiente puntual ("${sector}"). Tenés que:
 1. Elegir cuál de esas especialidades corresponde mejor a lo relevado (usá el título con emoji tal cual está arriba).
 2. Identificar qué trabajos hacen falta a partir de las fotos y el relato.
-3. Para cada trabajo, elegir el ítem MÁS PARECIDO del catálogo de precios "Revista Cifras" de abajo (formato codigo|rubro|descripcion|unidad) y ESTIMAR la cantidad en la unidad de ESE ítem — esto es una PROPUESTA que el técnico va a revisar y corregir antes de guardarla, así que priorizá ser transparente sobre tu razonamiento antes que "acertar":
-   - Si el relato dicta una medida explícita (ej. "son 35 metros cuadrados", "un paño de 4 por 2.5"), usá ESA medida tal cual — no la reinterpretes ni la redondees a otra cosa.
-   - Si NO hay medida explícita en el relato, estimá a partir de una referencia de escala visible en la foto (una puerta ≈0.90-2.10m, un ladrillo común ≈0.25m, una baldosa ≈0.30-0.40m, el ancho de una persona, etc.) y CONTÁ en "justificacion" qué referencia usaste y el cálculo aproximado — ej. "Estimé ~10m² tomando como referencia el marco de la puerta (≈2.10m de alto) para calcular que el paño de pared mide aprox. 4m x 2.5m".
-   - Si no hay ninguna referencia de escala confiable en la foto ni en el relato, decilo explícitamente en la justificación (ej. "Sin referencia de escala clara en la foto, cantidad estimada muy aproximada") y marcá "confianza_medicion":"baja".
+3. Para cada trabajo, elegir el ítem MÁS PARECIDO del catálogo de precios "Revista Cifras" de abajo (formato codigo|rubro|descripcion|unidad) y estimar la cantidad en la unidad de ESE ítem.
 4. Clasificar el riesgo de cada ítem: "urgente" (riesgo para alumnos/usuarios — vidrio roto, cableado expuesto, pérdida de agua activa, etc.), "funcional" (no urgente pero afecta el uso normal) o "mantenimiento" (estético/preventivo).
-5. Marcar es_restauracion=true si el relato indica que se puede reparar/recuperar lo existente en vez de proveer algo nuevo (ej. "se puede volver a amurar", "se puede reparar", "está dañado pero no hace falta cambiarlo").
-   - Cuando es_restauracion=true Y elegiste un codigo_item real del catálogo (el catálogo tiene precios de PROVISIÓN E INSTALACIÓN NUEVA, no de reparación): estimá también "coeficiente_reparacion", un número de 0 a 1 que representa qué porcentaje del precio de ese ítem NUEVO es razonable cobrar por la reparación — el precio final de la reparación se calcula como precio_del_nuevo × coeficiente_reparacion. Guía orientativa (ajustá según lo que describa el relato/la foto, no uses siempre el mismo número):
-     - Reparación menor (reamurar, resellar, ajustar, fijar algo que solo se soltó) ≈ 0.15 a 0.30.
-     - Reparación moderada (se reemplaza una parte — ej. una junta, un tramo corto, un accesorio — pero se conserva la pieza principal) ≈ 0.30 a 0.60.
-     - Reparación mayor (se repone casi todo el material y se reutiliza solo la base/estructura existente) ≈ 0.60 a 0.85.
-     - Explicá en "justificacion" por qué elegiste ese porcentaje.
-   - Si es_restauracion=true pero NO hay codigo_item (no matcheó contra el catálogo), dejá coeficiente_reparacion en null — no hay precio de referencia contra el cual calcular un porcentaje.
-   - Si es_restauracion=false, coeficiente_reparacion siempre null (se cobra el 100% del ítem nuevo).
+5. Marcar es_restauracion=true si el relato indica que se puede reparar/recuperar lo existente en vez de proveer algo nuevo (ej. "se puede volver a amurar", "se puede reparar").
 6. Control de omisiones: si de las fotos notás que faltaría verificar algo típico de este tipo de sector y no fue mencionado en el relato (luces, llaves de paso, tomas, cielorraso, etc.), decilo en alertas_omision; si no notás nada para alertar, dejalo en null.
 
 MUY IMPORTANTE sobre el catálogo — NUNCA INVENTES UN CÓDIGO: el campo codigo_item de cada ítem que devuelvas TIENE QUE SER un código que existe LITERALMENTE en la lista de abajo. Si no hay ningún ítem del catálogo que corresponda razonablemente a lo que ves, poné codigo_item en null y completá rubro/descripcion_item con tu propio texto libre describiendo el trabajo — es preferible null a un código inventado o adivinado.
 
 Respondé SOLO con JSON válido sin texto extra ni backticks, con esta forma exacta:
-{"especialista": "🚰 Especialista Sanitarista" (el título con emoji que corresponda), "mensaje_auditoria": "1-2 oraciones en español, tono técnico profesional, explicando qué identificaste y qué ítems aplicaste", "alertas_omision": "texto breve o null", "items": [{"codigo_item": "184" o null, "rubro": "...", "descripcion_item": "...", "unidad": "unid", "cantidad": 1, "confianza_medicion": "alta"|"media"|"baja" (alta = medida explícita en el relato o referencia de escala muy clara; media = referencia de escala razonable pero aproximada; baja = sin ninguna referencia confiable, pura estimación visual), "riesgo": "urgente", "es_restauracion": false, "coeficiente_reparacion": 0.25 o null (SOLO un número si es_restauracion=true y hay codigo_item; null en cualquier otro caso), "justificacion": "explicá SIEMPRE de dónde sale la cantidad, y si es restauración también de dónde sale el porcentaje de reparación"}]}
+{"especialista": "🚰 Especialista Sanitarista" (el título con emoji que corresponda), "mensaje_auditoria": "1-2 oraciones en español, tono técnico profesional, explicando qué identificaste y qué ítems aplicaste", "alertas_omision": "texto breve o null", "items": [{"codigo_item": "184" o null, "rubro": "...", "descripcion_item": "...", "unidad": "unid", "cantidad": 1, "riesgo": "urgente", "es_restauracion": false, "justificacion": "1 frase breve de por qué este ítem"}]}
 
 Relato del técnico sobre "${sector}": ${relato?.trim() || '(sin relato escrito — basate solo en las fotos)'}
 
 CATÁLOGO DE PRECIOS (Revista Cifras) — formato codigo|rubro|descripcion|unidad, uno por línea:
 ${catalogoTexto}`
-}
-
-// Prompt para el modo "consulta_relevamiento": el técnico ya tiene un cómputo generado (propuesto
-// o ya confirmado) para un sector y pregunta algo puntual sobre un ítem — de dónde sale una
-// cantidad, por qué se eligió tal precio, etc. NUNCA inventa números nuevos: solo puede explicar
-// en base a los ítems reales que el cliente le manda (ya validados contra el catálogo antes).
-function promptConsultaRelevamiento(sector: string, itemsTexto: string, historialTexto: string) {
-  return `Sos el mismo equipo de especialistas técnicos en construcción que ya generó un cómputo de materiales/mano de obra para el sector "${sector}" de un relevamiento de campo de SEATE S.R.L. (constructora de Posadas, Misiones). El técnico de campo ya tiene ese cómputo delante y te está preguntando algo puntual sobre él — de dónde sale una cantidad, por qué se aplicó tal precio o porcentaje de reparación, etc.
-
-REGLA MÁS IMPORTANTE: respondé ÚNICAMENTE en base a los ítems reales de abajo (ya fueron calculados y validados contra el catálogo de precios antes de llegar a vos) — nunca inventes ni recalcules un número distinto al que ya está ahí. Si la pregunta es sobre un ítem que no encontrás en la lista, o pide un dato que no está entre los campos de abajo, decilo explícitamente en vez de inventar una respuesta.
-
-Ítems del cómputo de este sector — formato codigo|rubro|descripcion|unidad|cantidad|precio unitario|% aplicado (100% = precio de ítem nuevo, menos si es reparación)|justificación original de la IA:
-${itemsTexto || '(todavía no hay ítems calculados en este sector)'}
-
-Historial reciente de la conversación con el técnico:
-${historialTexto || '(sin mensajes previos)'}
-
-Respondé la última pregunta del técnico de forma breve, técnica y concreta (2-4 oraciones), citando el número real del ítem correspondiente (cantidad, precio unitario, % de reparación si aplica) y retomando la justificación original si ayuda a explicar de dónde sale. No repitas todo el cómputo del sector, andá directo a lo que pregunta. Si el técnico no está de acuerdo con un número, no lo cambies vos — decile que puede corregir la cantidad o el % directamente en la pantalla de revisión del ítem. Respondé SOLO con el texto de tu respuesta en español, sin JSON ni backticks ni encabezados.`
 }
 
 serve(async (req) => {
@@ -146,7 +118,7 @@ serve(async (req) => {
 
     // ── Modo IA: análisis de comprobante, póliza o relevamiento ──
     const { base64, mimeType, hoy, tipoAnalisis } = body
-    const modo = tipoAnalisis === 'poliza' ? 'poliza' : tipoAnalisis === 'relevamiento' ? 'relevamiento' : tipoAnalisis === 'consulta_relevamiento' ? 'consulta_relevamiento' : 'comprobante'
+    const modo = tipoAnalisis === 'poliza' ? 'poliza' : tipoAnalisis === 'relevamiento' ? 'relevamiento' : 'comprobante'
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
 
     if (!apiKey) {
@@ -245,32 +217,18 @@ serve(async (req) => {
       const catalogoPorCodigo = new Map(catalogo.map((c) => [String(c.codigo_item), c]))
       const items = (Array.isArray(parsed?.items) ? parsed.items : []).map((it: any) => {
         const catEntry = it.codigo_item != null ? catalogoPorCodigo.get(String(it.codigo_item)) : null
-        const esRestauracion = !!it.es_restauracion
-        // coeficiente_reparacion: solo tiene sentido cuando es restauración Y hay un ítem nuevo del
-        // catálogo contra el cual calcular el porcentaje — nunca confiar en un valor fuera de (0,1].
-        const coefNum = parseFloat(it.coeficiente_reparacion)
-        const coeficienteAjuste = (esRestauracion && catEntry && Number.isFinite(coefNum) && coefNum > 0 && coefNum <= 1)
-          ? coefNum
-          : 1
-        const precioNuevo = catEntry?.precio_unitario_total ?? null
         return {
           codigo_item: catEntry ? catEntry.codigo_item : null,
           rubro: catEntry ? catEntry.rubro : (it.rubro || 'VARIOS'),
           descripcion_item: catEntry ? catEntry.descripcion : (it.descripcion_item || 'Ítem relevado'),
           unidad: catEntry ? catEntry.unidad : (it.unidad || 'unid'),
           cantidad: parseFloat(it.cantidad) || 1,
-          confianza_medicion: ['alta', 'media', 'baja'].includes(it.confianza_medicion) ? it.confianza_medicion : 'media',
           riesgo: ['urgente', 'funcional', 'mantenimiento'].includes(it.riesgo) ? it.riesgo : 'funcional',
-          es_restauracion: esRestauracion,
+          es_restauracion: !!it.es_restauracion,
           justificacion: it.justificacion || null,
           precio_material: catEntry?.precio_material ?? null,
           precio_mano_obra: catEntry?.precio_mano_obra ?? null,
-          // precio_unitario_total sigue siendo el precio de referencia del ítem NUEVO (para mostrarlo
-          // al técnico como comparación); coeficiente_ajuste y precio_unitario_ajustado son el
-          // porcentaje aplicado y el precio final a cobrar cuando es una reparación.
-          precio_unitario_total: precioNuevo,
-          coeficiente_ajuste: coeficienteAjuste,
-          precio_unitario_ajustado: precioNuevo != null ? +(precioNuevo * coeficienteAjuste).toFixed(2) : null,
+          precio_unitario_total: catEntry?.precio_unitario_total ?? null,
         }
       })
 
@@ -280,54 +238,6 @@ serve(async (req) => {
         alertas_omision: parsed?.alertas_omision || null,
         items,
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
-    }
-
-    // ── Modo "consulta_relevamiento": chat real sobre un cómputo ya generado (reemplaza la
-    // simulación por palabras clave que solo reaccionaba a "amurar"/"reparar"/"fijar" y nunca
-    // contestaba una pregunta de verdad) — el cliente manda los ítems reales del sector (ya
-    // pasaron por el catálogo antes) y la IA solo puede explicar en base a esos números.
-    if (modo === 'consulta_relevamiento') {
-      const { sector, pregunta, itemsContexto, historial } = body
-      if (!pregunta?.trim()) {
-        return new Response(JSON.stringify({ error: 'Falta la pregunta.' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 400,
-        })
-      }
-      const itemsTexto = (Array.isArray(itemsContexto) ? itemsContexto : [])
-        .map((it: any) => {
-          const pct = it.coeficiente_ajuste != null ? Math.round(it.coeficiente_ajuste * 100) : 100
-          return `${it.codigo_item ?? 's/código'}|${it.rubro ?? ''}|${it.descripcion_item ?? ''}|${it.unidad ?? ''}|${it.cantidad ?? ''}|${it.precio_unitario != null ? '$' + it.precio_unitario : 's/precio'}|${pct}%|${it.justificacion ?? it.notas_campo ?? ''}`
-        })
-        .join('\n')
-      const historialTexto = (Array.isArray(historial) ? historial : [])
-        .slice(-8)
-        .map((m: any) => `${m.emisor === 'tecnico' ? 'Técnico' : 'Especialista'}: ${m.mensaje}`)
-        .join('\n')
-
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 500,
-          system: promptConsultaRelevamiento(sector || '', itemsTexto, historialTexto),
-          messages: [{ role: 'user', content: [{ type: 'text', text: pregunta.trim() }] }],
-        }),
-      })
-      const data = await resp.json()
-      console.log('Anthropic status (consulta_relevamiento):', resp.status, 'items en contexto:', Array.isArray(itemsContexto) ? itemsContexto.length : 0)
-
-      if (!resp.ok || data?.type === 'error') {
-        console.error('Anthropic error (consulta_relevamiento):', JSON.stringify(data?.error))
-        return new Response(JSON.stringify({ error: data?.error?.message || 'Error Anthropic' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 502,
-        })
-      }
-
-      const respuesta = data?.content?.map((b: any) => b.text || '').join('').trim() || 'No pude generar una respuesta — probá reformular la pregunta.'
-      return new Response(JSON.stringify({ respuesta }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     // ── Subida del archivo al storage (server-to-server, confiable desde mobile) ──
