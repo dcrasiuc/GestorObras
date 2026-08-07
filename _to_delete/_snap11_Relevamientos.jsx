@@ -513,7 +513,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
   const [grabandoAudioChat, setGrabandoAudioChat] = useState(false)
 
   const [modalManual, setModalNuevoManual] = useState(false)
-  const [itemManual, setItemManual] = useState({ rubro: 'INSTALACION SANITARIA', item: '', descripcionDetallada: '', un: 'unid', cant: 1, esRestauracion: false, coeficienteAjuste: 1, precioReferenciaNuevo: null, riesgo: 'urgente', codigoItem: null, precioUnitario: null })
+  const [itemManual, setItemManual] = useState({ rubro: 'INSTALACION SANITARIA', item: '', descripcionDetallada: '', un: 'unid', cant: 1, esRestauracion: false, riesgo: 'urgente', codigoItem: null, precioUnitario: null })
   const [catalogoCifras, setCatalogoCifras] = useState([])
   const [catalogoCargando, setCatalogoCargando] = useState(false)
   const [catalogoError, setCatalogoError] = useState(false)
@@ -563,7 +563,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
 
   const handleElegirRubroFiltro = (valor) => {
     setRubroFiltro(valor)
-    setItemManual((prev) => ({ ...prev, rubro: valor !== '__libre__' ? valor : prev.rubro, item: '', codigoItem: null, precioUnitario: null, precioReferenciaNuevo: null, esRestauracion: false, coeficienteAjuste: 1 }))
+    setItemManual((prev) => ({ ...prev, rubro: valor !== '__libre__' ? valor : prev.rubro, item: '', codigoItem: null, precioUnitario: null }))
   }
 
   // Al elegir un ítem del <select> ya filtrado por rubro: autocompleta rubro/unidad/precio reales.
@@ -572,33 +572,12 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
   const handleElegirItemCatalogo = (codigo) => {
     if (codigo === '__ninguno__') {
       setRubroFiltro('__libre__')
-      setItemManual((prev) => ({ ...prev, item: '', codigoItem: null, precioUnitario: null, precioReferenciaNuevo: null, esRestauracion: false, coeficienteAjuste: 1 }))
+      setItemManual((prev) => ({ ...prev, item: '', codigoItem: null, precioUnitario: null }))
       return
     }
     const match = catalogoCifras.find((c) => String(c.codigo_item) === codigo)
     if (!match) return
-    // esRestauracion/coeficienteAjuste se resetean acá: elegir un ítem nuevo del catálogo no debe
-    // arrastrar el % de reparación que se haya tildado para un ítem anterior en el mismo modal.
-    setItemManual((prev) => ({ ...prev, item: `${match.codigo_item} — ${match.descripcion}`, rubro: match.rubro, un: match.unidad, codigoItem: match.codigo_item, precioUnitario: match.precio_unitario_total, precioReferenciaNuevo: match.precio_unitario_total, esRestauracion: false, coeficienteAjuste: 1 }))
-  }
-  // Tilda/destilda "es reparación" en la carga manual — mismo criterio que
-  // handleCambiarEsRestauracionPropuesta: opcional, nunca forzado.
-  const handleCambiarEsRestauracionManual = (marcado) => {
-    setItemManual((prev) => {
-      if (!marcado) return { ...prev, esRestauracion: false, precioUnitario: prev.precioReferenciaNuevo ?? prev.precioUnitario }
-      const coef = prev.coeficienteAjuste ?? 1
-      const nuevoPrecio = prev.precioReferenciaNuevo != null ? +(prev.precioReferenciaNuevo * coef).toFixed(2) : prev.precioUnitario
-      return { ...prev, esRestauracion: true, precioUnitario: nuevoPrecio }
-    })
-  }
-  const handleCambiarCoeficienteManual = (valorPorcentaje) => {
-    const pct = parseFloat(valorPorcentaje)
-    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return
-    setItemManual((prev) => {
-      const coef = pct / 100
-      const nuevoPrecio = prev.precioReferenciaNuevo != null ? +(prev.precioReferenciaNuevo * coef).toFixed(2) : prev.precioUnitario
-      return { ...prev, coeficienteAjuste: coef, precioUnitario: nuevoPrecio }
-    })
+    setItemManual((prev) => ({ ...prev, item: `${match.codigo_item} — ${match.descripcion}`, rubro: match.rubro, un: match.unidad, codigoItem: match.codigo_item, precioUnitario: match.precio_unitario_total }))
   }
 
   // ── Carga inicial: ítems y mensajes ya guardados de este relevamiento (antes se perdían
@@ -911,22 +890,6 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
       return { ...it, coeficienteAjuste: coef, precioUnitario: nuevoPrecio }
     }))
   }
-  // Tilda/destilda "es reparación" a mano — antes la IA decidía esRestauracion y el % se aplicaba
-  // siempre que la IA lo marcaba, sin que el técnico pudiera decir "no, esto va a precio de nuevo
-  // completo". Ahora es opcional: al destildar, vuelve a cobrar el 100% del ítem nuevo (si hay
-  // precio de referencia); al volver a tildar, retoma el último % que tenía cargado (el que sugirió
-  // la IA o el que el técnico haya dejado), sin resetear a 100% cada vez.
-  const handleCambiarEsRestauracionPropuesta = (idx, marcado) => {
-    setItemsPropuestos((prev) => prev.map((it, i) => {
-      if (i !== idx) return it
-      if (!marcado) {
-        return { ...it, esRestauracion: false, precioUnitario: it.precioReferenciaNuevo ?? it.precioUnitario }
-      }
-      const coef = it.coeficienteAjuste ?? 1
-      const nuevoPrecio = it.precioReferenciaNuevo != null ? +(it.precioReferenciaNuevo * coef).toFixed(2) : it.precioUnitario
-      return { ...it, esRestauracion: true, precioUnitario: nuevoPrecio }
-    }))
-  }
   const handleQuitarPropuesto = (idx) => {
     setItemsPropuestos((prev) => prev.filter((_, i) => i !== idx))
   }
@@ -1067,7 +1030,7 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
   const cerrarModalManual = () => {
     setModalNuevoManual(false)
     setRubroFiltro('')
-    setItemManual({ rubro: 'INSTALACION SANITARIA', item: '', descripcionDetallada: '', un: 'unid', cant: 1, esRestauracion: false, coeficienteAjuste: 1, precioReferenciaNuevo: null, riesgo: 'urgente', codigoItem: null, precioUnitario: null })
+    setItemManual({ rubro: 'INSTALACION SANITARIA', item: '', descripcionDetallada: '', un: 'unid', cant: 1, esRestauracion: false, riesgo: 'urgente', codigoItem: null, precioUnitario: null })
   }
 
   const handleGuardarItemManual = async (e) => {
@@ -1084,9 +1047,6 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
       un: itemManual.un,
       cant: parseFloat(itemManual.cant) || 1,
       esRestauracion: itemManual.esRestauracion,
-      // Solo se aplica si es_restauracion está tildado — si no, siempre 1 (precio de ítem nuevo
-      // completo), sin importar qué % haya quedado cargado en el input.
-      coeficienteAjuste: itemManual.esRestauracion ? (itemManual.coeficienteAjuste ?? 1) : 1,
       sector: sectorActivo || 'General',
       riesgo: itemManual.riesgo || 'funcional',
       // Si se eligió un ítem real del catálogo (ver handleElegirItemCatalogo) viene el código y
@@ -1378,36 +1338,25 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
                             </span>
                           )}
                         </div>
-                        {it.precioReferenciaNuevo != null && (
-                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: `1px dashed ${C.border}` }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#8A5200', fontWeight: 'bold', cursor: 'pointer' }}>
-                              <input
-                                type="checkbox"
-                                checked={!!it.esRestauracion}
-                                onChange={(e) => handleCambiarEsRestauracionPropuesta(idx, e.target.checked)}
-                              />
-                              🔧 Es reparación (no reemplazo nuevo) — cobrar solo un % del ítem nuevo
-                            </label>
-                            {it.esRestauracion && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: '11px', color: C.textMuted }}>
-                                  Ítem nuevo equivalente: ${fmt(it.precioReferenciaNuevo)}/{it.un}
-                                </span>
-                                <span style={{ fontSize: '11px', color: C.textMuted }}>×</span>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="100"
-                                  value={Math.round((it.coeficienteAjuste ?? 1) * 100)}
-                                  onChange={(e) => handleCambiarCoeficientePropuesta(idx, e.target.value)}
-                                  style={{ width: '56px', padding: '5px', borderRadius: '6px', border: '1px solid #8A5200', fontWeight: 'bold', textAlign: 'center' }}
-                                />
-                                <span style={{ fontSize: '11px', color: C.textMuted }}>% =</span>
-                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#8A5200' }}>
-                                  ${fmt(it.precioUnitario)}/{it.un}
-                                </span>
-                              </div>
-                            )}
+                        {it.esRestauracion && it.precioReferenciaNuevo != null && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', paddingTop: '8px', borderTop: `1px dashed ${C.border}`, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '11px', color: '#8A5200', fontWeight: 'bold' }}>🔧 Reparación (no reemplazo):</span>
+                            <span style={{ fontSize: '11px', color: C.textMuted }}>
+                              Ítem nuevo equivalente: ${fmt(it.precioReferenciaNuevo)}/{it.un}
+                            </span>
+                            <span style={{ fontSize: '11px', color: C.textMuted }}>×</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="100"
+                              value={Math.round((it.coeficienteAjuste ?? 1) * 100)}
+                              onChange={(e) => handleCambiarCoeficientePropuesta(idx, e.target.value)}
+                              style={{ width: '56px', padding: '5px', borderRadius: '6px', border: '1px solid #8A5200', fontWeight: 'bold', textAlign: 'center' }}
+                            />
+                            <span style={{ fontSize: '11px', color: C.textMuted }}>% =</span>
+                            <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#8A5200' }}>
+                              ${fmt(it.precioUnitario)}/{it.un}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -1685,38 +1634,6 @@ function DetalleRelevamiento({ relevamiento, onVolver }) {
                   </select>
                   {itemManual.codigoItem && (
                     <div style={{ fontSize: '11px', color: C.green, marginTop: 4 }}>✓ Ítem #{itemManual.codigoItem} del catálogo — precio: ${fmt(itemManual.precioUnitario)} por {itemManual.un}</div>
-                  )}
-                  {itemManual.precioReferenciaNuevo != null && (
-                    <div style={{ marginTop: '8px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#8A5200', fontWeight: 'bold', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={!!itemManual.esRestauracion}
-                          onChange={(e) => handleCambiarEsRestauracionManual(e.target.checked)}
-                        />
-                        🔧 Es reparación (no reemplazo nuevo) — cobrar solo un % del ítem nuevo
-                      </label>
-                      {itemManual.esRestauracion && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '11px', color: C.textMuted }}>
-                            Ítem nuevo equivalente: ${fmt(itemManual.precioReferenciaNuevo)}/{itemManual.un}
-                          </span>
-                          <span style={{ fontSize: '11px', color: C.textMuted }}>×</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="100"
-                            value={Math.round((itemManual.coeficienteAjuste ?? 1) * 100)}
-                            onChange={(e) => handleCambiarCoeficienteManual(e.target.value)}
-                            style={{ width: '56px', padding: '5px', borderRadius: '6px', border: '1px solid #8A5200', fontWeight: 'bold', textAlign: 'center' }}
-                          />
-                          <span style={{ fontSize: '11px', color: C.textMuted }}>% =</span>
-                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#8A5200' }}>
-                            ${fmt(itemManual.precioUnitario)}/{itemManual.un}
-                          </span>
-                        </div>
-                      )}
-                    </div>
                   )}
                 </div>
               )}
