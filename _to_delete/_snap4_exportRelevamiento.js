@@ -24,17 +24,6 @@ const num = (v) => Math.round((parseFloat(v) || 0) * 100) / 100
 const limpiarMarkdown = (txt) => String(txt || '').replace(/\*\*/g, '')
 const slugArchivo = (txt) => String(txt || 'relevamiento').trim().replace(/[^\w\-]+/g, '_').slice(0, 60)
 
-// El paquete `docx` solo sabe incrustar estos formatos — el resto (HEIC de iPhone, webp, etc.) hay
-// que descartarlo con un aviso en vez de tratar de incrustarlo, porque produciría un .docx corrupto.
-function _tipoDocxPorContentType(ct) {
-  const c = (ct || '').toLowerCase()
-  if (c.includes('png')) return 'png'
-  if (c.includes('gif')) return 'gif'
-  if (c.includes('bmp')) return 'bmp'
-  if (c.includes('jpeg') || c.includes('jpg')) return 'jpg'
-  return null
-}
-
 function descargarBlob(blob, nombreArchivo) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -260,31 +249,13 @@ export async function generarInformeTecnicoRelevamiento(relevamiento, items, men
         try {
           const resp = await fetch(url)
           if (!resp.ok) throw new Error('No se pudo descargar la foto')
-          const contentType = resp.headers.get('content-type')
-          const tipoDocx = _tipoDocxPorContentType(contentType)
-          if (!tipoDocx) throw new Error(`formato de imagen no compatible con Word (${contentType || 'desconocido'})`)
           const buf = await resp.arrayBuffer()
-          // Tamaño real de la foto para no achatar/estirar fotos verticales dentro de un marco fijo
-          // horizontal — se calcula una caja máxima (420×560) y se escala manteniendo proporción.
-          let width = 420, height = 315
-          try {
-            const bitmap = await createImageBitmap(new Blob([buf], { type: contentType }))
-            const maxW = 420, maxH = 560
-            const escala = Math.min(maxW / bitmap.width, maxH / bitmap.height, 1)
-            width = Math.round(bitmap.width * escala)
-            height = Math.round(bitmap.height * escala)
-            bitmap.close?.()
-          } catch { /* si no se pueden leer las dimensiones reales, se usa el tamaño por defecto */ }
           children.push(new Paragraph({
-            children: [new ImageRun({ data: buf, type: tipoDocx, transformation: { width, height } })],
+            children: [new ImageRun({ data: buf, type: 'jpg', transformation: { width: 420, height: 315 } })],
             spacing: { after: 60 },
           }))
         } catch (e) {
           console.warn('No se pudo incrustar foto en el Word:', url, e?.message || e)
-          children.push(new Paragraph({
-            children: [new TextRun({ text: `[Foto no incrustada: ${e?.message || 'no se pudo procesar la imagen'}]`, italics: true, size: 16, color: 'B00020' })],
-            spacing: { after: 60 },
-          }))
         }
         children.push(new Paragraph({ children: [new TextRun({ text: `Foto ${fotoContador} – ${it.item}`, italics: true, size: 18 })], spacing: { after: 200 } }))
       }

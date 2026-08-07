@@ -70,25 +70,10 @@ async function _comprimirImagenBlobRelevamiento(file, maxLado = 1280, calidad = 
     new Promise((_, rej) => setTimeout(() => rej(new Error('toBlob timeout')), 10000))
   ])
 }
-// Cuando la compresión falla (ej. HEIC de iPhone que el navegador no puede decodificar en un
-// <canvas>) se sube el archivo original tal cual — hay que etiquetarlo con SU extensión real, no
-// asumir .jpg, porque después el Informe Técnico (Word) decide cómo incrustar la foto según esto.
-function _extPorTipoArchivo(file) {
-  const tipo = (file?.type || '').toLowerCase()
-  if (tipo.includes('png')) return 'png'
-  if (tipo.includes('webp')) return 'webp'
-  if (tipo.includes('heic')) return 'heic'
-  if (tipo.includes('heif')) return 'heif'
-  if (tipo.includes('gif')) return 'gif'
-  if (tipo.includes('bmp')) return 'bmp'
-  if (tipo.includes('jpeg') || tipo.includes('jpg')) return 'jpg'
-  const m = /\.([a-zA-Z0-9]+)$/.exec(file?.name || '')
-  return m ? m[1].toLowerCase() : 'jpg'
-}
 async function subirFotoRelevamiento(file, carpeta = 'sectores') {
   try {
     let blob = file, ext = 'jpg'
-    try { blob = await _comprimirImagenBlobRelevamiento(file); ext = 'jpg' } catch { ext = _extPorTipoArchivo(file) /* sube el original si falla la compresión, con su extensión real */ }
+    try { blob = await _comprimirImagenBlobRelevamiento(file); ext = 'jpg' } catch { /* sube el original si falla la compresión */ }
     const path = `${carpeta}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
     const intentar = () => Promise.race([
       supabase.storage.from('relevamientos-fotos').upload(path, blob, { upsert: true }),
