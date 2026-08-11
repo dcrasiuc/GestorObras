@@ -984,9 +984,13 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
 
       {/* Prorrateo de gastos generales */}
       {totalGenerales > 0 && (() => {
+        // Igual criterio que en PanelObras/ModalDetalleObra: una obra "excluir_gastos_generales"
+        // queda totalmente afuera (ni peso ni parte), y un gasto "excluir_prorrateo" no cuenta
+        // para el peso aunque su obra sí participe.
+        const obrasExcluidasGG = new Set(obras.filter(o => o.excluir_gastos_generales).map(o => o.id))
         const gastoPorObra = {}
-        gastosEnPeriodo.forEach(g => imputaciones(g).forEach(im => {
-          if (!idsActivas.has(im.obra_id)) return
+        gastosEnPeriodo.filter(g => !g.excluir_prorrateo).forEach(g => imputaciones(g).forEach(im => {
+          if (!idsActivas.has(im.obra_id) || obrasExcluidasGG.has(im.obra_id)) return
           gastoPorObra[im.obra_id] = (gastoPorObra[im.obra_id] || 0) + im.monto
         }))
         const totalObras = Object.values(gastoPorObra).reduce((s, v) => s + v, 0)
@@ -1497,7 +1501,12 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
 
           {/* DESKTOP */}
           <div className="desktop-only" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
+            {/* overflowX:auto en este contenedor interno (mismo patrón que el gráfico de Evolución
+                diaria) — si la ventana es angosta y la tabla de ancho fijo no entra, se puede
+                scrollear horizontalmente en vez de que las últimas columnas (Estado/Acciones)
+                queden inaccesibles por el overflowX:hidden global de la página. */}
+            <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <table style={{ width: '100%', minWidth: 1026, borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: 36 }} /><col style={{ width: 90 }} /><col style={{ width: 120 }} /><col style={{ width: 200 }} />
                 <col style={{ width: 110 }} /><col style={{ width: 115 }} />
@@ -1551,6 +1560,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       )}
