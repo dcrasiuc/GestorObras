@@ -294,27 +294,13 @@ export default function GestorObras({ usuario }) {
     })
     obrasTocadas.forEach(o => { cantPorObra[o] = (cantPorObra[o] || 0) + 1 })
   })
-  // Prorrateo de gastos generales por obra: cada obra absorbe según su peso en el total.
-  // El peso NO usa totalPorObra tal cual:
-  // - un gasto marcado "excluir_prorrateo" (ej. una compra puntual grande que no debería inflar
-  //   la parte de esa obra) sigue sumando al total gastado de la obra (totalPorObra, arriba) pero
-  //   no cuenta para este cálculo.
-  // - una obra marcada "excluir_gastos_generales" queda totalmente afuera: no aporta peso NI
-  //   recibe parte de los gastos generales (se filtra directamente, ni siquiera entra al mapa).
-  const obrasExcluidasGG = new Set(obras.filter(o => o.excluir_gastos_generales).map(o => o.id))
-  const pesoProrrateoPorObra = {}
-  todosGastos.filter(g => !g.es_gasto_general && !g.excluir_prorrateo).forEach(g => {
-    imputaciones(g).forEach(im => {
-      if (obrasExcluidasGG.has(im.obra_id)) return
-      pesoProrrateoPorObra[im.obra_id] = (pesoProrrateoPorObra[im.obra_id] || 0) + im.monto
-    })
-  })
+  // Prorrateo de gastos generales por obra: cada obra absorbe según su peso en el total
   const gastosGeneralesPorObra = {}
   const totalGeneralesAll = todosGastos.filter(g => g.es_gasto_general).reduce((s, g) => s + (parseFloat(g.monto) || 0), 0)
   if (totalGeneralesAll > 0) {
-    const totalTodasObras = Object.values(pesoProrrateoPorObra).reduce((s, v) => s + v, 0)
+    const totalTodasObras = Object.values(totalPorObra).reduce((s, v) => s + v, 0)
     if (totalTodasObras > 0) {
-      Object.entries(pesoProrrateoPorObra).forEach(([obraId, montoObra]) => {
+      Object.entries(totalPorObra).forEach(([obraId, montoObra]) => {
         gastosGeneralesPorObra[obraId] = Math.round((montoObra / totalTodasObras) * totalGeneralesAll)
       })
     }
@@ -592,8 +578,8 @@ export default function GestorObras({ usuario }) {
       {/* ── MODALES ── */}
       {modal === 'obra' && <ModalObra itemEdit={itemEditando} clientes={clientes} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) return window._toast?.('El nombre es obligatorio')
-        const { id, nombre, cliente_id, estado, presupuesto, requiere_poliza, excluir_gastos_generales } = d
-        const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requiere_poliza !== false, excluir_gastos_generales: !!excluir_gastos_generales }
+        const { id, nombre, cliente_id, estado, presupuesto, requiere_poliza } = d
+        const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requiere_poliza !== false }
         if (id) {
           await dbWrite('PATCH', 'obras', payload, `id=eq.${id}`)
           setObras(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o))
@@ -612,9 +598,9 @@ export default function GestorObras({ usuario }) {
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
-          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes, es_gasto_general, excluir_prorrateo, imagen_url } = d
+          const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes, es_gasto_general, imagen_url } = d
           // a_nombre_seate solo aplica a Factura A
-          const payload = { obra_id: es_gasto_general ? null : (obra_id || null), fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes, es_gasto_general: !!es_gasto_general, excluir_prorrateo: !!excluir_prorrateo, imagen_url: imagen_url || null }
+          const payload = { obra_id: es_gasto_general ? null : (obra_id || null), fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes, es_gasto_general: !!es_gasto_general, imagen_url: imagen_url || null }
           const esNuevo = !id
           const saved = await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null, esNuevo)
           // Actualización optimista: reflejar en UI sin esperar reload
@@ -711,7 +697,7 @@ export default function GestorObras({ usuario }) {
         cerrarModal(); recargarListas()
       }} />}
       {proveedorPendiente && <ModalAltaProveedor datosIniciales={proveedorPendiente} onClose={() => { setProveedorPendiente(null); setOnProveedorCreado(null) }} onGuardar={guardarProveedor} zIndex={300} />}
-      {obraDetalle && <ModalDetalleObra obra={obraDetalle} obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} onClose={() => setObraDetalle(null)} />}
+      {obraDetalle && <ModalDetalleObra obra={obraDetalle} gastos={todosGastos} remitosPorObra={remitosPorObra} onClose={() => setObraDetalle(null)} />}
       <NotifPendientes gastos={todosGastos} esAdmin={esAdmin} onVerPendientes={() => { setPanel('gastos') }} />
       {modal === 'subidaMasiva' && <ModalSubidaMasiva gastos={todosGastos} onClose={cerrarModal} onDone={() => { cerrarModal(); recargarGastos(true) }} />}
       {modal === 'exportarZip' && <ModalExportarZip gastos={todosGastos} onClose={cerrarModal} />}
@@ -1155,11 +1141,6 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, o
                         🏛️ +$ {fmt(prorrateoGeneral)} empresa → <strong>$ {fmt(totalConGeneral)}</strong> total
                       </div>
                     )}
-                    {o.excluir_gastos_generales && (
-                      <div style={{ fontSize: 11, color: C.textMuted, background: '#F3F3F3', borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }} title="No aporta peso ni recibe parte de combustible/servicios/legal/oficina">
-                        🚫 Sin gastos generales
-                      </div>
-                    )}
                     {o.presupuesto > 0 && (
                       <div style={{ marginBottom: 12 }}>
                         <div style={{ height: 3, background: C.borderFaint, borderRadius: 99, overflow: 'hidden', marginBottom: 4 }}>
@@ -1458,7 +1439,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{g.proveedores?.nombre ?? 'Sin proveedor'}</div>
-                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')} · {g.fecha}{g.excluir_prorrateo && ' · 🚫 sin prorrateo'}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')} · {g.fecha}</div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
                       {(() => {
@@ -1521,7 +1502,6 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     <td style={{ ...tdSt, overflow: 'hidden', maxWidth: 0 }}>
                       <div style={{ fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.proveedores?.nombre ?? '—'}</div>
                       {g.descripcion && <div style={{ fontSize: 11, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{g.descripcion}</div>}
-                      {g.excluir_prorrateo && <div style={{ fontSize: 10, color: C.textFaint, marginTop: 1 }} title="No participa en el prorrateo de gastos generales">🚫 No prorratea</div>}
                     </td>
                     <td style={tdSt}><ConceptoBadge concepto={g.concepto} /></td>
                     <td style={tdSt}><ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} /></td>
@@ -2306,7 +2286,7 @@ function buscarGastoDuplicado(gastos, form, excludeId) {
 }
 
 function ModalGasto({ itemEdit, obras, proveedores, gastos, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
-  const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: true, iva_monto: 0, es_gasto_general: false, excluir_prorrateo: false })
+  const [form, setForm] = useState(itemEdit || { obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: true, iva_monto: 0, es_gasto_general: false })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const dup = buscarGastoDuplicado(gastos, form, itemEdit?.id)
   return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => {
@@ -2361,7 +2341,7 @@ async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.7) {
 
 function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [step, setStep] = useState('upload')
-  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true, es_gasto_general: false, excluir_prorrateo: false })
+  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true, es_gasto_general: false })
   const [preview, setPreview] = useState(null)
   const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -2544,7 +2524,7 @@ function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
 }
 
 function ModalObra({ itemEdit, clientes, onClose, onGuardar }) {
-  const [form, setForm] = useState(itemEdit || { nombre: '', cliente_id: '', estado: 'activa', presupuesto: '', requiere_poliza: true, excluir_gastos_generales: false })
+  const [form, setForm] = useState(itemEdit || { nombre: '', cliente_id: '', estado: 'activa', presupuesto: '', requiere_poliza: true })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <Modal title={itemEdit ? 'Editar Obra' : 'Nueva Obra'} onClose={onClose} onGuardar={() => onGuardar(form)}>
@@ -2558,12 +2538,6 @@ function ModalObra({ itemEdit, clientes, onClose, onGuardar }) {
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textMuted, cursor: 'pointer' }}>
           <input type="checkbox" checked={form.requiere_poliza !== false} onChange={e => set('requiere_poliza', e.target.checked)} style={{ accentColor: C.purple }} />
           Requiere garantías / pólizas de seguro (desmarcar en obras menores o de clientes privados que no las piden — se ve así en la sección Seguros)
-        </label>
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textMuted, cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!form.excluir_gastos_generales} onChange={e => set('excluir_gastos_generales', e.target.checked)} style={{ accentColor: C.purple }} />
-          No participa de los gastos generales de la empresa (queda afuera del prorrateo de combustible/servicios/legal/oficina — ni aporta peso ni recibe parte)
         </label>
       </div>
     </Modal>
@@ -3327,15 +3301,6 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado 
           )}
         </Campo>
       )}
-      {!esGeneral && (
-        <Campo label="Prorrateo de gastos generales" style={{ gridColumn: '1/-1' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: C.text, cursor: 'pointer' }}>
-            <input type="checkbox" checked={!!form.excluir_prorrateo} onChange={e => set('excluir_prorrateo', e.target.checked)} style={{ width: 15, height: 15, accentColor: C.purple }} />
-            No participa del prorrateo de gastos generales
-            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{form.excluir_prorrateo ? '→ no suma peso para repartir combustible/servicios/etc.' : '→ suma peso normalmente'}</span>
-          </label>
-        </Campo>
-      )}
       <Campo label="Descripción" style={{ gridColumn: '1/-1' }}><textarea style={{ ...inputSt, minHeight: 64, resize: 'vertical' }} value={form.descripcion || ''} onChange={e => set('descripcion', e.target.value)} /></Campo>
       <Campo label="Condición de pago" style={{ gridColumn: '1/-1' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -3501,10 +3466,7 @@ const btnIconSt = { display: 'inline-flex', alignItems: 'center', justifyContent
 const menuItemSt = { display: 'flex', alignItems: 'center', gap: 9, padding: '10px 14px', cursor: 'pointer', fontSize: 13, color: C.text, textDecoration: 'none', borderBottom: `1px solid ${C.border}`, background: 'transparent', fontFamily: "'Outfit', sans-serif" }
 
 // ── Modal Detalle / Cierre de Obra ────────────────────────────
-function ModalDetalleObra({ obra, obras = [], gastos, remitosPorObra = {}, onClose }) {
-  // Obras que quedan totalmente afuera del prorrateo de gastos generales (ni aportan peso ni
-  // reciben parte) — necesario para calcular la proporción del resto de las obras correctamente.
-  const obrasExcluidasGG = new Set(obras.filter(o => o.excluir_gastos_generales).map(o => o.id))
+function ModalDetalleObra({ obra, gastos, remitosPorObra = {}, onClose }) {
   // Gastos directos de esta obra
   const gastosObra = gastos.filter(g => !g.es_gasto_general && imputaciones(g).some(im => im.obra_id === obra.id))
   const gastosGenerales = gastos.filter(g => g.es_gasto_general)
@@ -3536,15 +3498,10 @@ function ModalDetalleObra({ obra, obras = [], gastos, remitosPorObra = {}, onClo
       .filter(g => g.fecha?.startsWith(mes))
       .reduce((s, g) => s + (parseFloat(g.monto) || 0), 0)
 
-    // Total de todas las obras ese mes (para calcular proporción) — un gasto "excluir_prorrateo"
-    // no participa acá, y una obra "excluir_gastos_generales" queda totalmente afuera, igual que
-    // en el cálculo general de PanelObras.
+    // Total de todas las obras ese mes (para calcular proporción)
     const totalObrasMes = {}
-    gastos.filter(g => !g.es_gasto_general && !g.excluir_prorrateo && g.fecha?.startsWith(mes)).forEach(g => {
-      imputaciones(g).forEach(im => {
-        if (obrasExcluidasGG.has(im.obra_id)) return
-        totalObrasMes[im.obra_id] = (totalObrasMes[im.obra_id] || 0) + im.monto
-      })
+    gastos.filter(g => !g.es_gasto_general && g.fecha?.startsWith(mes)).forEach(g => {
+      imputaciones(g).forEach(im => { totalObrasMes[im.obra_id] = (totalObrasMes[im.obra_id] || 0) + im.monto })
     })
     const sumaObrasMes = Object.values(totalObrasMes).reduce((s, v) => s + v, 0)
     const proporcion = sumaObrasMes > 0 ? ((totalObrasMes[obra.id] || 0) / sumaObrasMes) : 0

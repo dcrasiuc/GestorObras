@@ -193,6 +193,26 @@ ALTER TABLE gastos ADD CONSTRAINT gastos_concepto_check
 ### Prorrateo
 Los gastos generales se distribuyen proporcionalmente entre obras según el gasto directo de cada obra en el período. El cálculo es mes a mes en `ModalDetalleObra` y en el dashboard de obras.
 
+### Excluir una operación puntual del prorrateo (`gastos.excluir_prorrateo`, agosto 2026)
+
+Pedido del usuario: poder marcar un gasto puntual de una obra (ej. una compra grande y excepcional) para que NO infle el "peso" de esa obra a la hora de repartirle gastos generales — sin dejar de sumar normalmente al total gastado de la obra.
+
+- Columna nueva: `gastos.excluir_prorrateo boolean NOT NULL DEFAULT false`.
+- Checkbox "No participa del prorrateo de gastos generales" en `FormGasto` (compartido por `ModalGasto` — alta/edición manual — y por el paso de revisión de `ModalFoto` — alta con IA), visible solo cuando el gasto NO es "Gasto general de empresa" (ese toggle no aplica ahí).
+- El cálculo del "peso" usado para prorratear (`pesoProrrateoPorObra` en el componente principal, y `totalObrasMes` dentro de `ModalDetalleObra`) excluye los gastos con `excluir_prorrateo = true`. El total gastado de la obra (`totalPorObra`, lo que se muestra como "Total gastado" en cada card) **no** se toca — el gasto sigue contando ahí normalmente. Solo se excluye del cálculo de la proporción con la que se reparte combustible/servicios/legal/oficina entre obras.
+- Indicador visual "🚫 sin prorrateo" / "🚫 No prorratea" en la fila del gasto (mobile y desktop) cuando está marcado.
+
+### Excluir una obra ENTERA del prorrateo (`obras.excluir_gastos_generales`, agosto 2026)
+
+El pedido anterior (`excluir_prorrateo` a nivel gasto) no era lo que el usuario necesitaba en realidad — lo que pidió después fue poder dejar una **obra completa** afuera de los gastos generales: que esa obra ni aporte peso al cálculo ni reciba ninguna parte de combustible/servicios/legal/oficina. Quedan ambas funcionalidades (son compatibles, cubren casos distintos: una operación puntual vs. una obra entera).
+
+- Columna nueva: `obras.excluir_gastos_generales boolean NOT NULL DEFAULT false`.
+- **Importante**: la vista `obras_resumen` (la que usa `useObras()` para traer las obras al panel principal, tanto para admin como para operador) tiene columnas explícitas, no `select *` — se tuvo que agregar `o.excluir_gastos_generales` a mano en el `CREATE OR REPLACE VIEW` para que el frontend la reciba. Si en el futuro se agrega otra columna a `obras` que el frontend necesite leer desde el panel principal, hay que acordarse de sumarla también acá.
+- Checkbox "No participa de los gastos generales de la empresa" en `ModalObra` (alta/edición de obra).
+- En el cálculo del peso (`pesoProrrateoPorObra` en el componente principal y `totalObrasMes` en `ModalDetalleObra`) se arma un `Set` con los IDs de las obras marcadas (`obrasExcluidasGG`) y se filtran sus imputaciones antes de sumar — la obra directamente no entra al cálculo, ni como numerador ni como parte del denominador. El resto de las obras se reparte el 100% de `totalGeneralesAll` entre ellas.
+- El "Total gastado" de la obra excluida (`totalPorObra`) no se toca — sigue sumando sus gastos directos normalmente; solo deja de aparecer el badge "🏛️ +$X empresa" (`prorrateoGeneral` da `0` automáticamente porque la obra nunca entra al mapa `gastosGeneralesPorObra`).
+- Badge "🚫 Sin gastos generales" en la card de la obra en el dashboard cuando está marcada.
+
 ### Dónde aparecen los gastos generales
 - **Dashboard obras**: badge azul "🏛️ +$X empresa → $Y total" en cada card
 - **Mobile header total**: suma gastos generales al total del mes
