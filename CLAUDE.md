@@ -254,6 +254,22 @@ async function _canvasComprimido(file, maxLado = 1600) {
 }
 ```
 
+### Ver la factura adjunta desde el modal de pago (`ModalPago`, agosto 2026)
+
+Pedido del usuario: al registrar un pago, poder consultar la factura adjunta del gasto (`gasto.imagen_url`) sin salir del modal, para cruzar los datos (proveedor, monto, nº de comprobante) antes de confirmar. Antes el link "Ver comprobante original" existía pero estaba escondido detrás del toggle "ver más ▼" y abría en pestaña nueva — poco práctico para comparar mientras se completa el formulario.
+
+- Botón "🧾 Ver factura" ahora siempre visible en la fila superior del modal (junto al ícono de WhatsApp), no hace falta desplegar "ver más".
+- Si `gasto.imagen_url` termina en `.pdf` (se detecta por la extensión del path, que sí queda en la URL de Storage) → abre en pestaña nueva con `window.open` (los PDF no siempre renderizan bien en un `<img>`).
+- Si es imagen → abre `VisorImagenFactura`, un visor superpuesto (`zIndex: 400`, arriba del modal de pago que usa 200) con la imagen a tamaño grande, sin cerrar el modal de pago de fondo — el usuario puede cerrar el visor (✕ o click afuera) y volver a ver el formulario. Incluye fallback a "Abrir en pestaña nueva" si la imagen no carga (`onError` en el `<img>`).
+- `ModalPago` ahora retorna un fragment (`<>...</>`) para poder renderizar `VisorImagenFactura` como hermano del `<Modal>`, no como hijo — así el `position:fixed` del visor apila correctamente por `zIndex` en vez de quedar recortado por el `overflowY:auto` del contenido del modal.
+- Solo se implementó en `ModalPago` (pago individual) — `ModalPagoMultiple` (pago de varios gastos a la vez) todavía no tiene este botón.
+
+---
+
+## Nota de layout: tabla de gastos con scroll horizontal (agosto 2026)
+
+La tabla desktop de gastos (`PanelGastos`) usa columnas de ancho fijo (`tableLayout:'fixed'`, colgroup suma ~1026px) dentro de un `main-content` con `maxWidth:1060`. La página tiene `overflowX:'hidden'` global (`document.body` y el div raíz), así que si la ventana del navegador es más angosta que lo que la tabla necesita, las últimas columnas (Estado, botones de acción) quedaban directamente invisibles y sin forma de scrollear para verlas — reportado por el usuario ("no se ven los botones margen derecho"). Se agregó un `<div style={{ overflowX: 'auto' }}>` envolviendo el `<table>` (mismo patrón que ya usaba el gráfico de "Evolución diaria por rubro" en `PanelFinanciero`), y `minWidth: 1026` en el `<table>` para que no se comprima por debajo de sus columnas. Si la ventana es angosta, ahora se puede scrollear horizontalmente dentro de la tabla en vez de perder las columnas.
+
 ---
 
 ## Feature: Detección de comprobantes duplicados

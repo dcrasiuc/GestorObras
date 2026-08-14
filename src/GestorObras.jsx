@@ -2724,11 +2724,18 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   }
 
   const [verMas, setVerMas] = useState(false)
+  // Adjunto de la factura del gasto — para poder consultarlo sin salir del modal de pago y cruzar
+  // la info (proveedor, monto, nº de comprobante) antes de confirmar. Los PDF se abren en pestaña
+  // nueva (no todos los navegadores los renderizan bien en un <img>); las imágenes se ven en un
+  // visor grande sin cerrar este modal.
+  const [verFactura, setVerFactura] = useState(false)
+  const facturaEsPdf = (gasto?.imagen_url || '').toLowerCase().split('?')[0].endsWith('.pdf')
   const venc = calcVencimiento(gasto?.fecha, gasto?.condicion_pago, gasto?.redondear_viernes !== false)
   const addDiasCheque = (dias) => { const d = new Date(); d.setDate(d.getDate() + dias); set('fecha_vencimiento_cheque', d.toISOString().slice(0, 10)) }
   const montoNum = parseFloat(form.monto) || 0
 
   return (
+    <>
     <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmt(saldoRestante)}` : `Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => {
           const p = { fecha_pago: form.fecha_pago, medio_pago: form.medio_pago, monto: montoNum, banco_id: form.banco_id || null, nro_operacion: form.nro_operacion || null, nro_cheque: form.nro_cheque || null, fecha_vencimiento_cheque: form.fecha_vencimiento_cheque || null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null }
           if (form.nota_tarjeta) p.nota_tarjeta = form.nota_tarjeta
@@ -2736,7 +2743,7 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
           onGuardar(p)
         }} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmt(montoNum)}`}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12 }}>
-        {/* Fila principal: proveedor + WA */}
+        {/* Fila principal: proveedor + factura + WA */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontWeight: 700, color: C.text, marginBottom: 3, fontSize: 13 }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
@@ -2750,6 +2757,13 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            {gasto?.imagen_url && (
+              <button type="button" onClick={() => facturaEsPdf ? window.open(gasto.imagen_url, '_blank') : setVerFactura(true)}
+                title="Ver factura adjunta (para cruzar los datos antes de pagar)"
+                style={{ ...btnIconSt, background: C.purpleDim, borderColor: C.purple, color: C.purple, fontWeight: 600, fontSize: 11, gap: 4, display: 'inline-flex', alignItems: 'center' }}>
+                🧾 Ver factura
+              </button>
+            )}
             {gasto?.proveedores?.telefono && (
               <a href={'https://wa.me/549' + gasto.proveedores.telefono.replace(/\D/g,'').replace(/^0/,'')} target="_blank" rel="noreferrer"
                 title="WhatsApp del proveedor"
@@ -2771,7 +2785,6 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
             {gasto?.condicion_pago && gasto.condicion_pago !== 'contado' && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Condición: </span><span style={{ color: C.text }}>{CONDICIONES_PAGO.find(c => c.value === gasto.condicion_pago)?.label ?? gasto.condicion_pago}</span></div>}
             {venc && gasto?.condicion_pago !== 'contado' && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Vencimiento: </span><span style={{ color: C.text, fontWeight: 600 }}>{venc}</span></div>}
             {gasto?.descripcion && <div style={{ gridColumn: '1/-1' }}><span style={{ color: C.textFaint, fontWeight: 600 }}>Descripción: </span><span style={{ color: C.text }}>{gasto.descripcion}</span></div>}
-            {gasto?.imagen_url && <div style={{ gridColumn: '1/-1' }}><a href={gasto.imagen_url} target="_blank" rel="noreferrer" style={{ color: C.purple, fontWeight: 600, fontSize: 11 }}>📎 Ver comprobante original</a></div>}
           </div>
         )}
 
@@ -2873,10 +2886,12 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
         </Campo>
       </div>
     </Modal>
+    {verFactura && gasto?.imagen_url && (
+      <VisorImagenFactura url={gasto.imagen_url} titulo={`${gasto?.proveedores?.nombre ?? 'Comprobante'}${gasto?.nro_comprobante ? ' · Nº ' + gasto.nro_comprobante : ''}`} onClose={() => setVerFactura(false)} />
+    )}
+    </>
   )
 }
-
-
 
 // ── Modal Subida Masiva de Comprobantes de Pago ──────────────
 function ModalSubidaMasiva({ gastos, onClose, onDone }) {
@@ -3125,6 +3140,30 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
         </div>
       }
     </Modal>
+  )
+}
+
+// ── Visor de imagen de factura (para cruzar datos sin salir del modal de pago) ─
+function VisorImagenFactura({ url, titulo, onClose }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: C.surface, borderRadius: 14, padding: 14, maxWidth: '92vw', maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 48px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🧾 {titulo}</div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: C.purple, fontWeight: 600, textDecoration: 'none', padding: '4px 8px' }}>Abrir en pestaña nueva ↗</a>
+            <button onClick={onClose} style={{ ...btnIconSt, fontSize: 14 }}>✕</button>
+          </div>
+        </div>
+        <div style={{ overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 0 }}>
+          <img src={url} alt="Factura adjunta" style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 6 }}
+            onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block' }} />
+          <div style={{ display: 'none', fontSize: 13, color: C.textMuted, textAlign: 'center', padding: 30 }}>
+            No se pudo mostrar la vista previa. <a href={url} target="_blank" rel="noreferrer" style={{ color: C.purple, fontWeight: 600 }}>Abrir el archivo en una pestaña nueva</a>.
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
