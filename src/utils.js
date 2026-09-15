@@ -57,6 +57,23 @@ export const fmtK = (n) =>
 // ── Fecha de hoy en YYYY-MM-DD ───────────────────────────────
 export const hoy = () => new Date().toISOString().slice(0, 10)
 
+// ── Fecha para MOSTRAR en pantalla: siempre día/mes/año ──────
+// Las fechas se guardan en la base como YYYY-MM-DD (ISO, lo que necesita el
+// <input type="date"> y lo que evita líos de huso horario al comparar/ordenar).
+// Pero mostrar ese string ISO tal cual en una lista se LEE "mes antes que
+// día" (YYYY-MM-DD pone el mes en el medio, antes del día) — el dato no está
+// mal, es el orden de visualización el que no es el que usamos en Argentina.
+// Esta función SOLO reordena el texto (nunca usa `new Date(...)`, así no hay
+// riesgo de que un huso horario corra el día) para mostrar siempre DD/MM/AAAA.
+// Usar en cualquier lugar donde una fecha se muestre como texto; NO usar como
+// `value` de un <input type="date"> (ese sigue necesitando el string ISO).
+export const fmtFechaAR = (iso) => {
+  if (!iso) return '—'
+  const [y, m, d] = String(iso).slice(0, 10).split('-')
+  if (!y || !m || !d) return iso
+  return `${d}/${m}/${y}`
+}
+
 // ── Helpers de situación impositiva ─────────────────────────
 export const getSituacion = (val) => SITUACIONES.find(s => s.value === val) ?? SITUACIONES[0]
 

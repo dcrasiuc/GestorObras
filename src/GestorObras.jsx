@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
 import Seguros from './Seguros'
 import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
-import { fmt, fmtK, hoy, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
+import { fmt, fmtK, hoy, fmtFechaAR, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
 import { exportarExcel } from './exportExcel'
 import { exportarZipComprobantes } from './exportZip'
 import './toast'
@@ -27,7 +27,7 @@ function waGastoLink(g) {
   msg += '• Proveedor: ' + proveedor + '\n'
   msg += '• Monto: $' + fmt(g.monto) + '\n'
   msg += '• ' + tipo + nro + '\n'
-  msg += '• Fecha: ' + g.fecha + '\n'
+  msg += '• Fecha: ' + fmtFechaAR(g.fecha) + '\n'
   if (g.descripcion) msg += '• ' + g.descripcion + '\n'
   if (!g.pagado) msg += 'Por favor coordinar el pago.'
   return 'https://wa.me/?text=' + encodeURIComponent(msg)
@@ -127,7 +127,7 @@ function useGastos(obrasIds) {
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
       let q = supabase.from('gastos')
-        .select('*, obras(nombre), proveedores(id, nombre, cuit, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url, nro_cheque, fecha_vencimiento_cheque)')
+        .select('*, obras(nombre, estado), proveedores(id, nombre, cuit, situacion_impositiva, telefono, cbu, alias_cbu, banco, titular_cuenta), pagos(id, medio_pago, monto, fecha_pago, banco_id, comprobante_url, nro_cheque, fecha_vencimiento_cheque)')
         .order('fecha', { ascending: false })
       if (ids !== null) q = q.in('obra_id', ids)
       const { data, error } = await q
@@ -234,7 +234,7 @@ function NotifPendientes({ gastos, esAdmin, onVerPendientes }) {
             <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, padding: '6px 8px', background: vencida ? '#FFF5F5' : C.bg, borderRadius: 8, gap: 8 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.proveedores?.nombre ?? 'Sin proveedor'}</div>
-                <div style={{ color: vencida ? '#D0021B' : C.textMuted, marginTop: 1 }}>{venc ? `Vence ${venc}` : 'Contado'}{vencida ? ' ⚠️' : ''}</div>
+                <div style={{ color: vencida ? '#D0021B' : C.textMuted, marginTop: 1 }}>{venc ? `Vence ${fmtFechaAR(venc)}` : 'Contado'}{vencida ? ' ⚠️' : ''}</div>
               </div>
               <div style={{ fontWeight: 700, color: C.text, flexShrink: 0 }}>$ {fmt(g.monto)}</div>
             </div>
@@ -855,8 +855,11 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
   let provisorio = 0
   Object.entries(remitosPorObra).forEach(([oid, m]) => { if (idsActivas.has(oid)) provisorio += m })
   const totalGastos = totalConfirmado + provisorio
-  // Pendiente = toda la deuda impaga (incluso obras cerradas), filtrada por período
-  const impagas = gastosEnPeriodo.filter(g => !g.pagado && !g.es_gasto_general)
+  // Pendiente = toda la deuda impaga, INCLUSO de obras pausadas/finalizadas (aviso de deuda que
+  // no debe "desaparecer" al pausar o cerrar una obra). Antes este cálculo partía de `gastosActivas`
+  // (solo obras activas) y el comentario original quedaba sin cumplirse en la práctica; ahora se arma
+  // por separado, a partir de `gastos` sin filtrar por obra activa, igual que ya hacía `NotifPendientes`.
+  const impagas = gastos.filter(g => !g.pagado && !g.es_gasto_general && enPeriodo(g.fecha))
   let pendiente = 0
   impagas.forEach(g => imputaciones(g).forEach(im => { pendiente += im.monto }))
   const cantImpagas = impagas.length
@@ -906,8 +909,10 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
             { label: 'Obras activas',  value: obrasActivas.length,     sub: `de ${obras.length} total` },
             // Crédito fiscal IVA: solo visible para administradores
             { label: 'Gastos empresa',  value: `$ ${fmt(totalGenerales)}`, sub: `${gastosGeneralesEnPeriodo.length} mov. generales` },
-            { label: 'Pend. contado',   value: `$ ${fmt(gastosActivas.filter(g => !g.pagado && (!g.condicion_pago || ['contado','viernes'].includes(g.condicion_pago))).reduce((s,g)=>s+(g.monto||0),0))}`, sub: 'pago inmediato', alert2: true },
-            { label: 'Pend. cta. cte.',  value: `$ ${fmt(gastosActivas.filter(g => !g.pagado && g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).reduce((s,g)=>s+(g.monto||0),0))}`, sub: (() => { const prox = gastosActivas.filter(g => !g.pagado && g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).map(g => calcVencimiento(g.fecha, g.condicion_pago, g.redondear_viernes)).filter(Boolean).sort()[0]; return prox ? 'próx. ' + prox : 'sin vencimientos' })() },
+            // Estas dos tarjetas usan `impagas` (no `gastosActivas`) para que la deuda de obras
+            // pausadas/finalizadas siga contando como pendiente, igual que la tarjeta "Pendiente".
+            { label: 'Pend. contado',   value: `$ ${fmt(impagas.filter(g => !g.condicion_pago || ['contado','viernes'].includes(g.condicion_pago)).reduce((s,g)=>s+(g.monto||0),0))}`, sub: 'pago inmediato', alert2: true },
+            { label: 'Pend. cta. cte.',  value: `$ ${fmt(impagas.filter(g => g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).reduce((s,g)=>s+(g.monto||0),0))}`, sub: (() => { const prox = impagas.filter(g => g.condicion_pago && !['contado','viernes'].includes(g.condicion_pago)).map(g => calcVencimiento(g.fecha, g.condicion_pago, g.redondear_viernes)).filter(Boolean).sort()[0]; return prox ? 'próx. ' + fmtFechaAR(prox) : 'sin vencimientos' })() },
             ...(esAdmin ? [{ label: 'Crédito fiscal IVA', value: `$ ${fmt(creditoFiscal)}`, sub: `${cantCreditoA} fact. A SEATE` }] : []),
           ].map(s => (
             <div key={s.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px' }}>
@@ -1034,7 +1039,7 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.proveedores?.nombre ?? 'Sin proveedor'}</div>
-                  <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.distribucion?.length > 1 ? 'Varias obras' : g.obras?.nombre} · {g.fecha}</div>
+                  <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.distribucion?.length > 1 ? 'Varias obras' : g.obras?.nombre} · {fmtFechaAR(g.fecha)}</div>
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
@@ -1294,7 +1299,7 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
         <select value={filtroObraId} onChange={e => setFiltroObraId(e.target.value)}
           style={{ padding: '5px 8px', borderRadius: 8, border: `1.5px solid ${filtroObraId ? C.purple : C.border}`, fontSize: 12, color: filtroObraId ? C.purple : C.textMuted, background: filtroObraId ? C.purpleDim : C.surface, fontWeight: filtroObraId ? 700 : 400, cursor: 'pointer', maxWidth: 180 }}>
           <option value="">Obra: todas</option>
-          {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+          {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}{o.estado !== 'activa' ? ` (${o.estado})` : ''}</option>)}
         </select>
         {/* Proveedor — autofilter */}
         <ProveedorAutofilter
@@ -1321,20 +1326,34 @@ function GastosFiltros({ obras, proveedores, filtroObraId, setFiltroObraId, filt
 }
 
 function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading, filtroObraId, setFiltroObraId, esAdmin, puedeExportarContador, onNuevoManual, onNuevoFoto, onEditar, onPagar, onEliminar, onPagarMultiple, onAdjuntarComprobante, onSubidaMasiva, onExportarZip, onRevertirPago }) {
-  // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales
+  // Solo obras activas: las pausadas/finalizadas no muestran gastos ni totales... salvo que
+  // tengan comprobantes IMPAGOS — esos tienen que seguir viéndose en la lista aunque la obra se
+  // haya pausado o cerrado, porque si no la deuda "desaparece" de la vista y nadie se acuerda de
+  // pagarla (pedido explícito del usuario: una obra pausada/finalizada no debe esconder pagos
+  // pendientes). Los gastos YA PAGADOS de una obra inactiva se siguen ocultando, como antes.
   const obrasActivas = obras.filter(o => o.estado === 'activa')
   const idsActivas = new Set(obrasActivas.map(o => o.id))
-  const gastos = gastosRaw.filter(g => g.es_gasto_general || idsActivas.has(g.obra_id))
+  const obraIdsConPendientes = new Set(gastosRaw.filter(g => !g.es_gasto_general && !g.pagado).map(g => g.obra_id))
+  const idsVisibles = new Set([...idsActivas, ...obraIdsConPendientes])
+  const gastos = gastosRaw.filter(g => g.es_gasto_general || idsVisibles.has(g.obra_id))
+  // Selector de obra del filtro: obras activas + las inactivas que igual aparecen por tener
+  // pendientes (si no, no se podría filtrar puntualmente por esa obra).
+  const obrasParaFiltro = obras.filter(o => o.estado === 'activa' || obraIdsConPendientes.has(o.id))
   // Remitos provisorios dentro del alcance (obras activas + filtro de obra si aplica)
   const enScopeDist = d => idsActivas.has(d.obra_id) && (!filtroObraId || d.obra_id === filtroObraId)
   // Ocultar select de obra cuando se ven generales (ya está manejado en filtroGeneral)
   const remitosScope = (remitosPendientes || []).filter(r => (r.comprobante_obras || []).some(enScopeDist))
   let provisorio = 0
   remitosScope.forEach(r => (r.comprobante_obras || []).forEach(d => { if (enScopeDist(d)) provisorio += parseFloat(d.monto) || 0 }))
-  // Si el filtro apunta a una obra que dejó de estar activa, lo reseteamos
+  // Si el filtro apunta a una obra que ya no está ni activa ni visible por pendientes, lo reseteamos
+  // (dependencias en gastosRaw/obras, no en el Set derivado — un Set nuevo en cada render dispararía
+  // el effect todo el tiempo sin necesidad)
   useEffect(() => {
-    if (filtroObraId && !obras.some(o => o.id === filtroObraId && o.estado === 'activa')) setFiltroObraId('')
-  }, [filtroObraId, obras, setFiltroObraId])
+    if (!filtroObraId) return
+    const sigueVisible = obras.some(o => o.id === filtroObraId && o.estado === 'activa')
+      || gastosRaw.some(g => !g.es_gasto_general && !g.pagado && g.obra_id === filtroObraId)
+    if (!sigueVisible) setFiltroObraId('')
+  }, [filtroObraId, obras, gastosRaw, setFiltroObraId])
   const [filtroEstadoGasto, setFiltroEstadoGasto] = useState('')
   const [filtroProveedorId, setFiltroProveedorId] = useState('')
   const [seleccion, setSeleccion] = useState(new Set())
@@ -1396,7 +1415,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
 
       {/* Multi-filtro: obra + estado + proveedor */}
       <GastosFiltros
-        obras={obrasActivas}
+        obras={obrasParaFiltro}
         proveedores={[...new Map(gastos.filter(g=>g.proveedores).map(g=>[g.proveedor_id, g.proveedores])).values()]}
         filtroObraId={filtroObraId}
         setFiltroObraId={setFiltroObraId}
@@ -1426,7 +1445,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                       {r.proveedores?.nombre ?? 'Sin proveedor'}
                       <span style={{ fontSize: 10, color: C.orange, background: '#fff', border: `1px solid #FFDCAA`, borderRadius: 99, padding: '1px 7px', fontWeight: 600, marginLeft: 6 }}>Remito provisorio</span>
                     </div>
-                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{obrasNoms || '—'} · {r.fecha}{r.nro_remito ? ` · ${r.nro_remito}` : ''}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{obrasNoms || '—'} · {fmtFechaAR(r.fecha)}{r.nro_remito ? ` · ${r.nro_remito}` : ''}</div>
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(montoScope)}</div>
                 </div>
@@ -1462,7 +1481,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{g.proveedores?.nombre ?? 'Sin proveedor'}</div>
-                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')} · {g.fecha}{g.excluir_prorrateo && ' · 🚫 sin prorrateo'}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}{g.obras?.estado && g.obras.estado !== 'activa' ? ` (${g.obras.estado})` : ''} · {fmtFechaAR(g.fecha)}{g.excluir_prorrateo && ' · 🚫 sin prorrateo'}</div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
                       {(() => {
@@ -1525,8 +1544,11 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     <td style={{ ...tdSt, padding: '8px 6px', textAlign: 'center' }}>
                       {esAdmin && !g.pagado && (() => { const saldo=Math.max(0,(parseFloat(g.monto)||0)-(g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0)); return saldo>=1 })() && <input type="checkbox" checked={seleccion.has(g.id)} onChange={() => toggleSel(g.id)} style={{ accentColor: C.purple, cursor: 'pointer', width: 15, height: 15 }} />}
                     </td>
-                    <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{g.fecha}</td>
-                    <td style={tdSt}><span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}</span></td>
+                    <td style={{ ...tdSt, whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', fontSize: 11, color: C.textMuted }}>{fmtFechaAR(g.fecha)}</td>
+                    <td style={{ ...tdSt, overflow: 'hidden' }}>
+                      <span style={{ fontSize: 11, padding: '2px 7px', background: C.purpleDim, color: C.purple, borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'middle' }}>{g.distribucion?.length > 1 ? 'Varias obras' : (g.obras?.nombre ?? '—')}</span>
+                      {g.obras?.estado && g.obras.estado !== 'activa' && <span title={`Obra ${g.obras.estado}`} style={{ marginLeft: 3, fontSize: 11 }}>{g.obras.estado === 'pausada' ? '⏸' : '🏁'}</span>}
+                    </td>
                     <td style={{ ...tdSt, overflow: 'hidden', maxWidth: 0 }}>
                       <div style={{ fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.proveedores?.nombre ?? '—'}</div>
                       {g.descripcion && <div style={{ fontSize: 11, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{g.descripcion}</div>}
@@ -2322,7 +2344,7 @@ function ModalGasto({ itemEdit, obras, proveedores, gastos, obraIdDefecto, onClo
   return <Modal title={itemEdit ? 'Editar Gasto' : 'Registrar Gasto'} onClose={onClose} onGuardar={() => {
       if (dup.fuerte) {
         const prov = proveedores.find(p => p.id === form.proveedor_id)?.nombre || 'este proveedor'
-        if (!window.confirm(`Ya hay un gasto cargado a ${prov} con el mismo Nº de comprobante (${dup.fuerte.nro_comprobante}, $${fmt(dup.fuerte.monto)}, ${dup.fuerte.fecha}).\n\n¿Guardar de todas formas?`)) return
+        if (!window.confirm(`Ya hay un gasto cargado a ${prov} con el mismo Nº de comprobante (${dup.fuerte.nro_comprobante}, $${fmt(dup.fuerte.monto)}, ${fmtFechaAR(dup.fuerte.fecha)}).\n\n¿Guardar de todas formas?`)) return
       }
       onGuardar(form)
     }}><FormGasto form={form} set={set} obras={obras} proveedores={proveedores} onNuevoProveedor={onNuevoProveedor} duplicado={dup} /></Modal>
@@ -2371,7 +2393,7 @@ async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.7) {
 
 function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuardar, onNuevoProveedor }) {
   const [step, setStep] = useState('upload')
-  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true, es_gasto_general: false, excluir_prorrateo: false })
+  const [form, setForm] = useState({ obra_id: obraIdDefecto || obras[0]?.id || '', fecha: hoy(), proveedor_id: '', concepto: 'materiales', monto: '', descripcion: '', imagen_url: '', tipo_comprobante: 'factura_a', discrimina_iva: true, nro_comprobante: '', a_nombre_seate: false, iva_monto: 0, distribucion: [], condicion_pago: 'contado', redondear_viernes: true, es_gasto_general: false, excluir_prorrateo: false, fecha_texto_original: '', fecha_ambigua: false })
   const [preview, setPreview] = useState(null)
   const [currentFile, setCurrentFile] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -2441,12 +2463,19 @@ function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuard
           }
         }
         const ivaMonto = parseFloat(parsed.iva_monto) || 0
-        setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva, a_nombre_seate: aNombreSeate, iva_monto: ivaMonto }))
+        setForm(f => ({ ...f, fecha: parsed.fecha || hoy(), fecha_texto_original: parsed.fecha_texto_original || '', fecha_ambigua: !!parsed.fecha_ambigua, proveedor_id: matchProv ? matchProv.id : '', concepto: parsed.concepto || 'varios', monto: parsed.monto || '', nro_comprobante: parsed.nro_comprobante || '', descripcion: (parsed.descripcion || '') + (nombreIA && !matchProv ? ` (IA detectó prov: ${nombreIA})` : ''), imagen_url: imageUrl, tipo_comprobante: tipo, discrimina_iva: iva, a_nombre_seate: aNombreSeate, iva_monto: ivaMonto }))
         if (nombreIA && !matchProv) onNuevoProveedor && onNuevoProveedor(nombreIA, (np) => { if (!np?.id) return; const sit = getSituacion(np.situacion_impositiva); setForm(f => ({ ...f, proveedor_id: np.id, tipo_comprobante: sit.comprobante, discrimina_iva: sit.iva, descripcion: parsed.descripcion || '' })) }, parsed.cuit || null, sitIA)
         // La IA autoevalúa qué tan segura está de la lectura (imagen borrosa, cortada, dato dudoso,
         // etc.) — si dice que es baja, se lo hacemos notar al usuario para que revise a mano antes
         // de guardar, en vez de dejar pasar silenciosamente un dato mal leído.
         if (parsed.confianza === 'baja') window._toast?.('⚠️ La IA no está segura de haber leído bien esta factura — revisá los datos antes de guardar', 'info')
+        // Fecha ambigua (día y mes numéricos, ambos ≤12, sin ninguna pista en el documento para
+        // saber el orden con certeza): la IA asumió el orden argentino DD/MM por default, pero
+        // puede estar cruzada si este comprobante en particular usa MM/DD. Se avisa puntualmente
+        // (además del cartel general de confianza baja) porque es el error que reportó el usuario:
+        // algunos comprobantes traen la fecha en un orden, otros en el otro, y hay que revisar a ojo
+        // comparando contra el texto tal como está impreso (fecha_texto_original, mostrado en el form).
+        else if (parsed.fecha_ambigua) window._toast?.(`⚠️ Fecha ambigua en este comprobante (¿día o mes primero?) — se asumió ${fmtFechaAR(parsed.fecha)}, comparalo contra "${parsed.fecha_texto_original || 'lo impreso en la factura'}" antes de guardar`, 'info')
       } else {
         setForm(f => ({ ...f, imagen_url: imageUrl }))
         if (error) window._toast?.('IA no disponible — completá los datos manualmente')
@@ -2466,9 +2495,12 @@ function ModalFoto({ obras, proveedores, gastos, obraIdDefecto, onClose, onGuard
     <Modal title="Cargar comprobante" onClose={onClose} onGuardar={step === 'review' ? () => {
         if (dup.fuerte) {
           const prov = proveedores.find(p => p.id === form.proveedor_id)?.nombre || 'este proveedor'
-          if (!window.confirm(`Ya hay un gasto cargado a ${prov} con el mismo Nº de comprobante (${dup.fuerte.nro_comprobante}, $${fmt(dup.fuerte.monto)}, ${dup.fuerte.fecha}).\n\n¿Guardar de todas formas?`)) return
+          if (!window.confirm(`Ya hay un gasto cargado a ${prov} con el mismo Nº de comprobante (${dup.fuerte.nro_comprobante}, $${fmt(dup.fuerte.monto)}, ${fmtFechaAR(dup.fuerte.fecha)}).\n\n¿Guardar de todas formas?`)) return
         }
-        onGuardar({ ...form, proveedor_id: form.proveedor_id || null, monto: parseFloat(form.monto) || 0 })
+        // fecha_texto_original / fecha_ambigua son solo para esta pantalla de revisión (comparar
+        // contra lo que interpretó la IA) — no son columnas de "gastos", no van a la base.
+        const { fecha_texto_original, fecha_ambigua, ...formParaGuardar } = form
+        onGuardar({ ...formParaGuardar, proveedor_id: form.proveedor_id || null, monto: parseFloat(form.monto) || 0 })
       } : null} guardarLabel="Guardar gasto">
       {step === 'upload' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -2750,7 +2782,7 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
             <div style={{ color: C.textMuted, display: 'flex', flexWrap: 'wrap', gap: '2px 8px', lineHeight: 1.6 }}>
               <span>{gasto?.obras?.nombre ?? '—'}</span>
               <span>·</span>
-              <span>{gasto?.fecha}</span>
+              <span>{fmtFechaAR(gasto?.fecha)}</span>
               <span>·</span>
               <span>{getTipoLabel(gasto?.tipo_comprobante)}</span>
               {gasto?.nro_comprobante && <><span>·</span><span style={{ fontWeight: 600, color: C.text }}>Nº {gasto.nro_comprobante}</span></>}
@@ -2783,7 +2815,7 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
           <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
             {gasto?.concepto && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Concepto: </span><span style={{ color: C.text }}>{CONCEPTO_LABELS[gasto.concepto] ?? gasto.concepto}</span></div>}
             {gasto?.condicion_pago && gasto.condicion_pago !== 'contado' && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Condición: </span><span style={{ color: C.text }}>{CONDICIONES_PAGO.find(c => c.value === gasto.condicion_pago)?.label ?? gasto.condicion_pago}</span></div>}
-            {venc && gasto?.condicion_pago !== 'contado' && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Vencimiento: </span><span style={{ color: C.text, fontWeight: 600 }}>{venc}</span></div>}
+            {venc && gasto?.condicion_pago !== 'contado' && <div><span style={{ color: C.textFaint, fontWeight: 600 }}>Vencimiento: </span><span style={{ color: C.text, fontWeight: 600 }}>{fmtFechaAR(venc)}</span></div>}
             {gasto?.descripcion && <div style={{ gridColumn: '1/-1' }}><span style={{ color: C.textFaint, fontWeight: 600 }}>Descripción: </span><span style={{ color: C.text }}>{gasto.descripcion}</span></div>}
           </div>
         )}
@@ -2814,9 +2846,9 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
           {(gasto?.pagos || []).map((p, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', background: 'rgba(255,255,255,0.6)', borderRadius: 6, marginBottom: 3, fontSize: 11, gap: 8 }}>
               <div style={{ color: C.textMuted, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {p.fecha_pago} · {MEDIOS_PAGO.find(m => m.value === p.medio_pago)?.label ?? p.medio_pago}
+                {fmtFechaAR(p.fecha_pago)} · {MEDIOS_PAGO.find(m => m.value === p.medio_pago)?.label ?? p.medio_pago}
                 {p.nro_cheque ? ` · Cheque N°${p.nro_cheque}` : ''}
-                {p.fecha_vencimiento_cheque ? ` · Cobrar ${p.fecha_vencimiento_cheque}` : ''}
+                {p.fecha_vencimiento_cheque ? ` · Cobrar ${fmtFechaAR(p.fecha_vencimiento_cheque)}` : ''}
               </div>
               <div style={{ fontWeight: 700, color: C.green, flexShrink: 0 }}>$ {fmt(p.monto)}</div>
             </div>
@@ -2985,7 +3017,7 @@ function ModalSubidaMasiva({ gastos, onClose, onDone }) {
                     {g.proveedores?.nombre ?? 'Sin proveedor'}
                   </div>
                   <div style={{ fontSize: 10, color: C.textMuted, marginTop: 1 }}>
-                    {g.fecha} · {g.obras?.nombre ?? '—'} · <strong>$ {fmt(g.monto)}</strong>
+                    {fmtFechaAR(g.fecha)} · {g.obras?.nombre ?? '—'} · <strong>$ {fmt(g.monto)}</strong>
                   </div>
                   {archivo && !isOk && !isErr && (
                     <div style={{ fontSize: 10, color: C.purple, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3116,7 +3148,7 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div>
                     <span style={{ fontWeight: 600, fontSize: 13, color: C.text }}>Pago {i + 1} · $ {fmt(p.monto)}</span>
-                    <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{p.fecha_pago} · {MEDIOS[p.medio_pago] ?? p.medio_pago}{p.nota_tarjeta ? ` · ${p.nota_tarjeta}` : ''}{p.cuotas > 1 ? ` · ${p.cuotas} cuotas` : ''}</span>
+                    <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{fmtFechaAR(p.fecha_pago)} · {MEDIOS[p.medio_pago] ?? p.medio_pago}{p.nota_tarjeta ? ` · ${p.nota_tarjeta}` : ''}{p.cuotas > 1 ? ` · ${p.cuotas} cuotas` : ''}</span>
                   </div>
                   {compUrl && <a href={compUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>Ver 🧾</a>}
                 </div>
@@ -3198,7 +3230,7 @@ function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
           {gastos.map(g => (
             <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.textMuted }}>
-              <span>{getTipoLabel(g.tipo_comprobante)}{g.nro_comprobante ? ' · ' + g.nro_comprobante : ''} — {g.fecha}</span>
+              <span>{getTipoLabel(g.tipo_comprobante)}{g.nro_comprobante ? ' · ' + g.nro_comprobante : ''} — {fmtFechaAR(g.fecha)}</span>
               <span style={{ fontWeight: 600, color: C.text }}>{`$ ${fmt(g.monto)}`}</span>
             </div>
           ))}
@@ -3296,8 +3328,8 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado 
           </div>
           <div style={{ fontSize: 12, color: duplicado.fuerte ? '#D0021B' : '#8A5200', marginTop: 2 }}>
             {duplicado.fuerte
-              ? `Mismo proveedor y mismo Nº de comprobante (${duplicado.fuerte.nro_comprobante}) que un gasto del ${duplicado.fuerte.fecha} por $${fmt(duplicado.fuerte.monto)}.`
-              : `Mismo proveedor, misma fecha (${duplicado.debil.fecha}) y mismo monto ($${fmt(duplicado.debil.monto)}) que otro gasto ya cargado — podría ser una coincidencia real, revisá antes de guardar.`}
+              ? `Mismo proveedor y mismo Nº de comprobante (${duplicado.fuerte.nro_comprobante}) que un gasto del ${fmtFechaAR(duplicado.fuerte.fecha)} por $${fmt(duplicado.fuerte.monto)}.`
+              : `Mismo proveedor, misma fecha (${fmtFechaAR(duplicado.debil.fecha)}) y mismo monto ($${fmt(duplicado.debil.monto)}) que otro gasto ya cargado — podría ser una coincidencia real, revisá antes de guardar.`}
           </div>
         </div>
       )}
@@ -3311,7 +3343,18 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado 
           </div>
         </label>
       </div>
-      <Campo label="Fecha"><input style={inputSt} type="date" value={form.fecha} onChange={e => set('fecha', e.target.value)} /></Campo>
+      <Campo label="Fecha">
+        <input style={inputSt} type="date" value={form.fecha} onChange={e => set('fecha', e.target.value)} />
+        {/* Solo aparece cuando el comprobante se cargó por foto/IA (ModalFoto) y hay fecha detectada
+            en el documento — deja ver el texto TAL COMO está impreso para poder comparar a ojo contra
+            la fecha interpretada arriba, y así detectar si la IA cruzó día y mes. En naranja + aviso
+            cuando la propia IA marcó la fecha como ambigua (día y mes ambos ≤12, sin pistas). */}
+        {form.fecha_texto_original && (
+          <div style={{ fontSize: 10.5, color: form.fecha_ambigua ? C.orange : C.textMuted, marginTop: 4 }}>
+            {form.fecha_ambigua ? '⚠️ ' : ''}En el comprobante dice: <strong>{form.fecha_texto_original}</strong>{form.fecha_ambigua ? ' — día/mes ambiguo, verificá' : ''}
+          </div>
+        )}
+      </Campo>
       {!esGeneral && <Campo label="Obra"><select style={inputSt} value={form.obra_id || ''} onChange={e => set('obra_id', e.target.value)}>{obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}</select></Campo>}
       {esGeneral && <div />}
       <Campo label="Proveedor" style={{ gridColumn: '1/-1' }}>
@@ -3399,7 +3442,7 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado 
           )}
           {form.condicion_pago !== 'contado' && form.fecha && (
             <span style={{ fontSize: 11, color: C.purple, fontWeight: 600 }}>
-              Vence: {calcVencimiento(form.fecha, form.condicion_pago, !!form.redondear_viernes)}
+              Vence: {fmtFechaAR(calcVencimiento(form.fecha, form.condicion_pago, !!form.redondear_viernes))}
             </span>
           )}
         </div>

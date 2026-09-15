@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import { C, MEDIOS_PAGO, IVA, CONCEPTO_LABELS, CONCEPTO_ICONS } from './constants'
-import { fmt, hoy, dbWrite, getTipoLabel } from './utils'
+import { fmt, hoy, dbWrite, getTipoLabel, fmtFechaAR } from './utils'
 import { toast } from './toast'
 
 // ── Hooks ────────────────────────────────────────────────────
@@ -322,7 +322,7 @@ export default function CuentaCorriente({ esAdmin, usuario }) {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                       <div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{MEDIOS_PAGO.find(m => m.value === p.medio_pago)?.label ?? p.medio_pago}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{p.fecha_pago} · {p.bancos?.nombre ?? ''} {p.nro_operacion ? `· Op: ${p.nro_operacion}` : ''}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{fmtFechaAR(p.fecha_pago)} · {p.bancos?.nombre ?? ''} {p.nro_operacion ? `· Op: ${p.nro_operacion}` : ''}</div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: 16, fontWeight: 700, color: C.green, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>$ {fmt(p.monto_total)}</div>
@@ -437,7 +437,7 @@ function GastoGenCard({ gasto: g }) {
             </span>
           </div>
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>
-            {g.fecha}{g.tipo_comprobante ? ` · ${getTipoLabel(g.tipo_comprobante)}` : ''}{g.nro_comprobante ? ` ${g.nro_comprobante}` : ''}
+            {fmtFechaAR(g.fecha)}{g.tipo_comprobante ? ` · ${getTipoLabel(g.tipo_comprobante)}` : ''}{g.nro_comprobante ? ` ${g.nro_comprobante}` : ''}
           </div>
           {g.descripcion && <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>{g.descripcion}</div>}
         </div>
@@ -474,7 +474,7 @@ function RemitoCard({ remito, obras, esAdmin, esRI, onEditar, onDistribuir, onVi
                 {remito.estado.charAt(0).toUpperCase() + remito.estado.slice(1)}
               </span>
             </div>
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>{remito.fecha}</div>
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>{fmtFechaAR(remito.fecha)}</div>
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums' }}>
@@ -800,7 +800,7 @@ function ModalDistribuir({ remito, obras, esRI, onClose, onGuardar }) {
   return (
     <Modal title="Distribuir entre obras" onClose={onClose} onGuardar={() => onGuardar(dist)} ancho={500}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12 }}>
-        <div style={{ fontWeight: 600, color: C.text }}>Remito {remito.nro_remito || 'sin nro.'} — {remito.fecha}</div>
+        <div style={{ fontWeight: 600, color: C.text }}>Remito {remito.nro_remito || 'sin nro.'} — {fmtFechaAR(remito.fecha)}</div>
         {montoBase > 0 && (
           <div style={{ marginTop: 6, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ color: C.textMuted }}>Neto: $ {fmt(montoBase)}</span>
@@ -857,7 +857,7 @@ function ModalVincularFactura({ remito, remitosDisponibles, esRI, onClose, onGua
               <input type="checkbox" checked={seleccionados.includes(r.id)} onChange={() => toggle(r.id)} disabled={r.id === remito.id} style={{ accentColor: C.purple, width: 15, height: 15 }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: r.id === remito.id ? 600 : 400, color: C.text }}>
-                  {r.nro_remito || 'Sin nro.'} — {r.fecha}
+                  {r.nro_remito || 'Sin nro.'} — {fmtFechaAR(r.fecha)}
                   {r.id === remito.id && <span style={{ fontSize: 10, color: C.purple, marginLeft: 6 }}>este remito</span>}
                 </div>
                 {r.monto_neto > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>$ {fmt(r.monto_neto)} neto</div>}
@@ -934,7 +934,7 @@ function ModalPagarCC({ proveedor, remitos, bancos, esRI, onClose, onGuardar }) 
               <input type="checkbox" checked={seleccionados.includes(r.id)} onChange={() => toggleRemito(r.id)} style={{ accentColor: C.purple, width: 15, height: 15 }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: C.text }}>
-                  {r.nro_remito || 'Sin nro.'} — {r.fecha}
+                  {r.nro_remito || 'Sin nro.'} — {fmtFechaAR(r.fecha)}
                   {r.nro_factura && <span style={{ fontSize: 10, color: C.purple, marginLeft: 6, fontWeight: 600 }}>🔗 Fac. {r.nro_factura}</span>}
                 </div>
                 {r.monto_neto > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>Neto: $ {fmt(r.monto_neto)}{esRI ? ` → c/IVA: $ ${fmt(r.monto_neto * (1 + IVA))}` : ''}</div>}

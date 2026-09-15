@@ -272,6 +272,51 @@ La tabla desktop de gastos (`PanelGastos`) usa columnas de ancho fijo (`tableLay
 
 ---
 
+## Feature: comprobantes pendientes de obras pausadas/finalizadas no deben ocultarse (agosto 2026)
+
+Pedido del usuario: si una obra queda **pausada** o **finalizada** con comprobantes de gasto todavía impagos, esos comprobantes tienen que seguir apareciendo en las listas de pendientes — no deben "desaparecer" solo porque la obra dejó de estar activa. Los gastos **ya pagados** de una obra inactiva sí se siguen ocultando, como antes (la obra pausada/finalizada no debe volver a inundar la vista con historial viejo, solo con la deuda real).
+
+Antes esto no se cumplía de forma consistente: cada panel arma su propio filtro de "obras activas" por separado (ver la nota de "Prorrateo…" más abajo, mismo patrón de cálculo duplicado), y varios de esos filtros escondían directamente cualquier gasto de una obra no-activa, esté pagado o no.
+
+- **`PanelGastos`** (lista principal de comprobantes): antes filtraba `gastos = gastosRaw.filter(g => g.es_gasto_general || idsActivas.has(g.obra_id))` — obra no-activa = gasto invisible, pagado o no. Ahora se calcula `obraIdsConPendientes` (obras, sin importar su estado, que tengan al menos un gasto impago) y se arma `idsVisibles = idsActivas ∪ obraIdsConPendientes`; el filtro pasa a ser `gastos = gastosRaw.filter(g => g.es_gasto_general || idsVisibles.has(g.obra_id))`. Con esto, una obra pausada/finalizada aparece en la lista mientras tenga algo impago, y deja de aparecer sola cuando se termina de pagar todo.
+- El selector de obra del filtro (`GastosFiltros`) recibe `obrasParaFiltro` (activas + inactivas-con-pendientes) en vez de solo `obrasActivas`, para poder filtrar puntualmente por esas obras inactivas que ahora son visibles. Las opciones del `<select>` muestran el estado entre paréntesis cuando no es "activa" (ej. "Casa Pérez (pausada)").
+- El `useEffect` que resetea `filtroObraId` cuando la obra filtrada deja de estar disponible ahora también respeta esta regla (no resetea si la obra sigue teniendo pendientes, aunque esté pausada/finalizada).
+- La card mobile y la celda "Obra" de la tabla desktop muestran el estado de la obra cuando no es activa: sufijo `(pausada)`/`(finalizada)` en mobile, e ícono ⏸/🏁 junto al nombre en desktop (con `title` para accesibilidad).
+- `useGastos` amplía el `select` de Supabase para traer también `obras(nombre, estado)` (antes solo `obras(nombre)`) — hace falta el estado para poder mostrar el sufijo/ícono y para el filtro. **No** se tocaron los tres lugares donde el hook actualiza `obras` de forma optimista tras guardar/editar (siguen mandando solo `{ nombre: obraObj.nombre }` sin `estado`) — es una inconsistencia menor y de bajo riesgo: en el peor caso, un gasto recién creado/editado no muestra el sufijo de estado hasta el próximo refetch, nunca se oculta de más.
+- **`PanelInicio`** (dashboard de inicio) tenía el mismo problema en otro lugar: las tarjetas "Pendiente", "Pend. contado" y "Pend. cta. cte." partían de `gastosActivas` (ya filtrado a obras activas), a pesar de que el comentario del código decía "Pendiente incluye TODAS las impagas (también de obras cerradas)" — el comentario no se cumplía en la práctica. Se separó el cálculo: `impagas` ahora se arma desde `gastos` sin filtrar por obra activa (`gastos.filter(g => !g.pagado && !g.es_gasto_general && enPeriodo(g.fecha))`), y las tarjetas "Pend. contado"/"Pend. cta. cte." usan esa misma lista en vez de `gastosActivas`. El resto de las métricas del período (Total gastos, Pagado, crédito fiscal, provisorios) se dejaron como estaban, acotadas a obras activas — representan el movimiento del período en obras en curso, no la deuda pendiente.
+- No se tocó el bloque "Gastos generales — impacto por obra" (`gastoPorObra`, corregido en un pedido anterior de este mismo mes) ni "Últimos gastos" (`ultimosGastos`, lista de actividad reciente) — quedan fuera del alcance de este pedido.
+- `NotifPendientes` ya usaba `todosGastos` sin filtrar por obra activa desde antes — no necesitó cambios, y sirvió de referencia para el criterio a aplicar en los demás lugares.
+- No hizo falta migración de base de datos — es un cambio de lógica de filtrado en el frontend, `obras.estado` y `gastos.pagado` ya existían.
+
+---
+
+## Feature: fecha ambigua al leer comprobantes con IA — día/mes cruzados (septiembre 2026)
+
+Pedido del usuario: la fecha que la IA lee de la foto de un comprobante (`ModalFoto`, Edge Function `analizar-comprobante`) a veces queda con el día y el mes cruzados. La causa NO es de visualización — en toda la app la fecha se guarda como `YYYY-MM-DD` y se muestra siempre igual (o bien tal cual, o bien reordenada explícitamente a `DD/MM` con `fmtDia`/`toLocaleDateString('es-AR')`, nunca depende del locale del navegador). El problema está más atrás, en la EXTRACCIÓN: cuando el comprobante imprime la fecha solo en números separados por "/" o "-" y AMBOS componentes (día y mes) son ≤12 (ej. "05/08/2026"), es imposible saber con certeza cuál es cuál mirando solo esos dos números — y distintas imprentas fiscales/software de facturación usan distinto orden (DD/MM la mayoría en Argentina, pero no todas). El prompt anterior solo decía "los comprobantes argentinos casi siempre usan DD/MM, no te confundas con MM/DD", sin ninguna forma de detectar cuándo ese default realmente aplicaba o no.
+
+- El prompt de `analizar-comprobante/index.ts` (tipo `comprobante`) ahora le pide a la IA que, ante una fecha numérica ambigua, busque pistas en el resto del documento antes de asumir DD/MM a ciegas (otra fecha del mismo comprobante con un componente >12, un mes escrito en palabras, etc.), y que recuerde que si CUALQUIERA de los dos números es >12 ese es inequívocamente el día sin importar en qué posición aparece (no existe mes 13).
+- Dos campos nuevos en la respuesta JSON de la IA (solo para este tipo de análisis): `fecha_texto_original` (la fecha transcripta LITERAL, con el mismo orden que está impreso — nunca normalizada, sirve para comparar a ojo) y `fecha_ambigua` (boolean: true solo cuando la IA tuvo que aplicar el default DD/MM sin ninguna pista que lo confirmara).
+- **Estos dos campos son efímeros, viven solo en el estado del formulario de `ModalFoto` durante la revisión — no son columnas de la tabla `gastos` y no se mandan a `dbWrite`.** Antes de llamar a `onGuardar` se desestructuran y se descartan (`const { fecha_texto_original, fecha_ambigua, ...formParaGuardar } = form`). No hizo falta ninguna migración.
+- En el campo "Fecha" de `FormGasto` (el formulario de revisión, compartido con `ModalGasto` pero estos campos solo existen viniendo de `ModalFoto`), debajo del `<input type="date">` aparece "En el comprobante dice: **{fecha_texto_original}**" cuando la IA detectó alguna fecha — así el usuario puede comparar a ojo la fecha interpretada contra el texto real del papel antes de guardar. Si `fecha_ambigua` es true, esa línea se pinta en naranja con un ⚠️ y el texto "día/mes ambiguo, verificá".
+- Además, si `fecha_ambigua` es true se dispara un toast puntual (`⚠️ Fecha ambigua en este comprobante...`) distinto del cartel genérico de "confianza baja" — es una alerta más específica para este error exacto, en vez de depender del cartel general que solo salta con confianza "baja" (no "media").
+- **Límite conocido, no resuelto porque es inherente al problema**: si el comprobante no tiene NINGUNA pista adicional (ni otra fecha, ni mes escrito en palabras) y ambos números son ≤12, sigue sin haber manera de saber el orden con 100% de certeza solo mirando la imagen — lo que se agregó es que ahora la IA avisa cuando está en esa situación (en vez de adivinar en silencio), para que el humano lo confirme mirando `fecha_texto_original`. Esto es intencional, en línea con el principio del proyecto de "nunca dejar que la IA invente un número sin que el humano lo pueda verificar".
+- Mismo tipo de ambigüedad podría existir en las fechas de pólizas (`fecha_emision`/`fecha_inicio`/`fecha_vencimiento` en el prompt tipo `poliza`) — no se tocó esa sección esta vez porque el usuario reportó el problema puntualmente en comprobantes/facturas; si se repite en pólizas, aplicar el mismo patrón ahí.
+
+**Corrección del usuario (mismo día)**: después de este cambio, el usuario aclaró que el dato en sí SÍ estaba bien tomado — al abrir el comprobante y mirar el `<input type="date">` (el almanaque), la fecha correcta aparecía seleccionada. Lo que pasaba era otra cosa: **la lista mostraba el string ISO (`YYYY-MM-DD`) tal cual**, sin reformatear, y en ISO el mes va en el medio, ANTES del día — así que a simple vista se lee "mes antes que día", que es exactamente lo que el usuario reportó como "invertido". No era un error de lectura de la IA (ese caso puntual de ambigüedad día/mes sigue siendo válido y vale la pena tenerlo, pero es un problema distinto y más raro) — era que casi TODA la app mostraba la fecha cruda de la base en vez de formatearla como DD/MM/AAAA. Ver la sección siguiente, que es la que realmente resuelve lo que el usuario venía reportando desde el principio.
+
+---
+
+## Feature: mostrar SIEMPRE las fechas como día/mes/año en toda la app (septiembre 2026)
+
+Causa real del reporte del usuario ("la fecha aparece a veces con el mes antes que el día"): las fechas se guardan en la base como `YYYY-MM-DD` (ISO — lo que necesita el `<input type="date">` nativo y lo que evita bugs de huso horario al comparar/ordenar fechas como texto). El problema es que en casi toda la app esa fecha se mostraba TAL CUAL en las listas, sin reformatear — y en `YYYY-MM-DD` el mes literalmente aparece en el medio, antes del día. El dato guardado siempre fue correcto (por eso el almanaque del formulario mostraba bien la fecha al editar); lo que estaba mal era nada más la presentación como texto en listas, tarjetas, mensajes de WhatsApp, confirmaciones de duplicado, etc.
+
+- Nuevo helper en `utils.js`: `fmtFechaAR(iso)` — reordena el string `YYYY-MM-DD` a `DD/MM/AAAA` con un simple `split('-')` y armado de template string. **A propósito NO usa `new Date(...)`**: parsear con `Date` y volver a formatear puede corromper el día por huso horario (un clásico: `new Date('2026-08-05')` se interpreta en UTC medianoche, y en UTC-3 `.getDate()` puede devolver el día anterior). Al ser solo reordenamiento de texto, no hay conversión de zona horaria de por medio.
+- Se aplicó `fmtFechaAR(...)` en TODOS los lugares donde una fecha se muestra como texto en `GestorObras.jsx`, `CuentaCorriente.jsx` y `Seguros.jsx`: lista de gastos (mobile y desktop), remitos, historial de pagos (incluye cheques y su fecha de cobro), modal de pago (fecha del gasto, vencimiento), mensaje de WhatsApp para compartir un gasto, los tres textos de aviso de "gasto duplicado" (comparan fechas), las tarjetas "próx. vencimiento" de Inicio, `VencimientoBadge` y "Vigencia desde" de pólizas, historial de renovaciones de pólizas, cuenta corriente de proveedores.
+- **Lo que NO se tocó a propósito**: el `value` de cualquier `<input type="date">` (sigue necesitando el string ISO, lo maneja el navegador) y toda la lógica interna que compara/ordena/agrupa por fecha (`enPeriodo`, `calcVencimiento`, `.localeCompare`, agrupamientos por mes, filtros de rango) — ahí se sigue trabajando con el string ISO original, `fmtFechaAR` se aplica solo en el punto final donde el valor se convierte a texto visible.
+- No hizo falta ninguna migración ni cambio de columnas — es puramente presentación.
+
+---
+
 ## Feature: Detección de comprobantes duplicados
 
 Los usuarios reportaron que el sistema no avisaba si un comprobante ya estaba cargado, y de hecho pasaba: se duplicaba el mismo gasto dos veces. `buscarGastoDuplicado(gastos, form, excludeId)` (helper a nivel módulo en `GestorObras.jsx`, justo antes de `ModalGasto`) compara el `form` que se está por guardar contra los `gastos` ya cargados:
@@ -655,6 +700,10 @@ npm run build
 git status
 git add -A && git commit -m "mensaje" && git push
 ```
+
+### Atajo: `build-y-subir.bat` (septiembre 2026)
+
+Doble clic en la raíz del proyecto — hace `npm run build` (si falla, se detiene y no sube nada), pide un mensaje de commit (Enter = uno automático con fecha/hora), `git add -A`, `git commit` y `git push origin main`. Usa `cd /d "%~dp0"` (la carpeta donde está el .bat) en vez de una ruta fija, para no romperse si el proyecto se mueve de carpeta otra vez (a diferencia de `subir-github.bat`, que quedó con la ruta vieja de antes de la migración de PC de julio 2026 y ya no sirve tal cual).
 
 ---
 

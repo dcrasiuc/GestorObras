@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import { C, MEDIOS_PAGO } from './constants'
-import { fmt, hoy, dbWrite } from './utils'
+import { fmt, hoy, dbWrite, fmtFechaAR } from './utils'
 import { toast } from './toast'
 
 // ── Constantes propias de Seguros ───────────────────────────────
@@ -217,8 +217,8 @@ function VencimientoBadge({ fecha }) {
   const dias = diasHasta(fecha)
   if (dias === null) return <Badge bg="#F3F3F3" color="#888">Sin vencimiento cargado</Badge>
   if (dias < 0) return <Badge bg="#FFF0F0" color="#C62828">🔴 Vencida hace {Math.abs(dias)}d</Badge>
-  if (dias <= DIAS_AVISO_VENCIMIENTO) return <Badge bg="#FFF8ED" color="#8A5200">🟠 Vence en {dias}d ({fecha})</Badge>
-  return <Badge bg={C.greenDim} color={C.green}>⏳ Vence {fecha}</Badge>
+  if (dias <= DIAS_AVISO_VENCIMIENTO) return <Badge bg="#FFF8ED" color="#8A5200">🟠 Vence en {dias}d ({fmtFechaAR(fecha)})</Badge>
+  return <Badge bg={C.greenDim} color={C.green}>⏳ Vence {fmtFechaAR(fecha)}</Badge>
 }
 function EndosoBadge({ poliza }) {
   const nEndosos = (poliza.poliza_documentos || []).filter(d => d.tipo === 'endoso').length
@@ -1164,7 +1164,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: C.textMuted }}>
             {poliza.monto_asegurado ? <span>💰 Asegurado: {fmt(poliza.monto_asegurado)}</span> : null}
             {prima > 0 && <span>🧾 Prima{totalRenovaciones > 0 ? ' total (con renovaciones)' : ''}: {fmt(prima)} · Pagado: {fmt(totalPagado)} · Saldo: {fmt(saldo)}</span>}
-            {poliza.fecha_inicio && <span>📅 Vigencia desde: {poliza.fecha_inicio}</span>}
+            {poliza.fecha_inicio && <span>📅 Vigencia desde: {fmtFechaAR(poliza.fecha_inicio)}</span>}
           </div>
           {poliza.clausulas_especiales && <div style={{ fontSize: 11, color: C.textMuted, background: '#F3F3F3', padding: '6px 9px', borderRadius: 8 }}>📋 Cláusulas especiales: {poliza.clausulas_especiales}</div>}
           {poliza.se_autorenueva && renovaciones.length > 0 && (
@@ -1172,7 +1172,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted }}>🔁 Renovaciones por período registradas</div>
               {renovaciones.map(r => (
                 <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, background: r.anulada ? '#F3F3F3' : '#FFF8ED', padding: '5px 8px', borderRadius: 6, textDecoration: r.anulada ? 'line-through' : 'none', color: r.anulada ? '#888' : '#8A5200' }}>
-                  <span>Hasta {r.periodo_hasta} · {fmt(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : ''}</span>
+                  <span>Hasta {fmtFechaAR(r.periodo_hasta)} · {fmt(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : ''}</span>
                   {!r.anulada && <button onClick={() => onAnularRenovacion(r)} style={{ background: 'none', border: 'none', color: C.purple, fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: "'Outfit', sans-serif" }}>Anular (retroactivo)</button>}
                 </div>
               ))}
