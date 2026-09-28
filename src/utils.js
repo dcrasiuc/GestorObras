@@ -46,13 +46,48 @@ export async function dbWrite(method, table, payload, filter = null, returning =
 }
 
 // ── Formateo de números ──────────────────────────────────────
+// `fmt` redondea a pesos enteros — sirve para totales grandes (dashboards, tarjetas resumen)
+// donde mostrar centavos es ruido visual. NO USAR donde el usuario tiene que verificar el
+// importe EXACTO antes de confirmar algo (pagos) — ahí hace falta `fmtDec`, ver abajo.
 export const fmt = (n) =>
   new Intl.NumberFormat('es-AR', { style: 'decimal', maximumFractionDigits: 0 }).format(n ?? 0)
+
+// `fmtDec` SIEMPRE muestra los centavos (2 decimales), con coma decimal y punto de miles
+// (formato argentino). Usar en cualquier pantalla de conciliación de pagos — registrar un
+// pago (individual o múltiple), historial de pagos, comprobantes — donde el proveedor necesita
+// el importe EXACTO. `fmt` (sin decimales) en esos lugares hacía que la app "pareciera" redondear
+// el monto, aunque el valor guardado en la base siempre tuvo los centavos correctos: el problema
+// no era el dato, era que no se mostraba completo en la pantalla donde el usuario más lo necesita.
+export const fmtDec = (n) =>
+  new Intl.NumberFormat('es-AR', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n ?? 0)
 
 export const fmtK = (n) =>
   n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000   ? `$${Math.round(n / 1_000)}k`
   : `$${fmt(n)}`
+
+// ── Parseo de un monto tecleado por el usuario (acepta "," o "." como decimal) ──
+// Los inputs de monto son type="number" (value siempre en formato con punto, por spec del
+// navegador, sin importar qué caracter haya tecleado el usuario) — pero por las dudas de que
+// algún dato llegue como texto con coma decimal (pegado desde otro lado, un campo de texto, etc.)
+// esta función normaliza antes de parsear, para no perder los centavos por una coma mal leída.
+export const parseMonto = (v) => {
+  if (v === null || v === undefined || v === '') return 0
+  let s = String(v).trim()
+  const tieneComa = s.includes(',')
+  const tienePunto = s.includes('.')
+  if (tieneComa && tienePunto) {
+    // Formato argentino completo: "." de miles, "," decimal → "15.450,75" → "15450.75"
+    s = s.replace(/\./g, '').replace(',', '.')
+  } else if (tieneComa) {
+    // Solo coma: es el separador decimal → "15450,75" → "15450.75"
+    s = s.replace(',', '.')
+  }
+  // Solo punto (o ninguno de los dos): ya es el formato que entiende parseFloat, se deja igual
+  // (cubre tanto "15450.75" como miles-con-punto-sin-decimales tipo "15450.", que no es un caso real)
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n : 0
+}
 
 // ── Fecha de hoy en YYYY-MM-DD ───────────────────────────────
 export const hoy = () => new Date().toISOString().slice(0, 10)

@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
 import Seguros from './Seguros'
 import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
-import { fmt, fmtK, hoy, fmtFechaAR, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
+import { fmt, fmtDec, fmtK, hoy, parseMonto, fmtFechaAR, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
 import { exportarExcel } from './exportExcel'
 import { exportarZipComprobantes } from './exportZip'
 import './toast'
@@ -25,7 +25,7 @@ function waGastoLink(g) {
   let msg = header + '\n'
   msg += '• Obra: ' + obra + '\n'
   msg += '• Proveedor: ' + proveedor + '\n'
-  msg += '• Monto: $' + fmt(g.monto) + '\n'
+  msg += '• Monto: $' + fmtDec(g.monto) + '\n'
   msg += '• ' + tipo + nro + '\n'
   msg += '• Fecha: ' + fmtFechaAR(g.fecha) + '\n'
   if (g.descripcion) msg += '• ' + g.descripcion + '\n'
@@ -51,9 +51,9 @@ function imputacionesRemito(r) {
 // Solo guarda si hay 2+ obras; con 1 o ninguna, queda como gasto de una sola obra (obra_id).
 async function guardarDistribGasto(gastoId, distribucion, total) {
   await dbWrite('DELETE', 'comprobante_obras', null, `referencia_id=eq.${gastoId}&tipo=eq.gasto`)
-  const filas = (distribucion || []).filter(x => x.obra_id && (parseFloat(x.monto) || 0) > 0)
+  const filas = (distribucion || []).filter(x => x.obra_id && parseMonto(x.monto) > 0)
   if (filas.length >= 2) {
-    await dbWrite('POST', 'comprobante_obras', filas.map(x => ({ tipo: 'gasto', referencia_id: gastoId, obra_id: x.obra_id, monto: parseFloat(x.monto) || 0, porcentaje: total > 0 ? Math.round((parseFloat(x.monto) || 0) / total * 100) : 0 })))
+    await dbWrite('POST', 'comprobante_obras', filas.map(x => ({ tipo: 'gasto', referencia_id: gastoId, obra_id: x.obra_id, monto: parseMonto(x.monto), porcentaje: total > 0 ? Math.round(parseMonto(x.monto) / total * 100) : 0 })))
   }
 }
 
@@ -614,7 +614,7 @@ export default function GestorObras({ usuario }) {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
           const { id, obra_id, fecha, proveedor_id, concepto, monto, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate, iva_monto, condicion_pago, redondear_viernes, es_gasto_general, excluir_prorrateo, imagen_url } = d
           // a_nombre_seate solo aplica a Factura A
-          const payload = { obra_id: es_gasto_general ? null : (obra_id || null), fecha, proveedor_id: proveedor_id || null, concepto, monto: parseFloat(monto) || 0, descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes, es_gasto_general: !!es_gasto_general, excluir_prorrateo: !!excluir_prorrateo, imagen_url: imagen_url || null }
+          const payload = { obra_id: es_gasto_general ? null : (obra_id || null), fecha, proveedor_id: proveedor_id || null, concepto, monto: parseMonto(monto), descripcion, tipo_comprobante, discrimina_iva, nro_comprobante, a_nombre_seate: tipo_comprobante === 'factura_a' ? !!a_nombre_seate : false, iva_monto: parseFloat(iva_monto) || 0, condicion_pago: condicion_pago || 'contado', redondear_viernes: !!redondear_viernes, es_gasto_general: !!es_gasto_general, excluir_prorrateo: !!excluir_prorrateo, imagen_url: imagen_url || null }
           const esNuevo = !id
           const saved = await dbWrite(id ? 'PATCH' : 'POST', 'gastos', payload, id ? `id=eq.${id}` : null, esNuevo)
           // Actualización optimista: reflejar en UI sin esperar reload
@@ -626,7 +626,7 @@ export default function GestorObras({ usuario }) {
             setGastos(prev => prev.map(g => g.id === id ? { ...g, ...payload, obras: obraObj ? { nombre: obraObj.nombre } : g.obras, proveedores: provObj ? { nombre: provObj.nombre, situacion_impositiva: provObj.situacion_impositiva } : g.proveedores } : g))
           }
           const gastoId = saved?.id || id
-          if (gastoId) await guardarDistribGasto(gastoId, d.distribucion, parseFloat(monto) || 0)
+          if (gastoId) await guardarDistribGasto(gastoId, d.distribucion, parseMonto(monto))
           cerrarModal(); recargarTodo(true); setPanel('gastos')
         }}
       />}
@@ -636,13 +636,17 @@ export default function GestorObras({ usuario }) {
         onGuardar={async d => {
           // distribucion no es columna de gastos: se separa y se guarda en comprobante_obras
           const { distribucion, ...rest } = d
-          const gastoPayload = { ...rest, a_nombre_seate: d.tipo_comprobante === 'factura_a' ? !!d.a_nombre_seate : false, iva_monto: parseFloat(d.iva_monto) || 0 }
+          // monto explícito con parseMonto (no dejarlo pasar tal cual desde el form): puede llegar
+          // como number (si vino de la IA sin tocar) o como string (si el usuario lo editó a mano
+          // en el <input type="number">) — normalizarlo siempre a number evita mandar un string mal
+          // tipado al guardar y perder los centavos exactos de la factura.
+          const gastoPayload = { ...rest, monto: parseMonto(d.monto), a_nombre_seate: d.tipo_comprobante === 'factura_a' ? !!d.a_nombre_seate : false, iva_monto: parseFloat(d.iva_monto) || 0 }
           const saved = await dbWrite('POST', 'gastos', gastoPayload, null, true)
           // Actualización optimista
           const obraObj = obras.find(o => o.id === gastoPayload.obra_id)
           const provObj = proveedores.find(p => p.id === gastoPayload.proveedor_id)
           if (saved?.id) {
-            await guardarDistribGasto(saved.id, distribucion, parseFloat(gastoPayload.monto) || 0)
+            await guardarDistribGasto(saved.id, distribucion, gastoPayload.monto)
             setGastos(prev => [{ ...gastoPayload, id: saved.id, obras: obraObj ? { nombre: obraObj.nombre } : null, proveedores: provObj ? { nombre: provObj.nombre, situacion_impositiva: provObj.situacion_impositiva } : null, pagos: [] }, ...prev])
           }
           cerrarModal(); recargarTodo(true)
@@ -1447,7 +1451,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     </div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{obrasNoms || '—'} · {fmtFechaAR(r.fecha)}{r.nro_remito ? ` · ${r.nro_remito}` : ''}</div>
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(montoScope)}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmtDec(montoScope)}</div>
                 </div>
               )
             })}
@@ -1458,7 +1462,7 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
       {/* Barra de pago múltiple flotante */}
       {esAdmin && seleccion.size > 0 && (
         <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 200, background: C.purple, color: '#fff', borderRadius: 14, padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 8px 32px rgba(123,77,181,0.35)', whiteSpace: 'nowrap' }}>
-          <span style={{ fontWeight: 600, fontSize: 13 }}>{seleccion.size} seleccionado{seleccion.size > 1 ? 's' : ''} · $ {fmt(totalSeleccionado)}</span>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{seleccion.size} seleccionado{seleccion.size > 1 ? 's' : ''} · $ {fmtDec(totalSeleccionado)}</span>
           <button onClick={() => { onPagarMultiple && onPagarMultiple(gastosSeleccionados); setSeleccion(new Set()) }} style={{ background: '#fff', color: C.purple, border: 'none', borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>💳 Pagar todos</button>
           <button onClick={() => setSeleccion(new Set())} style={{ background: 'transparent', color: 'rgba(255,255,255,0.7)', border: 'none', fontSize: 16, cursor: 'pointer', padding: 0, lineHeight: 1 }}>✕</button>
         </div>
@@ -1488,8 +1492,8 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                         const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0))
                         const parcial = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo >= 1
                         return <>
-                          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</div>
-                          {parcial && <div style={{ fontSize: 10, color: '#8A5200', marginTop: 1 }}>Saldo $ {fmt(saldo)}</div>}
+                          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmtDec(g.monto)}</div>
+                          {parcial && <div style={{ fontSize: 10, color: '#8A5200', marginTop: 1 }}>Saldo $ {fmtDec(saldo)}</div>}
                           <PagoBadge pagado={g.pagado} parcial={parcial} />
                         </>
                       })()}
@@ -1556,14 +1560,14 @@ function PanelGastos({ obras, gastos: gastosRaw, remitosPendientes = [], loading
                     </td>
                     <td style={tdSt}><ConceptoBadge concepto={g.concepto} /></td>
                     <td style={tdSt}><ComprobanteBadge tipo={g.tipo_comprobante} iva={g.discrimina_iva} /></td>
-                    <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmt(g.monto)}</td>
+                    <td style={{ ...tdSt, textAlign: 'right', fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>$ {fmtDec(g.monto)}</td>
                     <td style={{ ...tdSt, verticalAlign: 'middle' }}>{(() => {
                       const saldo = Math.max(0, (parseFloat(g.monto)||0) - (g.pagos||[]).reduce((s,p)=>s+(parseFloat(p.monto)||0),0))
                       const parc = !g.pagado && saldo < (parseFloat(g.monto)||0) && saldo >= 1
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                           <PagoBadge pagado={g.pagado} parcial={parc} />
-                          {parc && <span style={{ fontSize: 10, color: '#8A5200', whiteSpace: 'nowrap' }}>Saldo $ {fmt(saldo)}</span>}
+                          {parc && <span style={{ fontSize: 10, color: '#8A5200', whiteSpace: 'nowrap' }}>Saldo $ {fmtDec(saldo)}</span>}
                           {esAdmin && saldo >= 1 && (
                             <button style={{ ...btnIconSt, fontSize: 10, color: C.green, background: C.greenDim, borderColor: '#B8E6CF', padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => onPagar(g)}>
                               {parc ? '+ Pago' : 'Pagar'}
@@ -1667,13 +1671,13 @@ function PanelFinanciero({ gastos, obras }) {
       <div style={{ background: C.purpleDim, border: `1.5px solid ${C.purple}20`, borderRadius: 12, padding: '14px 18px', marginBottom: 20, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>Total a pagar</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: totalPendiente > 0 ? '#D0021B' : C.text }}>{`$ ${fmt(totalPendiente)}`}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: totalPendiente > 0 ? '#D0021B' : C.text }}>{`$ ${fmtDec(totalPendiente)}`}</div>
           <div style={{ fontSize: 11, color: C.textMuted }}>{pendientes.length} comprobante{pendientes.length !== 1 ? 's' : ''}</div>
         </div>
         {pendientes.filter(g => g.dd !== null && g.dd < 0).length > 0 && (
           <div>
             <div style={{ fontSize: 10, color: '#D0021B', fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>Vencidos</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: '#D0021B' }}>{`$ ${fmt(pendientes.filter(g => g.dd < 0).reduce((s,g)=>s+g.monto,0))}`}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#D0021B' }}>{`$ ${fmtDec(pendientes.filter(g => g.dd < 0).reduce((s,g)=>s+g.monto,0))}`}</div>
             <div style={{ fontSize: 11, color: '#D0021B' }}>{pendientes.filter(g => g.dd < 0).length} comprobante{pendientes.filter(g=>g.dd<0).length!==1?'s':''}</div>
           </div>
         )}
@@ -1691,7 +1695,7 @@ function PanelFinanciero({ gastos, obras }) {
               <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 {fecha === hoyStr ? 'Hoy — ' : ''}{fecha}
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{`$ ${fmt(items.reduce((s,g)=>s+g.monto,0))}`}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{`$ ${fmtDec(items.reduce((s,g)=>s+g.monto,0))}`}</div>
             </div>
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
               {items.map((g, i) => (
@@ -1712,7 +1716,7 @@ function PanelFinanciero({ gastos, obras }) {
                     )}
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums' }}>{`$ ${fmt(g.monto)}`}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums' }}>{`$ ${fmtDec(g.monto)}`}</div>
                     <div style={badgeSt(g.vence)}>
                       {g.dd < 0 ? `Vencido hace ${Math.abs(g.dd)}d` : g.dd === 0 ? 'Hoy' : `En ${g.dd}d`}
                     </div>
@@ -2326,7 +2330,7 @@ function PanelAdmin({ bancos, recargarListas }) {
 function buscarGastoDuplicado(gastos, form, excludeId) {
   if (!form?.proveedor_id) return { fuerte: null, debil: null }
   const nro = String(form.nro_comprobante || '').trim().toLowerCase()
-  const monto = parseFloat(form.monto) || 0
+  const monto = parseMonto(form.monto)
   const candidatos = (gastos || []).filter(g => g.id !== excludeId && g.proveedor_id === form.proveedor_id)
   const fuerte = nro
     ? candidatos.find(g => String(g.nro_comprobante || '').trim().toLowerCase() === nro) || null
@@ -2764,16 +2768,16 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
   const facturaEsPdf = (gasto?.imagen_url || '').toLowerCase().split('?')[0].endsWith('.pdf')
   const venc = calcVencimiento(gasto?.fecha, gasto?.condicion_pago, gasto?.redondear_viernes !== false)
   const addDiasCheque = (dias) => { const d = new Date(); d.setDate(d.getDate() + dias); set('fecha_vencimiento_cheque', d.toISOString().slice(0, 10)) }
-  const montoNum = parseFloat(form.monto) || 0
+  const montoNum = parseMonto(form.monto)
 
   return (
     <>
-    <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmt(saldoRestante)}` : `Registrar pago — $ ${fmt(gasto?.monto)}`} onClose={onClose} onGuardar={() => {
+    <Modal title={yaPageado > 0 ? `Pago parcial — Saldo $ ${fmtDec(saldoRestante)}` : `Registrar pago — $ ${fmtDec(gasto?.monto)}`} onClose={onClose} onGuardar={() => {
           const p = { fecha_pago: form.fecha_pago, medio_pago: form.medio_pago, monto: montoNum, banco_id: form.banco_id || null, nro_operacion: form.nro_operacion || null, nro_cheque: form.nro_cheque || null, fecha_vencimiento_cheque: form.fecha_vencimiento_cheque || null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null }
           if (form.nota_tarjeta) p.nota_tarjeta = form.nota_tarjeta
           if (form.cuotas) p.cuotas = parseInt(form.cuotas)
           onGuardar(p)
-        }} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmt(montoNum)}`}>
+        }} guardarLabel={montoNum >= saldoRestante && saldoRestante > 0 ? 'Confirmar pago total' : `Registrar pago $ ${fmtDec(montoNum)}`}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12 }}>
         {/* Fila principal: proveedor + factura + WA */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
@@ -2839,9 +2843,9 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
       {yaPageado > 0 && (
         <div style={{ background: C.orangeDim, border: '1px solid #FFDCAA', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Total factura</div><div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif" }}>$ {fmt(gasto?.monto)}</div></div>
-            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Ya pagado</div><div style={{ fontSize: 13, fontWeight: 700, color: C.green, fontFamily: "'Inter', sans-serif" }}>$ {fmt(yaPageado)}</div></div>
-            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Saldo</div><div style={{ fontSize: 13, fontWeight: 700, color: '#8A5200', fontFamily: "'Inter', sans-serif" }}>$ {fmt(saldoRestante)}</div></div>
+            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Total factura</div><div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: "'Inter', sans-serif" }}>$ {fmtDec(gasto?.monto)}</div></div>
+            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Ya pagado</div><div style={{ fontSize: 13, fontWeight: 700, color: C.green, fontFamily: "'Inter', sans-serif" }}>$ {fmtDec(yaPageado)}</div></div>
+            <div><div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Saldo</div><div style={{ fontSize: 13, fontWeight: 700, color: '#8A5200', fontFamily: "'Inter', sans-serif" }}>$ {fmtDec(saldoRestante)}</div></div>
           </div>
           {(gasto?.pagos || []).map((p, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', background: 'rgba(255,255,255,0.6)', borderRadius: 6, marginBottom: 3, fontSize: 11, gap: 8 }}>
@@ -2850,7 +2854,7 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
                 {p.nro_cheque ? ` · Cheque N°${p.nro_cheque}` : ''}
                 {p.fecha_vencimiento_cheque ? ` · Cobrar ${fmtFechaAR(p.fecha_vencimiento_cheque)}` : ''}
               </div>
-              <div style={{ fontWeight: 700, color: C.green, flexShrink: 0 }}>$ {fmt(p.monto)}</div>
+              <div style={{ fontWeight: 700, color: C.green, flexShrink: 0 }}>$ {fmtDec(p.monto)}</div>
             </div>
           ))}
         </div>
@@ -2859,9 +2863,9 @@ function ModalPago({ gasto, bancos, onClose, onGuardar }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <Campo label="Fecha de pago"><input style={inputSt} type="date" value={form.fecha_pago} onChange={e => set('fecha_pago', e.target.value)} /></Campo>
         <Campo label={yaPageado > 0 ? 'Monto de este pago' : 'Monto pagado'}>
-          <input style={inputSt} type="number" value={form.monto} onChange={e => set('monto', e.target.value)} />
+          <input style={inputSt} type="number" step="0.01" value={form.monto} onChange={e => set('monto', e.target.value)} />
           {yaPageado > 0 && montoNum > 0 && montoNum < saldoRestante && (
-            <div style={{ fontSize: 10, color: '#8A5200', marginTop: 3 }}>Quedará saldo de $ {fmt(saldoRestante - montoNum)}</div>
+            <div style={{ fontSize: 10, color: '#8A5200', marginTop: 3 }}>Quedará saldo de $ {fmtDec(saldoRestante - montoNum)}</div>
           )}
         </Campo>
         <Campo label="Medio de pago" style={{ gridColumn: '1/-1' }}>
@@ -3017,7 +3021,7 @@ function ModalSubidaMasiva({ gastos, onClose, onDone }) {
                     {g.proveedores?.nombre ?? 'Sin proveedor'}
                   </div>
                   <div style={{ fontSize: 10, color: C.textMuted, marginTop: 1 }}>
-                    {fmtFechaAR(g.fecha)} · {g.obras?.nombre ?? '—'} · <strong>$ {fmt(g.monto)}</strong>
+                    {fmtFechaAR(g.fecha)} · {g.obras?.nombre ?? '—'} · <strong>$ {fmtDec(g.monto)}</strong>
                   </div>
                   {archivo && !isOk && !isErr && (
                     <div style={{ fontSize: 10, color: C.purple, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3135,7 +3139,7 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
     <Modal title="Comprobantes de pago" onClose={onClose} onGuardar={null}>
       <div style={{ background: C.purpleDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
         <div style={{ fontWeight: 600, color: C.text }}>{gasto?.proveedores?.nombre ?? 'Sin proveedor'}</div>
-        <div style={{ color: C.textMuted, marginTop: 2 }}>{gasto?.obras?.nombre} · $ {fmt(gasto?.monto)}</div>
+        <div style={{ color: C.textMuted, marginTop: 2 }}>{gasto?.obras?.nombre} · $ {fmtDec(gasto?.monto)}</div>
       </div>
       {pagos.length === 0
         ? <div style={{ color: C.textMuted, fontSize: 13, textAlign: 'center', padding: 20 }}>Sin pagos registrados</div>
@@ -3147,7 +3151,7 @@ function ModalAdjuntarComprobante({ gasto, onClose, onGuardar }) {
               <div key={p.id} style={{ border: `1px solid ${compUrl ? '#B8E6CF' : C.border}`, borderRadius: 10, padding: '12px 14px', background: compUrl ? '#F6FFF9' : C.surface }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div>
-                    <span style={{ fontWeight: 600, fontSize: 13, color: C.text }}>Pago {i + 1} · $ {fmt(p.monto)}</span>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: C.text }}>Pago {i + 1} · $ {fmtDec(p.monto)}</span>
                     <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{fmtFechaAR(p.fecha_pago)} · {MEDIOS[p.medio_pago] ?? p.medio_pago}{p.nota_tarjeta ? ` · ${p.nota_tarjeta}` : ''}{p.cuotas > 1 ? ` · ${p.cuotas} cuotas` : ''}</span>
                   </div>
                   {compUrl && <a href={compUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>Ver 🧾</a>}
@@ -3220,18 +3224,18 @@ function ModalPagoMultiple({ gastos, bancos, onClose, onGuardar }) {
   }
 
   return (
-    <Modal title={`Pagar ${gastos.length} comprobantes`} onClose={onClose} onGuardar={() => onGuardar({ ...form, banco_id: form.banco_id || null, nota_tarjeta: form.nota_tarjeta || null, cuotas: form.cuotas ? parseInt(form.cuotas) : null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null })} guardarLabel={`Confirmar pago $ ${fmt(total)}`}>
+    <Modal title={`Pagar ${gastos.length} comprobantes`} onClose={onClose} onGuardar={() => onGuardar({ ...form, banco_id: form.banco_id || null, nota_tarjeta: form.nota_tarjeta || null, cuotas: form.cuotas ? parseInt(form.cuotas) : null, observaciones: form.observaciones || null, comprobante_url: form.comprobante_url || null })} guardarLabel={`Confirmar pago $ ${fmtDec(total)}`}>
       {/* Resumen */}
       <div style={{ background: C.greenDim, border: `1px solid #B8E6CF`, borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
         <div style={{ fontSize: 11, color: C.green, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>
           {mismoProveedor && proveedorNombre ? proveedorNombre : `${gastos.length} comprobantes`}
         </div>
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.green, fontVariantNumeric: 'tabular-nums' }}>{`$ ${fmt(total)}`}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.green, fontVariantNumeric: 'tabular-nums' }}>{`$ ${fmtDec(total)}`}</div>
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
           {gastos.map(g => (
             <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.textMuted }}>
               <span>{getTipoLabel(g.tipo_comprobante)}{g.nro_comprobante ? ' · ' + g.nro_comprobante : ''} — {fmtFechaAR(g.fecha)}</span>
-              <span style={{ fontWeight: 600, color: C.text }}>{`$ ${fmt(g.monto)}`}</span>
+              <span style={{ fontWeight: 600, color: C.text }}>{`$ ${fmtDec(g.monto)}`}</span>
             </div>
           ))}
         </div>
@@ -3367,7 +3371,7 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado 
         </div>
       </Campo>
       <Campo label="Concepto"><select style={inputSt} value={form.concepto} onChange={e => set('concepto', e.target.value)}>{(esGeneral ? CONCEPTOS_GENERALES : CONCEPTOS).map(c => <option key={c} value={c}>{CONCEPTO_LABELS[c]}</option>)}</select></Campo>
-      <Campo label="Monto"><input style={inputSt} type="number" value={form.monto} onChange={e => set('monto', e.target.value)} placeholder="0" /></Campo>
+      <Campo label="Monto"><input style={inputSt} type="number" step="0.01" value={form.monto} onChange={e => set('monto', e.target.value)} placeholder="0" /></Campo>
       <Campo label="Tipo de comprobante">
         <select style={inputSt} value={form.tipo_comprobante || 'factura_a'} onChange={e => { set('tipo_comprobante', e.target.value); const t = TIPOS_COMPROBANTE.find(t => t.value === e.target.value); if (t) set('discrimina_iva', t.iva); if (e.target.value !== 'factura_a') set('a_nombre_seate', false) }}>
           {TIPOS_COMPROBANTE.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -3404,14 +3408,14 @@ function FormGasto({ form, set, obras, proveedores, onNuevoProveedor, duplicado 
                     <option value="">Obra...</option>
                     {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
                   </select>
-                  <input style={{ ...inputSt, width: 110 }} type="number" placeholder="Monto" value={d.monto} onChange={e => setDist(dist.map((x, idx) => idx === i ? { ...x, monto: e.target.value } : x))} />
+                  <input style={{ ...inputSt, width: 110 }} type="number" step="0.01" placeholder="Monto" value={d.monto} onChange={e => setDist(dist.map((x, idx) => idx === i ? { ...x, monto: e.target.value } : x))} />
                   <button type="button" onClick={() => setDist(dist.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', color: '#D0021B', cursor: 'pointer', fontSize: 14 }}>✕</button>
                 </div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
                 <button type="button" onClick={() => setDist([...dist, { obra_id: '', monto: '' }])} style={chipBtn}>+ Obra</button>
                 <span style={{ fontSize: 11, color: sumaDist === montoTotal ? C.textMuted : C.orange, fontWeight: 600 }}>
-                  Repartido: $ {fmt(sumaDist)} / $ {fmt(montoTotal)} {sumaDist === montoTotal ? '✓' : '⚠'}
+                  Repartido: $ {fmtDec(sumaDist)} / $ {fmtDec(montoTotal)} {sumaDist === montoTotal ? '✓' : '⚠'}
                 </span>
                 <button type="button" onClick={() => setDist([])} style={{ ...chipBtn, color: C.textMuted }}>Quitar (100% una obra)</button>
               </div>
