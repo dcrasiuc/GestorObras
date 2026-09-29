@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient'
 import { C, MEDIOS_PAGO } from './constants'
 import { fmt, hoy, dbWrite, fmtFechaAR } from './utils'
 import { toast } from './toast'
+import { exportarCuentaCorrienteSeguros } from './exportSegurosExcel'
 
 // ── Constantes propias de Seguros ───────────────────────────────
 export const ORGANISMOS = ['IPRODA', 'EBY', 'UCEF', 'MUNI_POSADAS', 'VIALIDAD', 'Privado', 'Otro']
@@ -212,13 +213,46 @@ function sumarDias(fechaStr, dias) {
   d.setDate(d.getDate() + Number(dias))
   return d.toISOString().slice(0, 10)
 }
+// Valor de arranque antes de que cargue la configuración editable (ver useConfiguracionSeguros
+// más abajo) — nunca se usa como umbral real una vez que la config terminó de cargar.
 const DIAS_AVISO_VENCIMIENTO = 30
-function VencimientoBadge({ fecha }) {
+
+// Fecha de corte VIGENTE de una póliza: si tiene renovaciones por período no anuladas, es el
+// período de la ÚLTIMA (la más reciente) — nunca fecha_vencimiento a secas, que queda desactualizada
+// en cuanto la póliza empieza a autorenovarse sola. Si no hay renovaciones (o no se autorenueva),
+// es fecha_vencimiento tal cual. Se usa tanto para las alertas como para la cuenta corriente, para
+// que las dos vistas coincidan siempre en qué fecha están mirando.
+function corteVigentePoliza(poliza, renovaciones) {
+  const vigentes = (renovaciones || []).filter(r => r.poliza_id === poliza.id && !r.anulada)
+  const ultima = vigentes.slice().sort((a, b) => (b.periodo_hasta || '').localeCompare(a.periodo_hasta || ''))[0]
+  return ultima?.periodo_hasta || poliza.fecha_vencimiento
+}
+
+// Estado de vencimiento de una póliza contra el umbral configurable de "días de aviso".
+function estadoVencimiento(poliza, renovaciones, diasAviso) {
+  const corte = corteVigentePoliza(poliza, renovaciones)
+  const dias = diasHasta(corte)
+  if (dias === null) return { estado: 'sin_fecha', dias: null, corte }
+  if (dias < 0) return { estado: 'vencida', dias, corte }
+  if (dias <= diasAviso) return { estado: 'por_vencer', dias, corte }
+  return { estado: 'vigente', dias, corte }
+}
+
+function VencimientoBadge({ fecha, diasAviso = DIAS_AVISO_VENCIMIENTO }) {
   const dias = diasHasta(fecha)
   if (dias === null) return <Badge bg="#F3F3F3" color="#888">Sin vencimiento cargado</Badge>
   if (dias < 0) return <Badge bg="#FFF0F0" color="#C62828">🔴 Vencida hace {Math.abs(dias)}d</Badge>
-  if (dias <= DIAS_AVISO_VENCIMIENTO) return <Badge bg="#FFF8ED" color="#8A5200">🟠 Vence en {dias}d ({fmtFechaAR(fecha)})</Badge>
+  if (dias <= diasAviso) return <Badge bg="#FFF8ED" color="#8A5200">🟠 Vence en {dias}d ({fmtFechaAR(fecha)})</Badge>
   return <Badge bg={C.greenDim} color={C.green}>⏳ Vence {fmtFechaAR(fecha)}</Badge>
+}
+
+// Badge chico para el estado de PAGO de un movimiento individual (prima o una renovación puntual)
+// dentro de la cuenta corriente — ver movimientosPoliza() más abajo.
+function EstadoPagoBadge({ estadoPago }) {
+  if (estadoPago === 'anulada') return <Badge bg="#F3F3F3" color="#888">Anulada</Badge>
+  if (estadoPago === 'pagado') return <Badge bg={C.greenDim} color={C.green}>✅ Pagado</Badge>
+  if (estadoPago === 'parcial') return <Badge bg="#FFF8ED" color="#8A5200">◐ Parcial</Badge>
+  return <Badge bg="#FFF0F0" color="#C62828">Pendiente de pago</Badge>
 }
 function EndosoBadge({ poliza }) {
   const nEndosos = (poliza.poliza_documentos || []).filter(d => d.tipo === 'endoso').length
@@ -458,11 +492,34 @@ function useBancosSeguros() {
   return bancos
 }
 
+// ── Configuración editable de Seguros (tabla configuracion_app, clave/valor genérica) ──
+// Por ahora solo guarda "dias_aviso_vencimiento_seguros" — el umbral con el que se decide si una
+// póliza/renovación está "por vencer" (tanto en las alertas como en la cuenta corriente). Antes era
+// una constante fija en el código (DIAS_AVISO_VENCIMIENTO); ahora se puede cambiar desde la propia
+// app sin tocar código, vía guardarDiasAviso().
+function useConfiguracionSeguros() {
+  const [diasAviso, setDiasAviso] = useState(DIAS_AVISO_VENCIMIENTO)
+  const [loadingConfig, setLoadingConfig] = useState(true)
+  useEffect(() => {
+    supabase.from('configuracion_app').select('valor').eq('clave', 'dias_aviso_vencimiento_seguros').maybeSingle()
+      .then(({ data }) => { if (data?.valor) setDiasAviso(parseInt(data.valor, 10) || DIAS_AVISO_VENCIMIENTO) })
+      .finally(() => setLoadingConfig(false))
+  }, [])
+  const guardarDiasAviso = async (nuevoValor) => {
+    const n = parseInt(nuevoValor, 10)
+    if (!Number.isFinite(n) || n < 0) { toast('Ingresá un número de días válido (0 o más)'); return }
+    await dbWrite('PATCH', 'configuracion_app', { valor: String(n), actualizado_en: new Date().toISOString() }, 'clave=eq.dias_aviso_vencimiento_seguros')
+    setDiasAviso(n)
+    toast('Aviso de vencimiento actualizado', 'ok')
+  }
+  return { diasAviso, guardarDiasAviso, loadingConfig }
+}
+
 // Pólizas que necesitan atención, con el motivo y la acción sugerida:
 // - 'presentar_baja': está activa pero la obra ya avanzó de estado, o el vencimiento ya pasó/está cerca
 //   → hay que presentarle la recepción de obra a la aseguradora pidiendo la baja
 // - 'confirmar_baja': ya se le presentó la baja a la aseguradora → falta que ELLA la confirme
-function calcularAlertas(polizas, renovaciones = []) {
+function calcularAlertas(polizas, renovaciones = [], diasAviso = DIAS_AVISO_VENCIMIENTO) {
   return polizas.map(p => {
     const motivos = []
     let accion = null
@@ -485,9 +542,8 @@ function calcularAlertas(polizas, renovaciones = []) {
       // fecha_vencimiento — si ya se registraron renovaciones (cargos) para períodos posteriores,
       // el corte relevante es el de la última renovación NO anulada.
       const renovacionesDeLaPoliza = renovaciones.filter(r => r.poliza_id === p.id)
-      const renovacionesVigentes = renovacionesDeLaPoliza.filter(r => !r.anulada)
-      const ultimaRenovacion = renovacionesVigentes.slice().sort((a, b) => (b.periodo_hasta || '').localeCompare(a.periodo_hasta || ''))[0]
-      const corteVigente = ultimaRenovacion?.periodo_hasta || p.fecha_vencimiento
+      const ultimaRenovacion = renovacionesDeLaPoliza.filter(r => !r.anulada).slice().sort((a, b) => (b.periodo_hasta || '').localeCompare(a.periodo_hasta || ''))[0]
+      const corteVigente = corteVigentePoliza(p, renovaciones)
       const dias = diasHasta(corteVigente)
       if (dias !== null) {
         if (p.se_autorenueva) {
@@ -498,12 +554,12 @@ function calcularAlertas(polizas, renovaciones = []) {
             const proximoCorte = sumarDias(corteVigente, p.duracion_periodo_dias)
             motivos.push(`Se cumplió el período hace ${Math.abs(dias)} día(s) sin presentar la recepción — lo más probable es que la aseguradora ya renovó sola la póliza y cobró una prima nueva${proximoCorte ? ` (próximo corte estimado: ${proximoCorte})` : ''}${ultimaRenovacion ? '' : ' — todavía no registraste ese cargo en el sistema'}. Si conseguís la recepción con fecha anterior al corte vencido, muchas veces se puede anular esa renovación en forma retroactiva y no te cobran esa prima.`)
             accion = 'registrar_renovacion'
-          } else if (dias <= DIAS_AVISO_VENCIMIENTO) {
+          } else if (dias <= diasAviso) {
             motivos.push(`Se autorenueva sola en ${dias} día(s) si no se presenta la recepción antes de esa fecha${p.duracion_periodo_dias ? ` — la aseguradora cobrará una prima nueva por otro período de ${p.duracion_periodo_dias} días` : ''}.`)
           }
         } else {
           if (dias < 0) motivos.push(`Vencida hace ${Math.abs(dias)} día(s).`)
-          else if (dias <= DIAS_AVISO_VENCIMIENTO) motivos.push(`Vence en ${dias} día(s) — gestionar renovación.`)
+          else if (dias <= diasAviso) motivos.push(`Vence en ${dias} día(s) — gestionar renovación.`)
         }
       }
       if (motivos.length && !accion) accion = 'presentar_baja'
@@ -1116,7 +1172,7 @@ function ListaDocumentos({ documentos }) {
 // solo muestra lo esencial para identificarla (tipo de seguro y vencimiento, si tiene); el resto
 // del detalle (descripción, montos, cláusulas, documentos, acciones) aparece al desplegar. Las
 // alertas rojas (vencimiento/renovación/baja) se muestran siempre, estén o no desplegadas.
-function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = [], onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onEditar, onEliminar }) {
+function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = [], diasAviso = DIAS_AVISO_VENCIMIENTO, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onEditar, onEliminar }) {
   const [expandido, setExpandido] = useState(false)
   const totalPagado = pagos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
   const renovacionesVigentes = renovaciones.filter(r => !r.anulada)
@@ -1136,7 +1192,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         <Badge bg={C.purpleDim} color={C.purple}>📄 {COBERTURA_LABELS[poliza.tipo_cobertura] || poliza.tipo_cobertura}</Badge>
-        <VencimientoBadge fecha={poliza.fecha_vencimiento} />
+        <VencimientoBadge fecha={corteVigentePoliza(poliza, renovaciones)} diasAviso={diasAviso} />
       </div>
       {alertaInfo && (
         <div style={{ fontSize: 12, background: '#FFF0F0', color: '#C62828', padding: '8px 10px', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1205,7 +1261,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
 }
 
 // ── Fila de obra (con transición de etapa/estado de licitación y sus pólizas anidadas) ──
-function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onEditarPoliza, onEliminarPoliza }) {
+function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onEditarPoliza, onEliminarPoliza }) {
   const [expandido, setExpandido] = useState(false)
   const polizasPendientes = polizasDeLaObra.filter(p => p.estado_admin !== 'dada_de_baja')
   const finalizadaConPendientes = obra.estado === 'finalizada' && polizasPendientes.length > 0
@@ -1250,6 +1306,7 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
                   advertencias={detectarAdvertencias(p)}
                   pagos={pagosPoliza.filter(pg => pg.poliza_id === p.id)}
                   renovaciones={renovacionesPoliza.filter(r => r.poliza_id === p.id)}
+                  diasAviso={diasAviso}
                   onMarcarBajaPresentada={onMarcarBajaPresentada} onConfirmarBaja={onConfirmarBaja}
                   onAgregarDocumento={onAgregarDocumento} onAgregarFactura={onAgregarFactura} onRegistrarPago={onRegistrarPago}
                   onRegistrarRenovacion={onRegistrarRenovacion} onAnularRenovacion={onAnularRenovacion}
@@ -1271,13 +1328,41 @@ function primaConRenovaciones(poliza, renovaciones) {
   return (parseFloat(poliza.prima) || 0) + propias.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0)
 }
 
-function agruparPolizas(polizas, pagos, renovaciones, campo) {
+// Lista de "movimientos" de una póliza (la prima original + cada renovación por período) en orden
+// cronológico, cada uno con su propio estado de PAGO. Como pagos_poliza registra los pagos contra
+// la póliza como un todo (no contra un período puntual), el estado de cada movimiento se deriva
+// repartiendo el total pagado en orden — primero se cubre la prima, después la renovación más
+// vieja, y así siguiendo (FIFO). Una renovación anulada retroactivamente no entra en el reparto
+// (no es deuda real) y se muestra aparte, marcada como tal.
+function movimientosPoliza(poliza, renovaciones, pagos) {
+  const renovacionesDeLaPoliza = (renovaciones || []).filter(r => r.poliza_id === poliza.id)
+  const items = [
+    { tipo: 'prima', id: `prima-${poliza.id}`, fecha: poliza.fecha_emision || poliza.fecha_inicio || null, monto: parseFloat(poliza.prima) || 0, anulada: false, label: 'Prima original' },
+    ...renovacionesDeLaPoliza.map(r => ({
+      tipo: 'renovacion', id: r.id, fecha: r.periodo_hasta, monto: parseFloat(r.monto) || 0, anulada: !!r.anulada,
+      label: `Renovación hasta ${fmtFechaAR(r.periodo_hasta)}`, observaciones: r.observaciones, motivo_anulacion: r.motivo_anulacion,
+    })),
+  ].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+
+  let restante = (pagos || []).filter(pg => pg.poliza_id === poliza.id).reduce((s, pg) => s + (parseFloat(pg.monto) || 0), 0)
+  return items.map(item => {
+    if (item.anulada) return { ...item, estadoPago: 'anulada', pagadoMonto: 0, saldoMonto: 0 }
+    if (item.monto <= 0) return { ...item, estadoPago: 'pagado', pagadoMonto: 0, saldoMonto: 0 }
+    let pagadoMonto, estadoPago
+    if (restante >= item.monto) { pagadoMonto = item.monto; estadoPago = 'pagado'; restante -= item.monto }
+    else if (restante > 0) { pagadoMonto = restante; estadoPago = 'parcial'; restante = 0 }
+    else { pagadoMonto = 0; estadoPago = 'pendiente' }
+    return { ...item, estadoPago, pagadoMonto, saldoMonto: item.monto - pagadoMonto }
+  })
+}
+
+function agruparPolizas(polizas, pagos, renovaciones, campo, diasAviso = DIAS_AVISO_VENCIMIENTO) {
   const grupos = {}
   polizas.forEach(p => {
     const raw = (p[campo] || '').trim()
     const key = raw || (campo === 'corredor' ? 'Sin corredor' : 'Sin especificar')
     if (!grupos[key]) grupos[key] = { nombre: key, polizas: [], totalPrima: 0, totalPagado: 0 }
-    grupos[key].polizas.push(p)
+    grupos[key].polizas.push({ ...p, movimientos: movimientosPoliza(p, renovaciones, pagos), estadoVenc: estadoVencimiento(p, renovaciones, diasAviso) })
     grupos[key].totalPrima += primaConRenovaciones(p, renovaciones)
   })
   pagos.forEach(pg => {
@@ -1308,24 +1393,79 @@ function ResumenSubtotales({ titulo, icono, grupos }) {
   )
 }
 
-function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, onRegistrarPago }) {
+const FILTROS_CUENTA_CORRIENTE = [
+  { id: 'todas', label: 'Todas' },
+  { id: 'vencidas', label: '🔴 Vencidas' },
+  { id: 'por_vencer', label: '🟠 Por vencer' },
+  { id: 'con_saldo', label: '💳 Con saldo pendiente' },
+]
+
+function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, diasAviso, onGuardarDiasAviso, onRegistrarPago }) {
   const [agrupador, setAgrupador] = useState('aseguradora') // 'aseguradora' | 'corredor'
-  const gruposAseguradora = agruparPolizas(polizas, pagos, renovaciones, 'aseguradora')
-  const gruposCorredor = agruparPolizas(polizas, pagos, renovaciones, 'corredor')
+  const [filtro, setFiltro] = useState('todas')
+  const [editandoDias, setEditandoDias] = useState(false)
+  const [diasInput, setDiasInput] = useState(diasAviso)
+  useEffect(() => { setDiasInput(diasAviso) }, [diasAviso])
+
+  const pasaFiltro = (poliza) => {
+    if (filtro === 'todas') return true
+    if (filtro === 'con_saldo') return movimientosPoliza(poliza, renovaciones, pagos).some(m => !m.anulada && m.saldoMonto > 0)
+    const ev = estadoVencimiento(poliza, renovaciones, diasAviso)
+    if (filtro === 'vencidas') return ev.estado === 'vencida'
+    if (filtro === 'por_vencer') return ev.estado === 'por_vencer'
+    return true
+  }
+  const polizasFiltradas = polizas.filter(pasaFiltro)
+
+  const gruposAseguradora = agruparPolizas(polizasFiltradas, pagos, renovaciones, 'aseguradora', diasAviso)
+  const gruposCorredor = agruparPolizas(polizasFiltradas, pagos, renovaciones, 'corredor', diasAviso)
   const grupos = agrupador === 'aseguradora' ? gruposAseguradora : gruposCorredor
   const icono = agrupador === 'aseguradora' ? '🏢' : '🧑‍💼'
+
+  const guardarDias = async () => { await onGuardarDiasAviso(diasInput); setEditandoDias(false) }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <ResumenSubtotales titulo="Subtotales por aseguradora" icono="🏢" grupos={gruposAseguradora} />
         <ResumenSubtotales titulo="Subtotales por corredor" icono="🧑‍💼" grupos={gruposCorredor} />
       </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        {[{ id: 'aseguradora', label: '🏢 Por aseguradora' }, { id: 'corredor', label: '🧑‍💼 Por corredor' }].map(t => (
-          <button key={t.id} onClick={() => setAgrupador(t.id)} style={{ padding: '5px 12px', fontSize: 11, cursor: 'pointer', border: `1px solid ${C.border}`, borderRadius: 8, fontFamily: "'Outfit', sans-serif", fontWeight: agrupador === t.id ? 600 : 400, background: agrupador === t.id ? C.purpleDim : C.surface, color: agrupador === t.id ? C.purple : C.textMuted }}>{t.label}</button>
+
+      <div style={{ ...cardSt, padding: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: C.textMuted }}>
+        <span>⏰ Avisar "por vencer" con</span>
+        {editandoDias ? (
+          <>
+            <input type="number" min="0" value={diasInput} onChange={e => setDiasInput(e.target.value)}
+              style={{ width: 60, padding: '3px 6px', fontSize: 12, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: "'Outfit', sans-serif" }} />
+            <span>día(s) de anticipación</span>
+            <button onClick={guardarDias} style={{ background: 'none', border: 'none', color: C.purple, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>Guardar</button>
+            <button onClick={() => { setDiasInput(diasAviso); setEditandoDias(false) }} style={{ background: 'none', border: 'none', color: C.textFaint, fontSize: 12, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>Cancelar</button>
+          </>
+        ) : (
+          <>
+            <strong style={{ color: C.text }}>{diasAviso}</strong>
+            <span>día(s) de anticipación</span>
+            <button onClick={() => setEditandoDias(true)} style={{ background: 'none', border: 'none', color: C.purple, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>✏️ Cambiar</button>
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[{ id: 'aseguradora', label: '🏢 Por aseguradora' }, { id: 'corredor', label: '🧑‍💼 Por corredor' }].map(t => (
+            <button key={t.id} onClick={() => setAgrupador(t.id)} style={{ padding: '5px 12px', fontSize: 11, cursor: 'pointer', border: `1px solid ${C.border}`, borderRadius: 8, fontFamily: "'Outfit', sans-serif", fontWeight: agrupador === t.id ? 600 : 400, background: agrupador === t.id ? C.purpleDim : C.surface, color: agrupador === t.id ? C.purple : C.textMuted }}>{t.label}</button>
+          ))}
+        </div>
+        <BtnSecondary onClick={() => exportarCuentaCorrienteSeguros(grupos, agrupador)}>⬇️ Exportar a Excel</BtnSecondary>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {FILTROS_CUENTA_CORRIENTE.map(t => (
+          <button key={t.id} onClick={() => setFiltro(t.id)} style={{ padding: '5px 12px', fontSize: 11, cursor: 'pointer', border: `1px solid ${C.border}`, borderRadius: 8, fontFamily: "'Outfit', sans-serif", fontWeight: filtro === t.id ? 600 : 400, background: filtro === t.id ? C.purpleDim : C.surface, color: filtro === t.id ? C.purple : C.textMuted }}>{t.label}</button>
         ))}
       </div>
-      {grupos.length === 0 ? <EmptyState texto="Todavía no hay pólizas cargadas." /> : grupos.map(g => (
+
+      {grupos.length === 0 ? <EmptyState texto="No hay pólizas que coincidan con este filtro." /> : grupos.map(g => (
         <div key={g.nombre} style={{ ...cardSt, padding: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{icono} {g.nombre}</div>
@@ -1337,18 +1477,23 @@ function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, onRegistrar
             <span>Saldo (teórico): <strong style={{ color: g.saldo > 0 ? '#C62828' : C.green }}>{fmt(g.saldo)}</strong></span>
             <span>{g.polizas.length} póliza(s)</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {g.polizas.map(p => {
-              const pagosP = pagos.filter(pg => pg.poliza_id === p.id)
-              const pagadoP = pagosP.reduce((s, pg) => s + (parseFloat(pg.monto) || 0), 0)
-              const primaP = primaConRenovaciones(p, renovaciones)
-              return (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, fontSize: 12, padding: '6px 8px', background: '#FBFBFD', borderRadius: 8 }}>
-                  <span>{p.nro_poliza || 's/n'} · {p.obras?.nombre}{agrupador === 'corredor' && p.aseguradora ? ` · ${p.aseguradora}` : ''}</span>
-                  <span style={{ color: C.textMuted }}>Prima {fmt(primaP)} · Pagado {fmt(pagadoP)} · Saldo {fmt(primaP - pagadoP)}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {g.polizas.map(p => (
+              <div key={p.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 8, background: '#FBFBFD' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ fontWeight: 600, color: C.text }}>{p.nro_poliza || 's/n'} · {p.obras?.nombre}{agrupador === 'corredor' && p.aseguradora ? ` · ${p.aseguradora}` : ''}</span>
+                  <VencimientoBadge fecha={p.estadoVenc.corte} diasAviso={diasAviso} />
                 </div>
-              )
-            })}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {p.movimientos.map(m => (
+                    <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, color: m.anulada ? '#AAA' : C.textMuted, textDecoration: m.anulada ? 'line-through' : 'none' }}>
+                      <span>{m.label}{m.fecha ? ` (${fmtFechaAR(m.fecha)})` : ''}</span>
+                      <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>{fmt(m.monto)} <EstadoPagoBadge estadoPago={m.estadoPago} /></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       ))}
@@ -1363,6 +1508,7 @@ export default function Seguros() {
   const { pagos: pagosPoliza, setPagos: setPagosPoliza, loading: loadingPagos } = usePagosPoliza()
   const { renovaciones: renovacionesPoliza, setRenovaciones: setRenovacionesPoliza, loading: loadingRenovaciones } = useRenovacionesPoliza()
   const bancos = useBancosSeguros()
+  const { diasAviso, guardarDiasAviso } = useConfiguracionSeguros()
 
   const [vista, setVista] = useState('obras') // 'obras' | 'cuentaCorriente'
   const [filtroEtapa, setFiltroEtapa] = useState('todas') // 'todas' | 'oferta' | 'ejecucion'
@@ -1379,7 +1525,7 @@ export default function Seguros() {
   const [polizaParaRenovacion, setPolizaParaRenovacion] = useState(null)
   const [polizaParaFactura, setPolizaParaFactura] = useState(null)
 
-  const alertas = calcularAlertas(polizas, renovacionesPoliza)
+  const alertas = calcularAlertas(polizas, renovacionesPoliza, diasAviso)
   const loading = loadingObras || loadingPolizas || loadingPagos || loadingRenovaciones
 
   // "Vigente" = todavía no llegó a Recepción Definitiva (o está en oferta). Por defecto se ocultan
@@ -1640,7 +1786,7 @@ export default function Seguros() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {obrasFiltradas.map(o => (
                 <FilaObra key={o.id} obra={o} polizasDeLaObra={polizas.filter(p => p.obra_id === o.id)}
-                  pagosPoliza={pagosPoliza} renovacionesPoliza={renovacionesPoliza} alertas={alertas}
+                  pagosPoliza={pagosPoliza} renovacionesPoliza={renovacionesPoliza} alertas={alertas} diasAviso={diasAviso}
                   onCambiarEtapa={cambiarEtapa}
                   onPedirRecepcion={(obra, tipo) => { setObraParaRecepcion(obra); setTipoRecepcion(tipo); setModal('recepcion') }}
                   onNuevaPoliza={id => { setObraIdParaPoliza(id); setPolizaParaEditar(null); setModal('poliza') }}
@@ -1661,6 +1807,7 @@ export default function Seguros() {
 
       {vista === 'cuentaCorriente' && (
         <CuentaCorrienteAseguradoras polizas={polizas} pagos={pagosPoliza} renovaciones={renovacionesPoliza}
+          diasAviso={diasAviso} onGuardarDiasAviso={guardarDiasAviso}
           onRegistrarPago={polizasGrupo => { setPolizasParaPago(polizasGrupo); setModal('pago') }} />
       )}
 
