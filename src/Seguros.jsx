@@ -1646,6 +1646,7 @@ export default function Seguros() {
 
   const [vista, setVista] = useState('obras') // 'obras' | 'cuentaCorriente'
   const [filtroEtapa, setFiltroEtapa] = useState('todas') // 'todas' | 'oferta' | 'ejecucion'
+  const [filtroPoliza, setFiltroPoliza] = useState('todas') // 'todas' | 'sin' | 'con' — setiembre 2026: separa las obras sin póliza cargada de las que ya tienen, en vez de mezclarlas todas juntas
   const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false)
   const [soloFinalizadasPendientes, setSoloFinalizadasPendientes] = useState(false)
   const [modal, setModal] = useState(null) // 'nuevaObra' | 'poliza' | 'documento' | 'recepcion' | 'confirmarBaja' | 'pago' | 'renovacion'
@@ -1668,9 +1669,18 @@ export default function Seguros() {
   // El filtro "Finalizadas c/ pólizas pendientes" busca en TODAS las obras (ignora vigentes/mostrarFinalizadas)
   // porque el punto es justamente encontrar las que el resto de la app ya da por terminadas.
   const esFinalizadaConPendientes = (o) => o.estado === 'finalizada' && polizas.some(p => p.obra_id === o.id && p.estado_admin !== 'dada_de_baja')
-  const baseObras = soloFinalizadasPendientes ? obras : (mostrarFinalizadas ? obras : obrasVigentes)
+  // Las obras marcadas "sin póliza requerida" no tienen nada para hacer en esta sección — se
+  // excluyen siempre (setiembre 2026, a pedido del usuario) en vez de aparecer mezcladas con badge.
+  const baseObras = (soloFinalizadasPendientes ? obras : (mostrarFinalizadas ? obras : obrasVigentes))
+    .filter(o => o.requiere_poliza !== false)
   const obrasFiltradas = (filtroEtapa === 'todas' ? baseObras : baseObras.filter(o => o.etapa === filtroEtapa))
     .filter(o => !soloFinalizadasPendientes || esFinalizadaConPendientes(o))
+    // "Sin póliza cargada" vs "Con póliza": separa en vez de mezclar todo junto (setiembre 2026).
+    .filter(o => {
+      if (filtroPoliza === 'todas') return true
+      const tienePoliza = polizas.some(p => p.obra_id === o.id)
+      return filtroPoliza === 'con' ? tienePoliza : !tienePoliza
+    })
 
   const crearObra = async ({ nombre, organismo, monto_contrato }) => {
     if (!nombre?.trim()) { toast('El nombre es obligatorio'); return null }
@@ -1912,6 +1922,10 @@ export default function Seguros() {
           <div style={{ display: 'flex', gap: 6, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
             {[{ id: 'todas', label: 'Todas' }, { id: 'oferta', label: '📋 En oferta' }, { id: 'ejecucion', label: '🏗️ En ejecución' }].map(t => (
               <button key={t.id} onClick={() => setFiltroEtapa(t.id)} style={{ padding: '6px 14px', fontSize: 12, cursor: 'pointer', border: `1px solid ${C.border}`, borderRadius: 8, fontFamily: "'Outfit', sans-serif", fontWeight: filtroEtapa === t.id ? 600 : 400, background: filtroEtapa === t.id ? C.purpleDim : C.surface, color: filtroEtapa === t.id ? C.purple : C.textMuted }}>{t.label}</button>
+            ))}
+            <div style={{ width: 1, alignSelf: 'stretch', background: C.border, margin: '0 2px' }} />
+            {[{ id: 'todas', label: 'Con o sin póliza' }, { id: 'sin', label: '⚠️ Sin póliza cargada' }, { id: 'con', label: '✅ Con póliza' }].map(t => (
+              <button key={t.id} onClick={() => setFiltroPoliza(t.id)} style={{ padding: '6px 14px', fontSize: 12, cursor: 'pointer', border: `1px solid ${C.border}`, borderRadius: 8, fontFamily: "'Outfit', sans-serif", fontWeight: filtroPoliza === t.id ? 600 : 400, background: filtroPoliza === t.id ? C.purpleDim : C.surface, color: filtroPoliza === t.id ? C.purple : C.textMuted }}>{t.label}</button>
             ))}
             <label style={{ marginLeft: 8, fontSize: 12, color: C.textMuted, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={mostrarFinalizadas} onChange={e => setMostrarFinalizadas(e.target.checked)} /> Mostrar obras finalizadas (Recepción Definitiva)
