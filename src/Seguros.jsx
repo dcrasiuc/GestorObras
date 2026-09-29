@@ -6,6 +6,11 @@ import { toast } from './toast'
 import { exportarCuentaCorrienteSeguros } from './exportSegurosExcel'
 
 // ── Constantes propias de Seguros ───────────────────────────────
+// Algunas pólizas (ej. RC de obras EBY) vienen en dólares en vez de pesos — ver "Moneda y tipo de
+// cambio" más abajo (enPesos, buscarTipoCambioOficial) para cómo se convierten a pesos.
+export const MONEDAS = ['ARS', 'USD']
+export const MONEDA_LABELS = { ARS: 'Pesos (ARS)', USD: 'Dólares (USD)' }
+
 export const ORGANISMOS = ['IPRODA', 'EBY', 'UCEF', 'MUNI_POSADAS', 'VIALIDAD', 'Privado', 'Otro']
 export const ORGANISMO_LABELS = {
   IPRODA: 'IPRODA', EBY: 'Entidad Binacional Yacyretá', UCEF: 'UCEF',
@@ -107,6 +112,9 @@ function detectarAdvertencias(poliza) {
   }
   if (poliza.prima && poliza.prima_fuente && !/PRIMA|PREMIO/i.test(poliza.prima_fuente)) {
     w.push(`El monto de prima se extrajo de "${poliza.prima_fuente}" en el documento, no de una etiqueta explícita de "Prima"/"Premio" — verificalo contra la factura o cuponera de la aseguradora antes de darlo por bueno.`)
+  }
+  if (poliza.moneda === 'USD' && !(parseFloat(poliza.tipo_cambio) > 0)) {
+    w.push('Es una póliza en USD sin tipo de cambio cargado — la cuenta corriente no puede convertir sus montos a pesos hasta que se complete.')
   }
   const obra = poliza.obras
   if (obra?.monto_contrato && poliza.monto_asegurado && ['ejecucion_contrato', 'anticipo_financiero', 'fondo_reparo'].includes(poliza.tipo_cobertura)) {
@@ -253,6 +261,41 @@ function EstadoPagoBadge({ estadoPago }) {
   if (estadoPago === 'pagado') return <Badge bg={C.greenDim} color={C.green}>✅ Pagado</Badge>
   if (estadoPago === 'parcial') return <Badge bg="#FFF8ED" color="#8A5200">◐ Parcial</Badge>
   return <Badge bg="#FFF0F0" color="#C62828">Pendiente de pago</Badge>
+}
+
+// ── Moneda y tipo de cambio ───────────────────────────────────
+// Algunas pólizas (ej. RC de obras EBY) vienen en dólares. `prima`/`monto_asegurado` de `polizas` y
+// `monto` de `renovaciones_poliza` se cargan SIEMPRE en la moneda original del documento (poliza.moneda) —
+// nunca se convierten al guardar. `enPesos()` es la única función que calcula el equivalente en pesos,
+// y se usa en todos lados donde hace falta sumar/comparar montos (cuenta corriente, alertas, export):
+// así el monto original (verificable contra el documento) y el tipo de cambio usado (verificable
+// contra la fuente) quedan siempre separados y trazables — mismo principio que `prima_fuente`.
+function enPesos(monto, moneda, tipoCambio) {
+  const m = parseFloat(monto) || 0
+  if (moneda === 'USD') return m * (parseFloat(tipoCambio) || 0)
+  return m
+}
+
+// Tipo de cambio oficial del día (fuente: dolarapi.com, que replica el oficial de Banco Nación) —
+// SIEMPRE se ofrece editable en el formulario antes de guardar (nunca se guarda a ciegas): es un
+// punto de partida cómodo, no una verdad indiscutible. Si falla la conexión o el formato de
+// respuesta cambia, devuelve null y el usuario completa el valor a mano.
+async function buscarTipoCambioOficial() {
+  try {
+    const resp = await fetch('https://dolarapi.com/v1/dolares/oficial')
+    if (!resp.ok) return null
+    const data = await resp.json()
+    const valor = parseFloat(data?.venta)
+    if (!Number.isFinite(valor) || valor <= 0) return null
+    return { valor, fecha: (data?.fechaActualizacion || '').slice(0, 10) || hoy() }
+  } catch {
+    return null
+  }
+}
+
+function MonedaBadge({ moneda }) {
+  if (moneda !== 'USD') return null
+  return <Badge bg="#EAF4FF" color="#2D5FA8">💵 USD</Badge>
 }
 function EndosoBadge({ poliza }) {
   const nEndosos = (poliza.poliza_documentos || []).filter(d => d.tipo === 'endoso').length
@@ -606,6 +649,9 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
     monto_asegurado: polizaExistente.monto_asegurado ?? '',
     prima: polizaExistente.prima ?? '',
     prima_fuente: polizaExistente.prima_fuente || '',
+    moneda: polizaExistente.moneda || 'ARS',
+    tipo_cambio: polizaExistente.tipo_cambio ?? '',
+    fecha_tipo_cambio: polizaExistente.fecha_tipo_cambio || '',
     fecha_emision: polizaExistente.fecha_emision || hoy(),
     fecha_inicio: polizaExistente.fecha_inicio || '',
     fecha_vencimiento: polizaExistente.fecha_vencimiento || '',
@@ -620,7 +666,8 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
     archivo_url: '',
   } : {
     obra_id: obraIdDefecto || '', tipo_cobertura: 'ejecucion_contrato', aseguradora: '', corredor: '', nro_poliza: '',
-    monto_asegurado: '', prima: '', prima_fuente: '', fecha_emision: hoy(), fecha_inicio: '', fecha_vencimiento: '', notas: '',
+    monto_asegurado: '', prima: '', prima_fuente: '', moneda: 'ARS', tipo_cambio: '', fecha_tipo_cambio: '',
+    fecha_emision: hoy(), fecha_inicio: '', fecha_vencimiento: '', notas: '',
     tipo_vigencia: null, requiere_final_obra: null, clausula_repeticion: 'no_especifica', clausulas_especiales: '', descripcion_ia: '',
     se_autorenueva: null, duracion_periodo_dias: '',
     archivo_url: '',
@@ -629,7 +676,23 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
   const [candidatasObraIA, setCandidatasObraIA] = useState([]) // obras existentes parecidas — hay que preguntar antes de asumir que es nueva
   const [nombreObraIA, setNombreObraIA] = useState('') // nombre/organismo tal como lo leyó la IA, para mostrar en la pregunta
   const [iaDetectoEndoso, setIaDetectoEndoso] = useState(false)
+  const [buscandoTC, setBuscandoTC] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // Busca el tipo de cambio oficial del día y lo precarga (siempre editable después) — se llama al
+  // elegir "Dólares (USD)" si todavía no hay un tipo de cambio cargado, y también con el botón
+  // "🔄 Oficial hoy" para volver a buscarlo a mano.
+  const buscarTC = async () => {
+    setBuscandoTC(true)
+    const r = await buscarTipoCambioOficial()
+    if (r) { set('tipo_cambio', r.valor); set('fecha_tipo_cambio', r.fecha) }
+    else toast('No se pudo buscar el tipo de cambio automático — completalo a mano')
+    setBuscandoTC(false)
+  }
+  const setMoneda = (moneda) => {
+    setForm(f => ({ ...f, moneda }))
+    if (moneda === 'USD' && !form.tipo_cambio) buscarTC()
+  }
 
   // Al cambiar el tipo de cobertura, si todavía no hay vigencia/requiere_final_obra definidos
   // (ni por la IA ni a mano), sugerimos el default de negocio para ese tipo.
@@ -683,6 +746,7 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
         const matchObra = matchFuerteObra(obras, nombreIAOriginal)
         const candidatas = matchObra ? [] : candidatasObra(obras, nombreIAOriginal, orgIA)
         setCandidatasObraIA(candidatas)
+        const monedaIA = MONEDAS.includes(parsed.moneda) ? parsed.moneda : 'ARS'
         setForm(f => ({
           ...f,
           obra_id: matchObra ? matchObra.id : f.obra_id,
@@ -693,6 +757,7 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
           monto_asegurado: parsed.monto_asegurado || '',
           prima: parsed.prima || '',
           prima_fuente: parsed.prima ? (parsed.prima_fuente || '') : '',
+          moneda: monedaIA,
           fecha_emision: parsed.fecha_emision || hoy(),
           fecha_inicio: parsed.fecha_inicio || '',
           fecha_vencimiento: parsed.fecha_vencimiento || '',
@@ -706,6 +771,10 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
           archivo_url: archivoUrl,
         }))
         setIaDetectoEndoso(!!parsed.tiene_endoso)
+        // La IA solo identifica la MONEDA del documento — el tipo de cambio nunca lo inventa ni lo
+        // calcula ella (mismo principio que con "prima"): si detectó USD, buscamos el oficial del
+        // día como punto de partida cómodo, siempre editable antes de guardar.
+        if (monedaIA === 'USD') buscarTC()
         if (!matchObra && (parsed.obra || parsed.organismo)) {
           setNombreObraIA(parsed.obra || parsed.organismo || '')
           setSugerenciaObra({ nombre: parsed.obra || '', organismo: orgIA && ORGANISMOS.includes(orgIA) ? orgIA : 'Otro' })
@@ -731,7 +800,16 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
   return (
     <Modal title={esEdicion ? `Editar póliza ${polizaExistente.nro_poliza || ''}` : 'Cargar póliza'} wide onClose={onClose} guardarLabel={esEdicion ? 'Guardar cambios' : 'Guardar póliza'} onGuardar={step === 'review' ? () => {
       if (!form.obra_id) throw new Error('Elegí a qué obra corresponde la póliza')
-      return onGuardar({ ...form, monto_asegurado: parseFloat(form.monto_asegurado) || null, prima: parseFloat(form.prima) || null })
+      if (form.moneda === 'USD' && (parseFloat(form.monto_asegurado) > 0 || parseFloat(form.prima) > 0) && !(parseFloat(form.tipo_cambio) > 0)) {
+        throw new Error('Esta póliza está en USD — ingresá el tipo de cambio (se busca solo, pero hay que confirmarlo)')
+      }
+      return onGuardar({
+        ...form,
+        monto_asegurado: parseFloat(form.monto_asegurado) || null,
+        prima: parseFloat(form.prima) || null,
+        tipo_cambio: form.moneda === 'USD' ? (parseFloat(form.tipo_cambio) || null) : null,
+        fecha_tipo_cambio: form.moneda === 'USD' ? (form.fecha_tipo_cambio || null) : null,
+      })
     } : null}>
       {step === 'upload' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -788,9 +866,14 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
             <Campo label="Aseguradora (compañía)"><input style={inputSt} value={form.aseguradora} onChange={e => set('aseguradora', e.target.value)} placeholder="Ej. Berkley Argentina Seguros" /></Campo>
             <Campo label="Corredor / Productor"><input style={inputSt} value={form.corredor} onChange={e => set('corredor', e.target.value)} placeholder="Opcional — el broker, si lo hay" /></Campo>
           </div>
+          <Campo label="Moneda de la póliza">
+            <select style={inputSt} value={form.moneda} onChange={e => setMoneda(e.target.value)}>
+              {MONEDAS.map(m => <option key={m} value={m}>{MONEDA_LABELS[m]}</option>)}
+            </select>
+          </Campo>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <Campo label="Monto asegurado ($)"><input type="number" style={inputSt} value={form.monto_asegurado} onChange={e => set('monto_asegurado', e.target.value)} /></Campo>
-            <Campo label="Prima / costo de la póliza ($)">
+            <Campo label={`Monto asegurado ${form.moneda === 'USD' ? '(U$S)' : '($)'}`}><input type="number" style={inputSt} value={form.monto_asegurado} onChange={e => set('monto_asegurado', e.target.value)} /></Campo>
+            <Campo label={`Prima / costo de la póliza ${form.moneda === 'USD' ? '(U$S)' : '($)'}`}>
               <input type="number" style={inputSt} value={form.prima} onChange={e => set('prima', e.target.value)} placeholder="Lo que cobra la aseguradora" />
               {form.prima && (
                 /PRIMA|PREMIO/i.test(form.prima_fuente || '')
@@ -799,6 +882,18 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
               )}
             </Campo>
           </div>
+          {form.moneda === 'USD' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 10, alignItems: 'end', background: '#EAF4FF', padding: 10, borderRadius: 10 }}>
+              <Campo label="Tipo de cambio oficial ($/US$)"><input type="number" style={inputSt} value={form.tipo_cambio} onChange={e => set('tipo_cambio', e.target.value)} placeholder="Se busca solo, pero podés corregirlo" /></Campo>
+              <Campo label="Fecha del TC"><input type="date" style={inputSt} value={form.fecha_tipo_cambio} onChange={e => set('fecha_tipo_cambio', e.target.value)} /></Campo>
+              <BtnSecondary onClick={buscarTC}>{buscandoTC ? 'Buscando…' : '🔄 Oficial hoy'}</BtnSecondary>
+              {form.tipo_cambio > 0 && (form.monto_asegurado || form.prima) && (
+                <div style={{ gridColumn: '1 / -1', fontSize: 10, color: C.textFaint }}>
+                  ≈ en pesos: {form.monto_asegurado ? `Asegurado ${fmt(enPesos(form.monto_asegurado, 'USD', form.tipo_cambio))}` : ''}{form.monto_asegurado && form.prima ? ' · ' : ''}{form.prima ? `Prima ${fmt(enPesos(form.prima, 'USD', form.tipo_cambio))}` : ''}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             <Campo label="Emisión"><input type="date" style={inputSt} value={form.fecha_emision} onChange={e => set('fecha_emision', e.target.value)} /></Campo>
             <Campo label="Inicio vigencia"><input type="date" style={inputSt} value={form.fecha_inicio} onChange={e => set('fecha_inicio', e.target.value)} /></Campo>
@@ -1118,19 +1213,31 @@ function ModalPagoPoliza({ polizas, polizaIdDefecto, bancos, renovaciones = [], 
 // por reajuste (ej. "reajustable trimestralmente") — por eso se pide como dato aparte.
 function ModalRenovacionPoliza({ poliza, onClose, onGuardar }) {
   const corteAnterior = poliza.fecha_vencimiento
+  const esUSD = poliza.moneda === 'USD'
   const [form, setForm] = useState({
     periodo_desde: corteAnterior || hoy(),
     periodo_hasta: sumarDias(corteAnterior, poliza.duracion_periodo_dias) || '',
     monto: poliza.prima ?? '',
+    tipo_cambio: '',
+    fecha_tipo_cambio: hoy(),
     observaciones: '',
   })
+  const [buscandoTC, setBuscandoTC] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const buscarTC = async () => {
+    setBuscandoTC(true)
+    const r = await buscarTipoCambioOficial()
+    if (r) { set('tipo_cambio', r.valor); set('fecha_tipo_cambio', r.fecha) }
+    else toast('No se pudo buscar el tipo de cambio automático — completalo a mano')
+    setBuscandoTC(false)
+  }
   return (
     <Modal title={`Registrar renovación — Póliza ${poliza.nro_poliza || ''}`} onClose={onClose} guardarLabel="Guardar renovación" onGuardar={async () => {
       if (!form.periodo_hasta) throw new Error('Ingresá hasta cuándo va este nuevo período')
       const montoNum = parseFloat(form.monto) || 0
       if (!montoNum) throw new Error('Ingresá el monto de la prima cobrada por este período')
-      await onGuardar({ ...form, monto: montoNum })
+      if (esUSD && !(parseFloat(form.tipo_cambio) > 0)) throw new Error('Esta póliza está en USD — ingresá el tipo de cambio de esta renovación')
+      await onGuardar({ ...form, monto: montoNum, tipo_cambio: esUSD ? parseFloat(form.tipo_cambio) : null, fecha_tipo_cambio: esUSD ? (form.fecha_tipo_cambio || null) : null })
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ fontSize: 12, color: C.textMuted }}>La aseguradora renovó sola esta póliza por otro período (no se presentó la recepción a tiempo) y cobró una prima nueva. Registrá acá ese cargo — el monto puede ser distinto al original por reajuste.</div>
@@ -1138,7 +1245,14 @@ function ModalRenovacionPoliza({ poliza, onClose, onGuardar }) {
           <Campo label="Período desde"><input type="date" style={inputSt} value={form.periodo_desde} onChange={e => set('periodo_desde', e.target.value)} /></Campo>
           <Campo label="Período hasta (nuevo corte)"><input type="date" style={inputSt} value={form.periodo_hasta} onChange={e => set('periodo_hasta', e.target.value)} /></Campo>
         </div>
-        <Campo label="Monto de la prima de este período ($)"><input type="number" style={inputSt} value={form.monto} onChange={e => set('monto', e.target.value)} /></Campo>
+        <Campo label={`Monto de la prima de este período ${esUSD ? '(U$S)' : '($)'}`}><input type="number" style={inputSt} value={form.monto} onChange={e => set('monto', e.target.value)} /></Campo>
+        {esUSD && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 10, alignItems: 'end' }}>
+            <Campo label="Tipo de cambio de esta renovación ($/US$)"><input type="number" style={inputSt} value={form.tipo_cambio} onChange={e => set('tipo_cambio', e.target.value)} placeholder="Se busca solo, pero podés corregirlo" /></Campo>
+            <Campo label="Fecha del TC"><input type="date" style={inputSt} value={form.fecha_tipo_cambio} onChange={e => set('fecha_tipo_cambio', e.target.value)} /></Campo>
+            <BtnSecondary onClick={buscarTC}>{buscandoTC ? 'Buscando…' : '🔄 Oficial hoy'}</BtnSecondary>
+          </div>
+        )}
         <Campo label="Observaciones (opcional)"><textarea style={{ ...inputSt, minHeight: 50 }} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} placeholder="Ej. reajuste del 8% por inflación" /></Campo>
       </div>
     </Modal>
@@ -1176,8 +1290,8 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
   const [expandido, setExpandido] = useState(false)
   const totalPagado = pagos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
   const renovacionesVigentes = renovaciones.filter(r => !r.anulada)
-  const totalRenovaciones = renovacionesVigentes.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0)
-  const prima = (parseFloat(poliza.prima) || 0) + totalRenovaciones
+  const totalRenovaciones = renovacionesVigentes.length > 0 ? primaConRenovaciones(poliza, renovaciones) - enPesos(poliza.prima, poliza.moneda, poliza.tipo_cambio) : 0
+  const prima = primaConRenovaciones(poliza, renovaciones)
   const saldo = prima - totalPagado
   return (
     <div style={{ ...cardSt, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, background: '#FBFBFD' }}>
@@ -1192,6 +1306,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         <Badge bg={C.purpleDim} color={C.purple}>📄 {COBERTURA_LABELS[poliza.tipo_cobertura] || poliza.tipo_cobertura}</Badge>
+        <MonedaBadge moneda={poliza.moneda} />
         <VencimientoBadge fecha={corteVigentePoliza(poliza, renovaciones)} diasAviso={diasAviso} />
       </div>
       {alertaInfo && (
@@ -1218,8 +1333,12 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
             {poliza.requiere_final_obra && <Badge bg="#EEF4FF" color="#2D5FA8">📄 Requiere recepción de obra para baja</Badge>}
           </div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: C.textMuted }}>
-            {poliza.monto_asegurado ? <span>💰 Asegurado: {fmt(poliza.monto_asegurado)}</span> : null}
-            {prima > 0 && <span>🧾 Prima{totalRenovaciones > 0 ? ' total (con renovaciones)' : ''}: {fmt(prima)} · Pagado: {fmt(totalPagado)} · Saldo: {fmt(saldo)}</span>}
+            {poliza.monto_asegurado ? (
+              <span>💰 Asegurado: {poliza.moneda === 'USD' ? `U$S ${fmt(poliza.monto_asegurado)}${poliza.tipo_cambio > 0 ? ` (≈ ${fmt(enPesos(poliza.monto_asegurado, poliza.moneda, poliza.tipo_cambio))})` : ''}` : fmt(poliza.monto_asegurado)}</span>
+            ) : null}
+            {prima > 0 && (
+              <span>🧾 Prima{totalRenovaciones > 0 ? ' total (con renovaciones)' : ''}: {poliza.moneda === 'USD' ? `U$S ${fmt((parseFloat(poliza.prima) || 0) + renovacionesVigentes.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0))} (≈ ${fmt(prima)})` : fmt(prima)} · Pagado: {fmt(totalPagado)} · Saldo: {fmt(saldo)}</span>
+            )}
             {poliza.fecha_inicio && <span>📅 Vigencia desde: {fmtFechaAR(poliza.fecha_inicio)}</span>}
           </div>
           {poliza.clausulas_especiales && <div style={{ fontSize: 11, color: C.textMuted, background: '#F3F3F3', padding: '6px 9px', borderRadius: 8 }}>📋 Cláusulas especiales: {poliza.clausulas_especiales}</div>}
@@ -1228,7 +1347,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted }}>🔁 Renovaciones por período registradas</div>
               {renovaciones.map(r => (
                 <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, background: r.anulada ? '#F3F3F3' : '#FFF8ED', padding: '5px 8px', borderRadius: 6, textDecoration: r.anulada ? 'line-through' : 'none', color: r.anulada ? '#888' : '#8A5200' }}>
-                  <span>Hasta {fmtFechaAR(r.periodo_hasta)} · {fmt(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : ''}</span>
+                  <span>Hasta {fmtFechaAR(r.periodo_hasta)} · {poliza.moneda === 'USD' ? `U$S ${fmt(r.monto)}${r.tipo_cambio > 0 ? ` (≈ ${fmt(enPesos(r.monto, poliza.moneda, r.tipo_cambio))} al TC ${r.tipo_cambio})` : ' (falta tipo de cambio)'}` : fmt(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : ''}</span>
                   {!r.anulada && <button onClick={() => onAnularRenovacion(r)} style={{ background: 'none', border: 'none', color: C.purple, fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: "'Outfit', sans-serif" }}>Anular (retroactivo)</button>}
                 </div>
               ))}
@@ -1320,12 +1439,14 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
 }
 
 // ── Cuenta corriente con las aseguradoras (o corredores) — agrupa pólizas ──
-// Prima "vigente" de una póliza para efectos de cuenta corriente: la original + toda renovación
+// Prima "vigente" de una póliza para efectos de cuenta corriente, YA CONVERTIDA A PESOS (ver
+// enPesos más arriba — si la póliza es ARS, es el monto tal cual): la original + toda renovación
 // por período que NO haya sido anulada retroactivamente (puede diferir de la prima original por
-// reajuste — cada renovación trae su propio monto).
+// reajuste — cada renovación trae su propio monto Y su propio tipo de cambio, si la póliza es USD).
 function primaConRenovaciones(poliza, renovaciones) {
   const propias = renovaciones.filter(r => r.poliza_id === poliza.id && !r.anulada)
-  return (parseFloat(poliza.prima) || 0) + propias.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0)
+  const primaPesos = enPesos(poliza.prima, poliza.moneda, poliza.tipo_cambio)
+  return primaPesos + propias.reduce((s, r) => s + enPesos(r.monto, poliza.moneda, r.tipo_cambio), 0)
 }
 
 // Lista de "movimientos" de una póliza (la prima original + cada renovación por período) en orden
@@ -1334,12 +1455,20 @@ function primaConRenovaciones(poliza, renovaciones) {
 // repartiendo el total pagado en orden — primero se cubre la prima, después la renovación más
 // vieja, y así siguiendo (FIFO). Una renovación anulada retroactivamente no entra en el reparto
 // (no es deuda real) y se muestra aparte, marcada como tal.
+// `monto` de cada ítem queda YA CONVERTIDO A PESOS (con lo que se suma/compara/reparte el FIFO);
+// `montoOriginal`/`moneda`/`tipoCambio` se conservan aparte para poder mostrar en pantalla "U$S 1.000
+// (≈ $1.234.000 al TC 1.234)" en vez de perder el dato de en qué moneda estaba realmente el documento.
 function movimientosPoliza(poliza, renovaciones, pagos) {
+  const moneda = poliza.moneda || 'ARS'
   const renovacionesDeLaPoliza = (renovaciones || []).filter(r => r.poliza_id === poliza.id)
   const items = [
-    { tipo: 'prima', id: `prima-${poliza.id}`, fecha: poliza.fecha_emision || poliza.fecha_inicio || null, monto: parseFloat(poliza.prima) || 0, anulada: false, label: 'Prima original' },
+    { tipo: 'prima', id: `prima-${poliza.id}`, fecha: poliza.fecha_emision || poliza.fecha_inicio || null,
+      montoOriginal: parseFloat(poliza.prima) || 0, moneda, tipoCambio: poliza.tipo_cambio,
+      monto: enPesos(poliza.prima, moneda, poliza.tipo_cambio), anulada: false, label: 'Prima original' },
     ...renovacionesDeLaPoliza.map(r => ({
-      tipo: 'renovacion', id: r.id, fecha: r.periodo_hasta, monto: parseFloat(r.monto) || 0, anulada: !!r.anulada,
+      tipo: 'renovacion', id: r.id, fecha: r.periodo_hasta,
+      montoOriginal: parseFloat(r.monto) || 0, moneda, tipoCambio: r.tipo_cambio,
+      monto: enPesos(r.monto, moneda, r.tipo_cambio), anulada: !!r.anulada,
       label: `Renovación hasta ${fmtFechaAR(r.periodo_hasta)}`, observaciones: r.observaciones, motivo_anulacion: r.motivo_anulacion,
     })),
   ].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
@@ -1481,14 +1610,19 @@ function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, diasAviso, 
             {g.polizas.map(p => (
               <div key={p.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 8, background: '#FBFBFD' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, fontSize: 12, marginBottom: 6 }}>
-                  <span style={{ fontWeight: 600, color: C.text }}>{p.nro_poliza || 's/n'} · {p.obras?.nombre}{agrupador === 'corredor' && p.aseguradora ? ` · ${p.aseguradora}` : ''}</span>
+                  <span style={{ fontWeight: 600, color: C.text, display: 'flex', alignItems: 'center', gap: 6 }}>{p.nro_poliza || 's/n'} · {p.obras?.nombre}{agrupador === 'corredor' && p.aseguradora ? ` · ${p.aseguradora}` : ''} <MonedaBadge moneda={p.moneda} /></span>
                   <VencimientoBadge fecha={p.estadoVenc.corte} diasAviso={diasAviso} />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {p.movimientos.map(m => (
                     <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, color: m.anulada ? '#AAA' : C.textMuted, textDecoration: m.anulada ? 'line-through' : 'none' }}>
                       <span>{m.label}{m.fecha ? ` (${fmtFechaAR(m.fecha)})` : ''}</span>
-                      <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>{fmt(m.monto)} <EstadoPagoBadge estadoPago={m.estadoPago} /></span>
+                      <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {m.moneda === 'USD'
+                          ? <span>U$S {fmt(m.montoOriginal)} {m.tipoCambio > 0 ? <>≈ {fmt(m.monto)} <span style={{ color: C.textFaint }}>(TC {m.tipoCambio})</span></> : <span style={{ color: '#C62828' }}>(falta tipo de cambio)</span>}</span>
+                          : fmt(m.monto)}
+                        <EstadoPagoBadge estadoPago={m.estadoPago} />
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1583,11 +1717,14 @@ export default function Seguros() {
   // Crea una póliza nueva, o actualiza una existente si form.id está presente (edición).
   const guardarPoliza = async (form) => {
     const { id, archivo_url, obra_id, tipo_cobertura, aseguradora, corredor, nro_poliza, monto_asegurado, prima, prima_fuente,
+      moneda, tipo_cambio, fecha_tipo_cambio,
       fecha_emision, fecha_inicio, fecha_vencimiento, notas, tipo_vigencia, requiere_final_obra,
       clausula_repeticion, clausulas_especiales, descripcion_ia, se_autorenueva, duracion_periodo_dias } = form
     const campos = {
       obra_id, tipo_cobertura, aseguradora: aseguradora || null, corredor: corredor || null, nro_poliza: nro_poliza || null,
-      monto_asegurado, prima, prima_fuente: prima ? (prima_fuente || null) : null, fecha_emision: fecha_emision || null, fecha_inicio: fecha_inicio || null, fecha_vencimiento: fecha_vencimiento || null,
+      monto_asegurado, prima, prima_fuente: prima ? (prima_fuente || null) : null,
+      moneda: moneda || 'ARS', tipo_cambio: moneda === 'USD' ? (tipo_cambio ?? null) : null, fecha_tipo_cambio: moneda === 'USD' ? (fecha_tipo_cambio || null) : null,
+      fecha_emision: fecha_emision || null, fecha_inicio: fecha_inicio || null, fecha_vencimiento: fecha_vencimiento || null,
       notas: notas || null, tipo_vigencia: tipo_vigencia || null, requiere_final_obra: requiere_final_obra === undefined ? null : requiere_final_obra,
       clausula_repeticion: clausula_repeticion || 'no_especifica', clausulas_especiales: clausulas_especiales || null, descripcion_ia: descripcion_ia || null,
       se_autorenueva: se_autorenueva === undefined ? null : se_autorenueva,
@@ -1722,6 +1859,8 @@ export default function Seguros() {
       periodo_desde: form.periodo_desde || null,
       periodo_hasta: form.periodo_hasta,
       monto: form.monto,
+      tipo_cambio: form.tipo_cambio ?? null,
+      fecha_tipo_cambio: form.fecha_tipo_cambio || null,
       observaciones: form.observaciones || null,
     }, null, true)
     if (nueva) setRenovacionesPoliza(prev => [nueva, ...prev])

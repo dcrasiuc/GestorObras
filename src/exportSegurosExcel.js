@@ -55,10 +55,13 @@ export function exportarCuentaCorrienteSeguros(grupos = [], agrupador = 'asegura
           'Tipo de cobertura': COBERTURA_LABELS[p.tipo_cobertura] || p.tipo_cobertura || '',
           'Movimiento': m.label,
           'Fecha': m.fecha ?? '',
-          'Monto': num(m.monto),
+          'Moneda': m.moneda || 'ARS',
+          'Monto original': num(m.montoOriginal ?? m.monto),
+          'Tipo de cambio': m.moneda === 'USD' ? (num(m.tipoCambio) || '') : '',
+          'Monto ($)': num(m.monto),
           'Estado': ESTADO_PAGO_LABELS[m.estadoPago] || m.estadoPago || '',
-          'Pagado': num(m.pagadoMonto),
-          'Saldo pendiente': num(m.saldoMonto),
+          'Pagado ($)': num(m.pagadoMonto),
+          'Saldo pendiente ($)': num(m.saldoMonto),
           'Motivo anulación': m.anulada ? (m.motivo_anulacion || '') : '',
         })
       })
