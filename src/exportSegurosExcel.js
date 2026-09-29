@@ -4,9 +4,20 @@
 // de pago individual (pagado / parcial / pendiente / anulada), y una hoja de resumen por grupo
 // (aseguradora o corredor, según se esté viendo al exportar).
 import * as XLSX from 'xlsx'
-import { TIPOS_COBERTURA } from './Seguros'
 
-const COBERTURA_LABELS = Object.fromEntries(TIPOS_COBERTURA.map(t => [t.value, t.label]))
+// Copia local de las etiquetas (NO importar TIPOS_COBERTURA desde './Seguros' acá): Seguros.jsx ya
+// importa este archivo, así que importar de vuelta desde acá crea un ciclo de módulos ES — al
+// evaluarse Seguros.jsx llega a este import ANTES de que su propio `export const TIPOS_COBERTURA`
+// se haya inicializado, y JS tira "Cannot access 'TIPOS_COBERTURA' before initialization" al cargar
+// el bundle entero, dejando toda la app en blanco (bug real detectado y corregido — setiembre 2026).
+const COBERTURA_LABELS = {
+  mantenimiento_oferta: 'Mantenimiento de Oferta',
+  ejecucion_contrato: 'Cumplimiento de Contrato',
+  anticipo_financiero: 'Anticipo Financiero',
+  fondo_reparo: 'Fondo de Reparo',
+  responsabilidad_civil: 'Responsabilidad Civil',
+  otro: 'Otro',
+}
 const num = v => Math.round((parseFloat(v) || 0) * 100) / 100
 
 const ESTADO_PAGO_LABELS = {
