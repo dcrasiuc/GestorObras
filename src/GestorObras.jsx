@@ -261,8 +261,13 @@ function NotifPendientes({ gastos, esAdmin, onVerPendientes }) {
 // ── App ───────────────────────────────────────────────────────
 export default function GestorObras({ usuario }) {
   const esAdmin = usuario?.perfil?.rol === 'admin'
-  // Módulos en prueba (beta): visibles solo para el usuario de Daniel mientras se testea en producción.
+  // Módulo en prueba (beta): Relevamientos sigue visible solo para el usuario de Daniel mientras se
+  // testea en producción.
   const enBeta = usuario?.email === 'dcrasiuc@gmail.com'
+  // Seguros tiene su propia lista aparte de Relevamientos (setiembre 2026, pedido del usuario: sumar
+  // a alongarzo@gmail.com solo a Seguros, sin darle Relevamientos todavía).
+  const EMAILS_SEGUROS = ['dcrasiuc@gmail.com', 'alongarzo@gmail.com']
+  const puedeVerSeguros = EMAILS_SEGUROS.includes(usuario?.email)
   // El listado de comprobantes para el contador (export ZIP) lo puede emitir un admin, o puntualmente
   // Marcelo (Juan Marcelo Marques, rol "operador") aunque no sea admin.
   const esMarcelo = usuario?.email === 'marques.juan.marcelo@gmail.com'
@@ -492,7 +497,7 @@ export default function GestorObras({ usuario }) {
                 )
               })}
               <button onClick={() => setPanel('contactos')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'contactos' ? 600 : 400, background: panel === 'contactos' ? C.purpleDim : C.surface, color: panel === 'contactos' ? C.purple : C.textMuted }}>👥 Contactos</button>
-              {enBeta && <button onClick={() => setPanel('seguros')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'seguros' ? 600 : 400, background: panel === 'seguros' ? C.purpleDim : C.surface, color: panel === 'seguros' ? C.purple : C.textMuted }}>🛡️ Seguros</button>}
+              {puedeVerSeguros && <button onClick={() => setPanel('seguros')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'seguros' ? 600 : 400, background: panel === 'seguros' ? C.purpleDim : C.surface, color: panel === 'seguros' ? C.purple : C.textMuted }}>🛡️ Seguros</button>}
               {enBeta && <button onClick={() => setPanel('relevamientos')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: `1px solid ${C.border}`, fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'relevamientos' ? 600 : 400, background: panel === 'relevamientos' ? C.purpleDim : C.surface, color: panel === 'relevamientos' ? C.purple : C.textMuted }}>📋 Relevamientos</button>}
               {esAdmin && <button onClick={() => setPanel('admin')} style={{ padding: '6px 16px', fontSize: 12, cursor: 'pointer', border: 'none', fontFamily: "'Outfit', sans-serif", fontWeight: panel === 'admin' ? 600 : 400, background: panel === 'admin' ? C.purpleDim : C.surface, color: panel === 'admin' ? C.purple : C.textMuted }}>⚙️ Admin</button>}
             </nav>
@@ -577,7 +582,7 @@ export default function GestorObras({ usuario }) {
               onEliminarProveedor={async p => { if (!window.confirm(`¿Eliminar proveedor "${p.nombre}"?`)) return; await dbWrite('DELETE', 'proveedores', null, `id=eq.${p.id}`); recargarListas() }}
             />}
             {panel === 'admin'     && esAdmin && <PanelAdmin bancos={bancos} recargarListas={recargarListas} />}
-            {panel === 'seguros'   && <Seguros />}
+            {panel === 'seguros'   && puedeVerSeguros && <Seguros />}
             {panel === 'relevamientos' && <Relevamientos onVolver={() => setPanel('obras')} />}
             {panel === 'mas'       && <PanelMas esAdmin={esAdmin} onContactos={() => setPanel('contactos')} onSeguros={() => setPanel('seguros')} onRelevamientos={() => setPanel('relevamientos')} onAdmin={() => setPanel('admin')} onLogout={handleLogout} usuario={usuario} />}
           </div>
@@ -1079,11 +1084,13 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
 
 // ── Panel Más (mobile) ────────────────────────────────────────
 function PanelMas({ esAdmin, onContactos, onSeguros, onAdmin, onLogout, usuario, onRelevamientos }) {
-  // Módulos en prueba (beta): visibles solo para el usuario de Daniel mientras se testea en producción.
+  // Relevamientos: en prueba (beta), visible solo para el usuario de Daniel mientras se testea en
+  // producción. Seguros tiene su propia lista aparte (setiembre 2026, ver el otro enBeta arriba).
   const enBeta = usuario?.email === 'dcrasiuc@gmail.com'
+  const puedeVerSeguros = ['dcrasiuc@gmail.com', 'alongarzo@gmail.com'].includes(usuario?.email)
   const opciones = [
     { icon: '👥', label: 'Contactos', sub: 'Clientes y proveedores', action: onContactos },
-    ...(enBeta ? [{ icon: '🛡️', label: 'Seguros', sub: 'Pólizas y garantías por obra', action: onSeguros }] : []),
+    ...(puedeVerSeguros ? [{ icon: '🛡️', label: 'Seguros', sub: 'Pólizas y garantías por obra', action: onSeguros }] : []),
     ...(enBeta ? [{ icon: '📋', label: 'Relevamientos', sub: 'Relevamientos de obra e informes', action: onRelevamientos }] : []),
   ]
 
