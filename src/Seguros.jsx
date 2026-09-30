@@ -1627,11 +1627,54 @@ const FILTROS_CUENTA_CORRIENTE = [
   { id: 'con_saldo', label: '💳 Con saldo pendiente' },
 ]
 
+// ── Modal: opciones de exportación del Excel de Cuenta Corriente ──
+// Antes el botón exportaba SIEMPRE exactamente lo que estaba filtrado en pantalla, sin forma de
+// pedir "todas las pólizas" ni acotar por rango de fechas (pedido del usuario, setiembre 2026).
+function ModalExportarCC({ polizasTodas, polizasPantalla, pagos, renovaciones, diasAviso, agrupador, onClose }) {
+  const [alcance, setAlcance] = useState('pantalla') // 'pantalla' | 'todas' | 'con_saldo'
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
+
+  const exportar = () => {
+    let base = alcance === 'pantalla' ? polizasPantalla : polizasTodas
+    if (alcance === 'con_saldo') {
+      base = polizasTodas.filter(p => movimientosPoliza(p, renovaciones, pagos).some(m => !m.anulada && m.saldoMonto > 0))
+    }
+    const grupos = agruparPolizas(base, pagos, renovaciones, agrupador, diasAviso)
+    exportarCuentaCorrienteSeguros(grupos, agrupador, { fechaDesde: fechaDesde || null, fechaHasta: fechaHasta || null })
+    onClose()
+  }
+
+  return (
+    <Modal title="Exportar a Excel" onClose={onClose} guardarLabel="Exportar" onGuardar={exportar}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <Campo label="Qué pólizas incluir">
+          <select style={inputSt} value={alcance} onChange={e => setAlcance(e.target.value)}>
+            <option value="pantalla">Lo que estoy viendo ahora (mismo filtro de pantalla)</option>
+            <option value="todas">Todas las pólizas, sin filtro</option>
+            <option value="con_saldo">Solo las que tienen saldo pendiente</option>
+          </select>
+        </Campo>
+        <Campo label="Rango de fechas (opcional) — filtra los movimientos por su fecha">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <input type="date" style={inputSt} value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} />
+            <input type="date" style={inputSt} value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} />
+          </div>
+          <div style={{ fontSize: 11, color: C.textFaint, marginTop: 4 }}>
+            Dejalo vacío para incluir todo. Si cargás un rango, la hoja "Resumen" muestra la prima/pagado/saldo SOLO de los movimientos de ese período, no el saldo de vida completa de la póliza.
+          </div>
+        </Campo>
+      </div>
+    </Modal>
+  )
+}
+
 function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, diasAviso, onGuardarDiasAviso, onRegistrarPago }) {
   const [agrupador, setAgrupador] = useState('aseguradora') // 'aseguradora' | 'corredor'
   const [filtro, setFiltro] = useState('todas')
   const [editandoDias, setEditandoDias] = useState(false)
   const [diasInput, setDiasInput] = useState(diasAviso)
+  const [modalExportar, setModalExportar] = useState(false)
   useEffect(() => { setDiasInput(diasAviso) }, [diasAviso])
 
   const pasaFiltro = (poliza) => {
@@ -1683,8 +1726,14 @@ function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, diasAviso, 
             <button key={t.id} onClick={() => setAgrupador(t.id)} style={{ padding: '5px 12px', fontSize: 11, cursor: 'pointer', border: `1px solid ${C.border}`, borderRadius: 8, fontFamily: "'Outfit', sans-serif", fontWeight: agrupador === t.id ? 600 : 400, background: agrupador === t.id ? C.purpleDim : C.surface, color: agrupador === t.id ? C.purple : C.textMuted }}>{t.label}</button>
           ))}
         </div>
-        <BtnSecondary onClick={() => exportarCuentaCorrienteSeguros(grupos, agrupador)}>⬇️ Exportar a Excel</BtnSecondary>
+        <BtnSecondary onClick={() => setModalExportar(true)}>⬇️ Exportar a Excel</BtnSecondary>
       </div>
+      {modalExportar && (
+        <ModalExportarCC
+          polizasTodas={polizas} polizasPantalla={polizasFiltradas} pagos={pagos} renovaciones={renovaciones}
+          diasAviso={diasAviso} agrupador={agrupador} onClose={() => setModalExportar(false)}
+        />
+      )}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {FILTROS_CUENTA_CORRIENTE.map(t => (
