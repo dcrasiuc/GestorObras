@@ -2236,7 +2236,7 @@ function PanelAdmin({ bancos, recargarListas }) {
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button onClick={async () => {
-                        await supabase.from('usuarios').insert([{ id: u.id, nombre: u.nombre, rol: 'operador' }])
+                        await supabase.from('usuarios').insert([{ id: u.id, nombre: u.nombre, rol: 'operador', email: u.email || null }])
                         cargarTodo()
                       }} style={{ padding: '5px 12px', background: C.greenDim, color: C.green, border: `1px solid #B8E6CF`, borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
                         ✓ Aprobar
@@ -2264,7 +2264,10 @@ function PanelAdmin({ bancos, recargarListas }) {
               <div key={u.id} style={{ padding: '12px 16px', borderBottom: i < usuarios.length - 1 ? `1px solid ${C.borderFaint}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{u.nombre}</div>
-                  <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>{u.id.slice(0, 16)}...</div>
+                  {/* Antes mostraba el UUID cortado — no servía para confirmar con qué cuenta de Gmail
+                      entra cada uno (setiembre 2026, caso Augusto Longarzo). usuarios.email se completa
+                      al aprobar (ver más abajo) y se hizo backfill de los que ya estaban aprobados. */}
+                  <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>{u.email || `${u.id.slice(0, 16)}...`}</div>
                 </div>
                 <select value={u.rol} onChange={e => cambiarRol(u.id, e.target.value)} style={{ ...inputSt, width: 130, padding: '5px 10px', fontSize: 12 }}>
                   <option value="operador">Operador</option>
