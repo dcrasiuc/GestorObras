@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from './supabaseClient'
 import CuentaCorriente from './CuentaCorriente'
 import Seguros from './Seguros'
+import { ModalObra, etapaInicial } from './ModalObraCompartido'
 import { C, CONCEPTOS, CONCEPTOS_GENERALES, CONCEPTO_LABELS, CONCEPTO_COLORS, CONCEPTO_ICONS, TIPOS_COMPROBANTE, SITUACIONES, MEDIOS_PAGO, RUBROS, IVA, SEATE_CUIT, SEATE_NOMBRE, CONDICIONES_PAGO } from './constants'
 import { fmt, fmtDec, fmtK, hoy, parseMonto, fmtFechaAR, getSituacion, getTipoLabel, dbWrite, normCuit, cuitMatch } from './utils'
 import { exportarExcel } from './exportExcel'
@@ -84,11 +85,14 @@ function useObras(usuarioId, esAdmin) {
     if (showLoading) setLoading(true)
     const failsafe = showLoading ? setTimeout(() => setLoading(false), 12000) : null
     try {
-      // .neq('etapa','oferta'): las obras todavía en oferta/licitación (cargadas desde Seguros,
-      // no adjudicadas todavía) no deben aparecer en el panel principal de Obras ni en los
-      // dropdowns de gastos/finanzas — recién se "activan" acá cuando se marcan adjudicadas.
+      // Antes acá se filtraba .neq('etapa','oferta') para que las obras todavía en oferta/licitación
+      // no aparecieran en NINGÚN lado del panel principal. Desde setiembre 2026 sí se cargan (para
+      // que se vean como card con aviso en el panel de Obras, a pedido del usuario, y no queden
+      // "perdidas" hasta que alguien se acuerde de ir a Seguros) — lo que se sigue excluyendo es que
+      // puedan recibir gastos: ver `obrasOperativas` más abajo, que sí sigue filtrando 'oferta' para
+      // los dropdowns/reportes de gastos y finanzas.
       if (esAdmin) {
-        const { data, error } = await supabase.from('obras_resumen').select('*').neq('etapa', 'oferta').order('nombre')
+        const { data, error } = await supabase.from('obras_resumen').select('*').order('nombre')
         if (error) console.error('useObras admin error:', error)
         else setObras(data ?? [])
       } else {
@@ -98,7 +102,7 @@ function useObras(usuarioId, esAdmin) {
           .eq('usuario_id', usuarioId)
         const ids = (asignadas ?? []).map(a => a.obra_id)
         if (ids.length === 0) { setObras([]); if (failsafe) clearTimeout(failsafe); if (showLoading) setLoading(false); return }
-        const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).neq('etapa', 'oferta').order('nombre')
+        const { data, error } = await supabase.from('obras_resumen').select('*').in('id', ids).order('nombre')
         if (error) console.error('useObras error:', error)
         else setObras(data ?? [])
       }
@@ -274,6 +278,10 @@ export default function GestorObras({ usuario }) {
 
   const { clientes, proveedores, bancos, recargarListas, setProveedores } = useListas()
   const { obras, setObras, loading: loadingObras, recargar: recargarObras, obrasIds } = useObras(usuario?.id, esAdmin)
+  // Obras "en oferta" (requieren garantía, todavía no adjudicadas) se ven en el panel de Obras
+  // (con aviso) pero no pueden recibir gastos todavía — se excluyen acá para el resto de los
+  // paneles/dropdowns operativos de gastos y finanzas (setiembre 2026, ver PanelObras).
+  const obrasOperativas = obras.filter(o => o.etapa !== 'oferta')
   const { gastos: todosGastos, setGastos, loading: loadingGastos, recargar: recargarGastos } = useGastos(obrasIds)
   const { remitosPendientes, recargarRemitosPend } = useRemitosPendientes()
   const gastos = filtroObraId ? todosGastos.filter(g => imputaciones(g).some(im => im.obra_id === filtroObraId)) : todosGastos
@@ -521,7 +529,7 @@ export default function GestorObras({ usuario }) {
                 <button onClick={handleLogout} style={{ padding: '5px 10px', background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 7, fontSize: 11, cursor: 'pointer', fontFamily: "'Outfit', sans-serif" }}>Salir</button>
               </div>
             </div>
-            <MobileHeaderStats obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} />
+            <MobileHeaderStats obras={obrasOperativas} gastos={todosGastos} remitosPorObra={remitosPorObra} />
           </div>
           {/* Quick actions — solo en panel inicio */}
           {panel === 'inicio' && (
@@ -544,12 +552,12 @@ export default function GestorObras({ usuario }) {
         {/* ── CONTENIDO ── */}
         <div className="main-content" style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 20px', width: '100%' }}>
           <div className="fade-up" key={panel}>
-            {panel === 'inicio'    && <PanelInicio obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
+            {panel === 'inicio'    && <PanelInicio obras={obrasOperativas} gastos={todosGastos} remitosPorObra={remitosPorObra} esAdmin={esAdmin} onVerGastos={(id) => { setFiltroObraId(id); setPanel('gastos') }} onVerObras={() => setPanel('obras')} onNuevoGasto={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} />}
             {panel === 'obras'     && <PanelObras obras={obras} creditoFiscalPorObra={creditoFiscalPorObra} totalPorObra={totalPorObra} cantPorObra={cantPorObra} remitosPorObra={remitosPorObra} gastosGeneralesPorObra={gastosGeneralesPorObra} loading={loadingObras} esAdmin={esAdmin} onNueva={() => abrirModal('obra')} onEditar={o => abrirModal('obra', o)} onVerGastos={id => { setFiltroObraId(id); setPanel('gastos') }} onVerDetalle={o => setObraDetalle(o)} />}
-            {panel === 'gastos'    && <PanelGastos obras={obras} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} puedeExportarContador={puedeExportarContador} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onExportarZip={() => abrirModal('exportarZip')} onRevertirPago={async g => { if (!window.confirm(`¿Revertir pago de ${g.proveedores?.nombre ?? 'este gasto'}? Quedará como pendiente/parcial.`)) return; await dbWrite('PATCH', 'gastos', { pagado: false }, `id=eq.${g.id}`); setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: false } : x)); recargarGastos(false) }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
+            {panel === 'gastos'    && <PanelGastos obras={obrasOperativas} gastos={gastos} remitosPendientes={remitosPendientes} loading={loadingGastos} filtroObraId={filtroObraId} setFiltroObraId={setFiltroObraId} esAdmin={esAdmin} puedeExportarContador={puedeExportarContador} onNuevoManual={() => abrirModal('gasto')} onNuevoFoto={() => abrirModal('foto')} onEditar={g => abrirModal('gasto', g)} onPagar={g => abrirModal('pago', g)} onPagarMultiple={gastos => { setItemEditando(gastos); setModal('pagoMultiple') }} onAdjuntarComprobante={g => abrirModal('adjuntarComprobante', g)} onSubidaMasiva={() => abrirModal('subidaMasiva')} onExportarZip={() => abrirModal('exportarZip')} onRevertirPago={async g => { if (!window.confirm(`¿Revertir pago de ${g.proveedores?.nombre ?? 'este gasto'}? Quedará como pendiente/parcial.`)) return; await dbWrite('PATCH', 'gastos', { pagado: false }, `id=eq.${g.id}`); setGastos(prev => prev.map(x => x.id === g.id ? { ...x, pagado: false } : x)); recargarGastos(false) }} onEliminar={async g => { if (window.confirm('¿Eliminar este gasto?')) { await dbWrite('DELETE', 'gastos', null, `id=eq.${g.id}`); setGastos(prev => prev.filter(x => x.id !== g.id)); recargarObras(true); recargarGastos(false) } }} />}
             {panel === 'cc'        && <CuentaCorriente esAdmin={esAdmin} usuario={usuario} />}
-            {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obras} />}
-            {panel === 'informe'   && <PanelInforme obras={obras} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
+            {panel === 'finanzas'  && <PanelFinanciero gastos={todosGastos} obras={obrasOperativas} />}
+            {panel === 'informe'   && <PanelInforme obras={obrasOperativas} gastos={todosGastos} remitosPorObra={remitosPorObra} bancos={bancos} esAdmin={esAdmin} loading={loadingGastos} />}
             {panel === 'contactos' && <PanelContactos clientes={clientes} proveedores={proveedores} gastos={gastos} onNuevoCliente={() => abrirModal('cliente')} onNuevoProveedor={() => abrirModal('proveedor')} onEditarCliente={c => abrirModal('cliente', c)} onEditarProveedor={p => abrirModal('proveedor', p)}
               onUnificarProveedores={async (keepId, deleteIds) => {
                 if (!window.confirm(`¿Unificar ${deleteIds.length} proveedor(es) en el seleccionado? Esta acción reasigna todos sus gastos y no se puede deshacer.`)) return
@@ -592,23 +600,34 @@ export default function GestorObras({ usuario }) {
       {/* ── MODALES ── */}
       {modal === 'obra' && <ModalObra itemEdit={itemEditando} clientes={clientes} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) return window._toast?.('El nombre es obligatorio')
-        const { id, nombre, cliente_id, estado, presupuesto, requiere_poliza, excluir_gastos_generales } = d
-        const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requiere_poliza !== false, excluir_gastos_generales: !!excluir_gastos_generales }
+        const { id, nombre, cliente_id, estado, presupuesto, monto_contrato, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales } = d
+        const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, monto_contrato: parseFloat(monto_contrato) || null, requiere_poliza: requiere_poliza !== false, requiere_garantia_oferta: requiere_garantia_oferta !== false, excluir_gastos_generales: !!excluir_gastos_generales }
         if (id) {
           await dbWrite('PATCH', 'obras', payload, `id=eq.${id}`)
           setObras(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o))
         } else {
-          const saved = await dbWrite('POST', 'obras', payload, null, true)
+          // La etapa inicial depende de si requiere garantía de OFERTA específicamente (licitación
+          // en curso), no de que se la haya creado desde este panel ni de si requiere pólizas en
+          // general (setiembre 2026 — ver ModalObraCompartido.jsx). Si arranca en "oferta" se agrega
+          // igual a la lista local: el panel de Obras la muestra con aviso (ver PanelObras/esOferta)
+          // aunque todavía no pueda recibir gastos (ver obrasOperativas).
+          const etapa = etapaInicial(payload.requiere_poliza, payload.requiere_garantia_oferta)
+          const payloadCreacion = { ...payload, etapa, estado_licitacion: 'en_curso' }
+          const saved = await dbWrite('POST', 'obras', payloadCreacion, null, true)
           if (saved?.id) {
-            setObras(prev => [...prev, { ...payload, id: saved.id, total_gastado: 0, cant_gastos: 0 }])
-            // Auto-asignar al usuario que la crea (solo operadores — admins ven todo)
+            // Auto-asignar al usuario que la crea (solo operadores — admins ven todo), sea la etapa
+            // que sea: la asignación tiene que estar lista para cuando la obra pase a ejecución.
             if (!esAdmin && usuario?.id) await dbWrite('POST', 'obra_usuarios', { obra_id: saved.id, usuario_id: usuario.id })
+            setObras(prev => [...prev, { ...payloadCreacion, id: saved.id, total_gastado: 0, cant_gastos: 0 }])
+            if (etapa === 'oferta') {
+              window._toast?.('Obra creada — como requiere garantía de oferta, todavía no puede recibir gastos hasta que se adjudique desde Seguros', 'ok')
+            }
           }
         }
         cerrarModal(); recargarObras(true)
       }} />}
 
-      {modal === 'gasto' && obras.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obras} proveedores={proveedores} gastos={gastos} obraIdDefecto={filtroObraId} onClose={cerrarModal}
+      {modal === 'gasto' && obrasOperativas.length > 0 && <ModalGasto itemEdit={itemEditando} obras={obrasOperativas} proveedores={proveedores} gastos={gastos} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           if (!d.monto || d.monto <= 0) { window._toast?.('Ingresá un monto válido'); throw new Error('Ingresá un monto válido') }
@@ -631,7 +650,7 @@ export default function GestorObras({ usuario }) {
         }}
       />}
 
-      {modal === 'foto' && obras.length > 0 && <ModalFoto obras={obras} proveedores={proveedores} gastos={gastos} obraIdDefecto={filtroObraId} onClose={cerrarModal}
+      {modal === 'foto' && obrasOperativas.length > 0 && <ModalFoto obras={obrasOperativas} proveedores={proveedores} gastos={gastos} obraIdDefecto={filtroObraId} onClose={cerrarModal}
         onNuevoProveedor={(nombre, cb, cuitIA, sitIA) => { setProveedorPendiente({ nombre, cuit: cuitIA || '', situacion_impositiva: sitIA || null }); setOnProveedorCreado(() => cb) }}
         onGuardar={async d => {
           // distribucion no es columna de gastos: se separa y se guarda en comprobante_obras
@@ -1144,10 +1163,15 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, o
             const cantGastos = cantPorObra[o.id] ?? o.cant_gastos ?? 0
             const pct = o.presupuesto > 0 ? Math.min(100, Math.round((totalGastado / o.presupuesto) * 100)) : 0
             const sobrep = o.presupuesto > 0 && totalGastado > o.presupuesto
+            // Obra "en oferta" (requiere garantía, todavía no adjudicada) — se muestra igual acá para
+            // no perderla de vista, pero todavía no puede tener gastos cargados (ver obrasOperativas
+            // más arriba: se excluye del desplegable de gastos y de los reportes financieros hasta
+            // que se la marque "adjudicada" desde Seguros). Setiembre 2026, pedido del usuario.
+            const esOferta = o.etapa === 'oferta'
             return (
-              <div key={o.id} className="card-hover" style={{ ...cardSt, padding: 0, overflow: 'hidden' }} onClick={() => onVerGastos(o.id)}>
+              <div key={o.id} className="card-hover" style={{ ...cardSt, padding: 0, overflow: 'hidden' }} onClick={() => !esOferta && onVerGastos(o.id)}>
                 <div style={{ display: 'flex' }}>
-                  <div style={{ width: 3, background: o.estado === 'activa' ? C.purple : C.border, flexShrink: 0 }} />
+                  <div style={{ width: 3, background: esOferta ? '#E8A33D' : (o.estado === 'activa' ? C.purple : C.border), flexShrink: 0 }} />
                   <div style={{ flex: 1, padding: '16px 16px 16px 14px', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 4 }}>
                       {onVerDetalle && <button style={btnIconSt} onClick={e => { e.stopPropagation(); onVerDetalle(o) }} title="Ver cierre de obra">📊</button>}
@@ -1155,34 +1179,42 @@ function PanelObras({ obras, loading, esAdmin, onNueva, onVerGastos, onEditar, o
                     </div>
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2, paddingRight: 64 }}>{o.nombre}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 14 }}>{o.cliente || 'Sin cliente'}</div>
-                    <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(totalGastado)}</div>
-                    <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: provis > 0 ? 4 : ((esAdmin && creditoFiscalPorObra[o.id] > 0) ? 4 : (o.presupuesto > 0 ? 10 : 12)) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
-                    {provis > 0 && (
-                      <div style={{ fontSize: 11, color: C.orange, fontWeight: 600, background: C.orangeDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>📋 Incluye $ {fmt(provis)} en remitos provisorios</div>
-                    )}
-                    {esAdmin && creditoFiscalPorObra[o.id] > 0 && (
-                      <div style={{ fontSize: 11, color: C.green, fontWeight: 600, background: C.greenDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: prorrateoGeneral > 0 ? 4 : (o.presupuesto > 0 ? 10 : 12) }}>IVA crédito fiscal: $ {fmt(creditoFiscalPorObra[o.id])}</div>
-                    )}
-                    {prorrateoGeneral > 0 && (
-                      <div style={{ fontSize: 11, color: '#2D5FA8', background: '#EEF4FF', borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>
-                        🏛️ +$ {fmt(prorrateoGeneral)} empresa → <strong>$ {fmt(totalConGeneral)}</strong> total
+                    {esOferta ? (
+                      <div style={{ fontSize: 11, color: '#8A5200', background: '#FFF8ED', borderRadius: 8, padding: '8px 10px', fontWeight: 600, marginBottom: 4 }}>
+                        📋 En oferta — falta cargar la garantía y/o adjudicarla desde Seguros. Todavía no se le pueden cargar gastos.
                       </div>
-                    )}
-                    {o.excluir_gastos_generales && (
-                      <div style={{ fontSize: 11, color: C.textMuted, background: '#F3F3F3', borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }} title="No aporta peso ni recibe parte de combustible/servicios/legal/oficina">
-                        🚫 Sin gastos generales
-                      </div>
-                    )}
-                    {o.presupuesto > 0 && (
-                      <div style={{ marginBottom: 12 }}>
-                        <div style={{ height: 3, background: C.borderFaint, borderRadius: 99, overflow: 'hidden', marginBottom: 4 }}>
-                          <div style={{ height: '100%', borderRadius: 99, width: `${pct}%`, background: sobrep ? '#D0021B' : C.purple, transition: 'width 0.5s' }} />
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: 10, color: C.textFaint }}>$ {fmt(o.presupuesto)} presupuestado</span>
-                          <span style={{ fontSize: 10, color: sobrep ? '#D0021B' : C.textFaint, fontWeight: 600 }}>{pct}%</span>
-                        </div>
-                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Inter', sans-serif", fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>$ {fmt(totalGastado)}</div>
+                        <div style={{ fontSize: 11, color: C.textFaint, marginTop: 3, marginBottom: provis > 0 ? 4 : ((esAdmin && creditoFiscalPorObra[o.id] > 0) ? 4 : (o.presupuesto > 0 ? 10 : 12)) }}>{cantGastos} gasto{cantGastos !== 1 ? 's' : ''}</div>
+                        {provis > 0 && (
+                          <div style={{ fontSize: 11, color: C.orange, fontWeight: 600, background: C.orangeDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>📋 Incluye $ {fmt(provis)} en remitos provisorios</div>
+                        )}
+                        {esAdmin && creditoFiscalPorObra[o.id] > 0 && (
+                          <div style={{ fontSize: 11, color: C.green, fontWeight: 600, background: C.greenDim, borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: prorrateoGeneral > 0 ? 4 : (o.presupuesto > 0 ? 10 : 12) }}>IVA crédito fiscal: $ {fmt(creditoFiscalPorObra[o.id])}</div>
+                        )}
+                        {prorrateoGeneral > 0 && (
+                          <div style={{ fontSize: 11, color: '#2D5FA8', background: '#EEF4FF', borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }}>
+                            🏛️ +$ {fmt(prorrateoGeneral)} empresa → <strong>$ {fmt(totalConGeneral)}</strong> total
+                          </div>
+                        )}
+                        {o.excluir_gastos_generales && (
+                          <div style={{ fontSize: 11, color: C.textMuted, background: '#F3F3F3', borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: o.presupuesto > 0 ? 10 : 12 }} title="No aporta peso ni recibe parte de combustible/servicios/legal/oficina">
+                            🚫 Sin gastos generales
+                          </div>
+                        )}
+                        {o.presupuesto > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ height: 3, background: C.borderFaint, borderRadius: 99, overflow: 'hidden', marginBottom: 4 }}>
+                              <div style={{ height: '100%', borderRadius: 99, width: `${pct}%`, background: sobrep ? '#D0021B' : C.purple, transition: 'width 0.5s' }} />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ fontSize: 10, color: C.textFaint }}>$ {fmt(o.presupuesto)} presupuestado</span>
+                              <span style={{ fontSize: 10, color: sobrep ? '#D0021B' : C.textFaint, fontWeight: 600 }}>{pct}%</span>
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                     <EstadoBadge estado={o.estado} />
                   </div>
@@ -2584,33 +2616,6 @@ function ModalAltaProveedor({ datosIniciales, onClose, onGuardar, zIndex }) {
           <span style={{ fontWeight: 600, color: C.text }}>{getTipoLabel(sit.comprobante)}</span>
           <span style={{ fontSize: 11, color: sit.iva ? C.green : C.textMuted, background: sit.iva ? C.greenDim : '#F3F3F3', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>{sit.iva ? 'Discrimina IVA' : 'Sin IVA'}</span>
         </div>
-      </div>
-    </Modal>
-  )
-}
-
-function ModalObra({ itemEdit, clientes, onClose, onGuardar }) {
-  const [form, setForm] = useState(itemEdit || { nombre: '', cliente_id: '', estado: 'activa', presupuesto: '', requiere_poliza: true, excluir_gastos_generales: false })
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  return (
-    <Modal title={itemEdit ? 'Editar Obra' : 'Nueva Obra'} onClose={onClose} onGuardar={() => onGuardar(form)}>
-      <Campo label="Nombre de la obra"><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} placeholder="Ej: Edificio Tucumán 1420" /></Campo>
-      <div style={{ marginTop: 10 }}><Campo label="Cliente"><select style={inputSt} value={form.cliente_id || ''} onChange={e => set('cliente_id', e.target.value)}><option value="">Sin cliente</option>{clientes?.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></Campo></div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
-        <Campo label="Presupuesto"><input style={inputSt} type="number" value={form.presupuesto} onChange={e => set('presupuesto', e.target.value)} placeholder="0" /></Campo>
-        <Campo label="Estado"><select style={inputSt} value={form.estado} onChange={e => set('estado', e.target.value)}>{['activa','pausada','finalizada'].map(v => <option key={v} value={v}>{v.charAt(0).toUpperCase()+v.slice(1)}</option>)}</select></Campo>
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textMuted, cursor: 'pointer' }}>
-          <input type="checkbox" checked={form.requiere_poliza !== false} onChange={e => set('requiere_poliza', e.target.checked)} style={{ accentColor: C.purple }} />
-          Requiere garantías / pólizas de seguro (desmarcar en obras menores o de clientes privados que no las piden — se ve así en la sección Seguros)
-        </label>
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textMuted, cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!form.excluir_gastos_generales} onChange={e => set('excluir_gastos_generales', e.target.checked)} style={{ accentColor: C.purple }} />
-          No participa de los gastos generales de la empresa (queda afuera del prorrateo de combustible/servicios/legal/oficina — ni aporta peso ni recibe parte)
-        </label>
       </div>
     </Modal>
   )

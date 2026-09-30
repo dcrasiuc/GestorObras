@@ -4,6 +4,7 @@ import { C, MEDIOS_PAGO } from './constants'
 import { fmt, hoy, dbWrite, fmtFechaAR } from './utils'
 import { toast } from './toast'
 import { exportarCuentaCorrienteSeguros } from './exportSegurosExcel'
+import { ModalObra, etapaInicial } from './ModalObraCompartido'
 
 // ── Constantes propias de Seguros ───────────────────────────────
 // Algunas pólizas (ej. RC de obras EBY) vienen en dólares en vez de pesos — ver "Moneda y tipo de
@@ -535,6 +536,14 @@ function useBancosSeguros() {
   return bancos
 }
 
+// Lista de clientes para el selector de "Nueva obra" (setiembre 2026 — antes Seguros no pedía
+// cliente vinculado al crear una obra, pedía "organismo" en texto libre; ver ModalObraCompartido.jsx).
+function useClientesSeguros() {
+  const [clientes, setClientes] = useState([])
+  useEffect(() => { supabase.from('clientes').select('id, nombre').order('nombre').then(({ data }) => { if (data) setClientes(data) }) }, [])
+  return clientes
+}
+
 // ── Configuración editable de Seguros (tabla configuracion_app, clave/valor genérica) ──
 // Por ahora solo guarda "dias_aviso_vencimiento_seguros" — el umbral con el que se decide si una
 // póliza/renovación está "por vencer" (tanto en las alertas como en la cuenta corriente). Antes era
@@ -612,27 +621,6 @@ function calcularAlertas(polizas, renovaciones = [], diasAviso = DIAS_AVISO_VENC
     }
     return motivos.length ? { poliza: p, motivos, accion } : null
   }).filter(Boolean)
-}
-
-// ── Modal: nueva obra (licitación/oferta) rápida ──────────────────
-function ModalNuevaObraLicitacion({ inicial, onClose, onGuardar }) {
-  const [form, setForm] = useState({ nombre: inicial?.nombre || '', organismo: inicial?.organismo || 'IPRODA', monto_contrato: '' })
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  return (
-    <Modal title="Nueva obra (en oferta)" onClose={onClose} onGuardar={() => onGuardar(form)}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Campo label="Nombre según pliego"><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} placeholder="Ej. Repavimentación Ruta 12" /></Campo>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <Campo label="Organismo">
-            <select style={inputSt} value={form.organismo} onChange={e => set('organismo', e.target.value)}>
-              {ORGANISMOS.map(o => <option key={o} value={o}>{ORGANISMO_LABELS[o]}</option>)}
-            </select>
-          </Campo>
-          <Campo label="Monto contrato ($)"><input type="number" style={inputSt} value={form.monto_contrato} onChange={e => set('monto_contrato', e.target.value)} placeholder="Opcional" /></Campo>
-        </div>
-      </div>
-    </Modal>
-  )
 }
 
 // ── Modal: cargar / editar póliza (foto/PDF + IA "experta") ──────────────────
@@ -1384,8 +1372,11 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
   const [expandido, setExpandido] = useState(false)
   const polizasPendientes = polizasDeLaObra.filter(p => p.estado_admin !== 'dada_de_baja')
   const finalizadaConPendientes = obra.estado === 'finalizada' && polizasPendientes.length > 0
+  // Adjudicada (ejecución) pero sin ninguna póliza cargada todavía — no debería haber llegado a
+  // ejecución sin presentar antes la garantía de oferta (setiembre 2026, detectado por el usuario).
+  const sinGarantiaAdjudicada = obra.etapa === 'ejecucion' && obra.requiere_poliza !== false && polizasDeLaObra.length === 0
   return (
-    <div style={{ ...cardSt, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, ...(finalizadaConPendientes ? { border: '1px solid #FFB0B0' } : {}) }}>
+    <div style={{ ...cardSt, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, ...((finalizadaConPendientes || sinGarantiaAdjudicada) ? { border: '1px solid #FFB0B0' } : {}) }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ cursor: 'pointer' }} onClick={() => setExpandido(v => !v)}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{expandido ? '▾' : '▸'} {obra.nombre}</div>
@@ -1412,6 +1403,9 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
       )}
       {finalizadaConPendientes && (
         <div style={{ fontSize: 11, color: '#C62828', background: '#FFF0F0', padding: '6px 9px', borderRadius: 8, fontWeight: 600 }}>🏁 Esta obra está marcada Finalizada en el panel de Obras pero tiene {polizasPendientes.length} póliza(s) sin dar de baja — revisar si corresponde presentar/confirmar la baja con la aseguradora.</div>
+      )}
+      {sinGarantiaAdjudicada && (
+        <div style={{ fontSize: 11, color: '#C62828', background: '#FFF0F0', padding: '6px 9px', borderRadius: 8, fontWeight: 600 }}>⚠️ Esta obra está adjudicada (en ejecución) pero todavía no tiene ninguna póliza cargada — revisar si se presentó la garantía de oferta y falta cargarla en el sistema, o si en realidad todavía no se presentó.</div>
       )}
       {expandido && (
         polizasDeLaObra.length === 0
@@ -1642,6 +1636,7 @@ export default function Seguros() {
   const { pagos: pagosPoliza, setPagos: setPagosPoliza, loading: loadingPagos } = usePagosPoliza()
   const { renovaciones: renovacionesPoliza, setRenovaciones: setRenovacionesPoliza, loading: loadingRenovaciones } = useRenovacionesPoliza()
   const bancos = useBancosSeguros()
+  const clientes = useClientesSeguros()
   const { diasAviso, guardarDiasAviso } = useConfiguracionSeguros()
 
   const [vista, setVista] = useState('obras') // 'obras' | 'cuentaCorriente'
@@ -1661,6 +1656,10 @@ export default function Seguros() {
   const [polizaParaFactura, setPolizaParaFactura] = useState(null)
 
   const alertas = calcularAlertas(polizas, renovacionesPoliza, diasAviso)
+  // Obras adjudicadas (etapa 'ejecucion') que requieren póliza pero todavía tienen 0 cargadas — no
+  // debería poder llegar a ejecución sin haber presentado antes la garantía de oferta (setiembre 2026,
+  // detectado por el usuario). Es solo alerta visible, no bloquea nada.
+  const obrasSinGarantiaAdjudicada = obras.filter(o => o.etapa === 'ejecucion' && o.requiere_poliza !== false && !polizas.some(p => p.obra_id === o.id))
   const loading = loadingObras || loadingPolizas || loadingPagos || loadingRenovaciones
 
   // "Vigente" = todavía no llegó a Recepción Definitiva (o está en oferta). Por defecto se ocultan
@@ -1682,11 +1681,20 @@ export default function Seguros() {
       return filtroPoliza === 'con' ? tienePoliza : !tienePoliza
     })
 
-  const crearObra = async ({ nombre, organismo, monto_contrato }) => {
+  // `organismo` se mantiene como parámetro solo para el alta rápida desde la IA leyendo una póliza
+  // (`ModalPoliza` → "+ Crear obra", que solo tiene el texto que la IA extrajo, no un cliente_id) —
+  // el alta manual ("+ Obra en oferta", vía ModalObraCompartido) ya pide cliente vinculado en vez de
+  // ese texto libre (setiembre 2026, ver nombreOrganismoObra()/CLAUDE.md). La etapa inicial depende
+  // de si requiere garantía de OFERTA específicamente, no de que se haya creado desde este panel
+  // ni de si requiere pólizas en general (`etapaInicial` — una obra puede requerir pólizas, p.ej.
+  // por adjudicación directa, sin requerir garantía de oferta, y arrancar directo en ejecución).
+  const crearObra = async ({ nombre, cliente_id, organismo, monto_contrato, presupuesto, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales }) => {
     if (!nombre?.trim()) { toast('El nombre es obligatorio'); return null }
-    const payload = { nombre: nombre.trim(), organismo: organismo || null, monto_contrato: parseFloat(monto_contrato) || null, etapa: 'oferta', estado_licitacion: 'en_curso' }
+    const requierePoliza = requiere_poliza !== false
+    const requiereGarantiaOferta = requiere_garantia_oferta !== false
+    const payload = { nombre: nombre.trim(), cliente_id: cliente_id || null, organismo: organismo || null, monto_contrato: parseFloat(monto_contrato) || null, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requierePoliza, requiere_garantia_oferta: requiereGarantiaOferta, excluir_gastos_generales: !!excluir_gastos_generales, etapa: etapaInicial(requierePoliza, requiereGarantiaOferta), estado_licitacion: 'en_curso' }
     const nueva = await dbWrite('POST', 'obras', payload, null, true)
-    if (nueva?.id) { setObras(prev => [nueva, ...prev]); toast('Obra creada', 'ok') }
+    if (nueva?.id) { setObras(prev => [{ ...payload, ...nueva }, ...prev]); toast('Obra creada', 'ok') }
     return nueva
   }
 
@@ -1904,10 +1912,10 @@ export default function Seguros() {
         </div>
       </div>
 
-      {alertas.length > 0 && (
+      {(alertas.length > 0 || obrasSinGarantiaAdjudicada.length > 0) && (
         <div style={{ background: '#FFF0F0', border: '1px solid #FFDCDC', borderRadius: 12, padding: 14, marginBottom: 18 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#C62828', marginBottom: 6 }}>⚠️ {alertas.length} póliza(s) necesitan atención</div>
-          <div style={{ fontSize: 12, color: '#8A3030' }}>Porque la obra ya cambió de estado o el vencimiento ya pasó o está cerca. El detalle y la acción a tomar están en cada póliza más abajo.</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#C62828', marginBottom: 6 }}>⚠️ {alertas.length + obrasSinGarantiaAdjudicada.length} situación(es) necesitan atención</div>
+          <div style={{ fontSize: 12, color: '#8A3030' }}>Porque la obra ya cambió de estado, el vencimiento ya pasó o está cerca{obrasSinGarantiaAdjudicada.length > 0 ? `, o hay ${obrasSinGarantiaAdjudicada.length} obra(s) en ejecución sin ninguna póliza cargada todavía` : ''}. El detalle y la acción a tomar están en cada obra/póliza más abajo.</div>
         </div>
       )}
 
@@ -1964,7 +1972,7 @@ export default function Seguros() {
           onRegistrarPago={polizasGrupo => { setPolizasParaPago(polizasGrupo); setModal('pago') }} />
       )}
 
-      {modal === 'nuevaObra' && <ModalNuevaObraLicitacion onClose={() => setModal(null)} onGuardar={async d => { const n = await crearObra(d); if (n) setModal(null) }} />}
+      {modal === 'nuevaObra' && <ModalObra clientes={clientes} onClose={() => setModal(null)} onGuardar={async d => { const n = await crearObra(d); if (n) setModal(null) }} />}
       {modal === 'poliza' && <ModalPoliza obras={obras} obraIdDefecto={obraIdParaPoliza} polizaExistente={polizaParaEditar} onClose={() => { setModal(null); setPolizaParaEditar(null) }} onGuardar={guardarPoliza} onCrearObra={crearObra} />}
       {modal === 'documento' && polizaParaDocumento && <ModalDocumentoPoliza poliza={polizaParaDocumento} onClose={() => { setModal(null); setPolizaParaDocumento(null) }} onGuardar={guardarDocumento} />}
       {modal === 'factura' && polizaParaFactura && <ModalFacturaPoliza poliza={polizaParaFactura} onClose={() => { setModal(null); setPolizaParaFactura(null) }} onGuardar={guardarFactura} />}
