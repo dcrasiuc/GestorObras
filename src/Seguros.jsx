@@ -211,11 +211,23 @@ function VistaPreviaArchivo({ file, url }) {
   const src = objUrl || url
   if (!src) return null
   const esPdf = file ? file.type === 'application/pdf' : /\.pdf(\?|$)/i.test(src)
+  // El visor nativo de PDF de Chrome (PDF.js) por defecto muestra su propia barra de herramientas y
+  // un panel lateral de miniaturas — ocupa buena parte del ancho y deja la página real chica e
+  // ilegible dentro de un recuadro de este tamaño. Los parámetros de fragmento #toolbar=0&navpanes=0
+  // se los pasamos al visor para que arranque sin ese panel (el usuario puede reabrirlo con el botón
+  // del visor si quiere, pero por defecto queda oculto) y &view=FitH para que la página ocupe todo el
+  // ancho disponible en vez de aparecer chica centrada (pedido del usuario, setiembre 2026).
+  const srcPdf = esPdf ? `${src}#toolbar=0&navpanes=0&view=FitH` : src
   return (
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', background: '#FAFAFA' }}>
       {esPdf
-        ? <iframe src={src} title="Vista previa del documento" style={{ width: '100%', height: 380, border: 'none', display: 'block' }} />
-        : <img src={src} alt="Vista previa del documento" style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />}
+        ? <iframe src={srcPdf} title="Vista previa del documento" style={{ width: '100%', height: 520, border: 'none', display: 'block' }} />
+        : <img src={src} alt="Vista previa del documento" style={{ width: '100%', maxHeight: 520, objectFit: 'contain', display: 'block' }} />}
+      <div style={{ padding: '6px 10px', borderTop: `1px solid ${C.border}`, background: '#fff', textAlign: 'right' }}>
+        <a href={src} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.purple, fontWeight: 600, textDecoration: 'none' }}>
+          ↗ Abrir en pestaña nueva
+        </a>
+      </div>
     </div>
   )
 }
