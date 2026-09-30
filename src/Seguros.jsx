@@ -32,6 +32,13 @@ export const TIPOS_COBERTURA = [
   { value: 'otro',                   label: 'Otro' },
 ]
 const COBERTURA_LABELS = Object.fromEntries(TIPOS_COBERTURA.map(t => [t.value, t.label]))
+// Ícono corto por tipo de cobertura — usado en los badges de un vistazo en la tarjeta de la obra
+// (setiembre 2026, pedido del usuario: poder ver qué seguros tiene cargados una obra sin tener que
+// expandirla y entrar póliza por póliza).
+const COBERTURA_ICONS = {
+  mantenimiento_oferta: '📋', ejecucion_contrato: '✅', anticipo_financiero: '💰',
+  fondo_reparo: '🔧', responsabilidad_civil: '🛡️', otro: '📎',
+}
 
 // Vigencia: "única vez" = válida hasta un hito de obra (no se renueva por plazo);
 // "renovable" = vigencia por período fijo (ej. RC anual) que hay que renovar.
@@ -187,6 +194,30 @@ function EmptyState({ texto }) {
 }
 function Badge({ bg, color, children }) {
   return <span style={{ background: bg, color, padding: '2px 9px', borderRadius: 99, fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</span>
+}
+// Vista previa del archivo (foto o PDF) que se acaba de subir/analizar, para poder comparar contra
+// los datos que completó la IA sin salir de la app (setiembre 2026, pedido del usuario — antes solo
+// se veía un cartelito "✓ Archivo subido", sin forma de revisar el documento real ahí mismo).
+// Prioriza el archivo local recién elegido en esta sesión (más rápido, no depende de red); si no hay
+// uno (por ejemplo, editando algo ya guardado) cae a la URL ya almacenada.
+function VistaPreviaArchivo({ file, url }) {
+  const [objUrl, setObjUrl] = useState(null)
+  useEffect(() => {
+    if (!file) { setObjUrl(null); return }
+    const u = URL.createObjectURL(file)
+    setObjUrl(u)
+    return () => URL.revokeObjectURL(u)
+  }, [file])
+  const src = objUrl || url
+  if (!src) return null
+  const esPdf = file ? file.type === 'application/pdf' : /\.pdf(\?|$)/i.test(src)
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', background: '#FAFAFA' }}>
+      {esPdf
+        ? <iframe src={src} title="Vista previa del documento" style={{ width: '100%', height: 380, border: 'none', display: 'block' }} />
+        : <img src={src} alt="Vista previa del documento" style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />}
+    </div>
+  )
 }
 function EtapaBadge({ etapa }) {
   return etapa === 'oferta' ? <Badge bg="#FFF8ED" color="#8A5200">📋 En oferta</Badge> : <Badge bg={C.greenDim} color={C.green}>🏗️ En ejecución</Badge>
@@ -627,6 +658,9 @@ function calcularAlertas(polizas, renovaciones = [], diasAviso = DIAS_AVISO_VENC
 function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar, onCrearObra }) {
   const esEdicion = !!polizaExistente
   const [step, setStep] = useState(esEdicion ? 'review' : 'upload')
+  // Archivo local recién elegido (no la URL ya subida) — sirve para la vista previa del paso de
+  // revisión (VistaPreviaArchivo), que prioriza mostrar el archivo tal cual lo eligió el usuario.
+  const [archivoLocal, setArchivoLocal] = useState(null)
   const [form, setForm] = useState(() => esEdicion ? {
     id: polizaExistente.id,
     obra_id: polizaExistente.obra_id || '',
@@ -698,6 +732,7 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
 
   const procesarArchivo = async (file) => {
     setStep('loading')
+    setArchivoLocal(file)
     let archivoUrl = ''
     try {
       let base64, mimeType
@@ -818,6 +853,7 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
       {step === 'review' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {form.archivo_url && <div style={{ fontSize: 11, color: C.green, background: C.greenDim, padding: '6px 10px', borderRadius: 8 }}>✓ Archivo subido. Revisá y completá los datos detectados.</div>}
+          <VistaPreviaArchivo file={archivoLocal} url={form.archivo_url} />
           {iaDetectoEndoso && <div style={{ fontSize: 11, color: C.purple, background: C.purpleDim, padding: '6px 10px', borderRadius: 8 }}>📎 La IA detectó que este documento es un endoso — subilo también como "Endoso" desde "+ Documento" en la póliza una vez guardada.</div>}
           {sugerenciaObra && candidatasObraIA.length > 0 && (
             <div style={{ fontSize: 12, background: '#FFF8ED', color: '#8A5200', padding: '10px 12px', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1042,6 +1078,7 @@ function ModalFacturaPoliza({ poliza, onClose, onGuardar }) {
           {analizando && <div style={{ fontSize: 11, color: C.purple, marginTop: 4 }}>🔎 Leyendo la factura con IA...</div>}
           {analizado && !analizando && <div style={{ fontSize: 11, color: C.green, marginTop: 4 }}>✓ Datos autocompletados por IA — revisalos antes de guardar.</div>}
         </Campo>
+        <VistaPreviaArchivo file={file} url={null} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <Campo label="Fecha de factura"><input type="date" style={inputSt} value={fecha} onChange={e => setFecha(e.target.value)} /></Campo>
           <Campo label="Monto de la factura ($)"><input type="number" style={inputSt} value={monto} onChange={e => setMonto(e.target.value)} /></Campo>
@@ -1169,6 +1206,7 @@ function ModalPagoPoliza({ polizas, polizaIdDefecto, bancos, renovaciones = [], 
           {analizado && !analizando && <div style={{ fontSize: 11, color: C.green, marginTop: 4 }}>✓ Fecha y monto autocompletados por IA — revisalos antes de guardar.</div>}
           {difiereDeLaPrima && <div style={{ fontSize: 11, color: '#8A5200', marginTop: 4 }}>⚠️ El monto leído ({fmt(montoNum)}) difiere de la prima esperada de esta póliza ({fmt(primaEsperada)}) — puede ser normal (pago parcial, reajuste) pero conviene verificarlo.</div>}
         </Campo>
+        <VistaPreviaArchivo file={file} url={null} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <Campo label="Fecha de pago"><input type="date" style={inputSt} value={form.fecha_pago} onChange={e => set('fecha_pago', e.target.value)} /></Campo>
           <Campo label="Monto ($)"><input type="number" style={inputSt} value={form.monto} onChange={e => set('monto', e.target.value)} /></Campo>
@@ -1371,6 +1409,10 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
 function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onEditarPoliza, onEliminarPoliza }) {
   const [expandido, setExpandido] = useState(false)
   const polizasPendientes = polizasDeLaObra.filter(p => p.estado_admin !== 'dada_de_baja')
+  // Tipos de cobertura que tiene cargados esta obra ahora mismo (sin contar pólizas dadas de baja) —
+  // para verlos de un vistazo en la tarjeta colapsada, sin tener que expandir y entrar póliza por
+  // póliza (setiembre 2026, pedido del usuario).
+  const tiposPresentes = [...new Set(polizasPendientes.map(p => p.tipo_cobertura).filter(Boolean))]
   const finalizadaConPendientes = obra.estado === 'finalizada' && polizasPendientes.length > 0
   // Adjudicada (ejecución) pero sin ninguna póliza cargada todavía — no debería haber llegado a
   // ejecución sin presentar antes la garantía de oferta (setiembre 2026, detectado por el usuario).
@@ -1390,6 +1432,13 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
           <EstadoLicitacionBadge estado={obra.estado_licitacion} />
         </div>
       </div>
+      {tiposPresentes.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {tiposPresentes.map(t => (
+            <Badge key={t} bg={C.purpleDim} color={C.purple}>{COBERTURA_ICONS[t] || '📎'} {COBERTURA_LABELS[t] || t}</Badge>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <BtnSecondary onClick={() => onNuevaPoliza(obra.id)}>+ Póliza</BtnSecondary>
         {obra.etapa === 'oferta' && <BtnSecondary onClick={() => onCambiarEtapa(obra, 'ejecucion')}>Marcar adjudicada</BtnSecondary>}
