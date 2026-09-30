@@ -86,15 +86,27 @@ export const ESTADOS_ADMIN_POLIZA = [
 // renovable anual común, no un caución atado a un hito de obra.
 const APLICA_AUTORENOVACION_PERIODOS = ['ejecucion_contrato', 'anticipo_financiero', 'fondo_reparo']
 
-// Por tipo de cobertura, valores por defecto de vigencia / si requiere recepción de obra para la
-// baja. Son reglas del negocio (no dependen del documento) — la IA puede sugerir otra cosa si el
-// texto de la póliza lo indica explícitamente, y el usuario siempre puede corregir a mano.
+// Por tipo de cobertura, reglas FIJAS de negocio de vigencia / si requiere recepción de obra para
+// la baja (confirmado con el usuario, setiembre 2026 — "eso hay que hacerlo al pie de la letra,
+// salvo que te diga lo contrario"): NO dependen de lo que diga el documento ni de lo que infiera
+// la IA al leerlo — son ciertas siempre para ese tipo de cobertura. Por eso procesarArchivo() las
+// aplica DESPUÉS de la IA y las hace ganar por sobre lo que la IA haya leído (ver más abajo); la
+// única forma de cambiarlas para una póliza puntual es que el usuario las edite a mano en el paso
+// de revisión. Para 'otro' (sin regla fija) sí se respeta lo que haya leído la IA, a falta de algo mejor.
+//   - Mantenimiento de Oferta: se da de baja al adjudicarse la obra (o vencer la oferta) — no hay
+//     "recepción de obra" que la corte.
+//   - Ejecución de Contrato y Fondo de Reparo: se dan de baja recién con la Recepción de obra
+//     (provisoria/definitiva) — clásico caución "hasta hito de obra".
+//   - Anticipo Financiero: se AMORTIZA progresivamente contra los certificados de avance, pero en
+//     la práctica el organismo/aseguradora no tramita la baja definitiva hasta la recepción/final
+//     de obra — igual que Ejecución de Contrato (corregido setiembre 2026, antes decía false).
+//   - Responsabilidad Civil: renovable por calendario (vigencia anual típica), no atada a ningún
+//     hito de obra — se da de baja por vencimiento de plazo, no por recepción.
 function inferirVigenciaYFinalObra(tipo_cobertura) {
   switch (tipo_cobertura) {
     case 'mantenimiento_oferta':  return { tipo_vigencia: 'unica_vez', requiere_final_obra: false }
     case 'ejecucion_contrato':    return { tipo_vigencia: 'unica_vez', requiere_final_obra: true }
-    // Anticipo Financiero se amortiza contra los certificados de obra, no espera a la recepción.
-    case 'anticipo_financiero':   return { tipo_vigencia: 'unica_vez', requiere_final_obra: false }
+    case 'anticipo_financiero':   return { tipo_vigencia: 'unica_vez', requiere_final_obra: true }
     case 'fondo_reparo':          return { tipo_vigencia: 'unica_vez', requiere_final_obra: true }
     case 'responsabilidad_civil': return { tipo_vigencia: 'renovable', requiere_final_obra: false }
     default:                      return { tipo_vigencia: null, requiere_final_obra: null }
@@ -778,9 +790,12 @@ function ModalPoliza({ obras, obraIdDefecto, polizaExistente, onClose, onGuardar
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
         const tipoValido = TIPOS_COBERTURA.some(t => t.value === parsed.tipo_cobertura) ? parsed.tipo_cobertura : 'otro'
+        // La regla fija por tipo de cobertura GANA por sobre lo que la IA haya leído del documento
+        // (setiembre 2026, a pedido del usuario) — solo se respeta la lectura de la IA cuando no
+        // hay regla fija para ese tipo (tipo_cobertura 'otro').
         const defaults = inferirVigenciaYFinalObra(tipoValido)
-        const tipoVigValida = TIPOS_VIGENCIA.some(t => t.value === parsed.tipo_vigencia) ? parsed.tipo_vigencia : defaults.tipo_vigencia
-        const requiereFinalObra = typeof parsed.requiere_final_obra === 'boolean' ? parsed.requiere_final_obra : defaults.requiere_final_obra
+        const tipoVigValida = defaults.tipo_vigencia != null ? defaults.tipo_vigencia : (TIPOS_VIGENCIA.some(t => t.value === parsed.tipo_vigencia) ? parsed.tipo_vigencia : null)
+        const requiereFinalObra = defaults.requiere_final_obra != null ? defaults.requiere_final_obra : (typeof parsed.requiere_final_obra === 'boolean' ? parsed.requiere_final_obra : null)
         const clausulaValida = CLAUSULAS_REPETICION.some(t => t.value === parsed.clausula_repeticion) ? parsed.clausula_repeticion : 'no_especifica'
         // Matchear obra: primero un match fuerte (substring exacto) que se auto-selecciona. Si no
         // hay match fuerte, buscamos candidatas posibles (palabra en común / mismo organismo) para
