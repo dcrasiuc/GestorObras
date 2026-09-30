@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 import { C, MEDIOS_PAGO } from './constants'
-import { fmt, hoy, dbWrite, fmtFechaAR } from './utils'
+import { fmt, fmtDec, hoy, dbWrite, fmtFechaAR } from './utils'
 import { toast } from './toast'
 import { exportarCuentaCorrienteSeguros } from './exportSegurosExcel'
 import { ModalObra, etapaInicial } from './ModalObraCompartido'
@@ -1384,7 +1384,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
               <span>💰 Asegurado: {poliza.moneda === 'USD' ? `U$S ${fmt(poliza.monto_asegurado)}${poliza.tipo_cambio > 0 ? ` (≈ ${fmt(enPesos(poliza.monto_asegurado, poliza.moneda, poliza.tipo_cambio))})` : ''}` : fmt(poliza.monto_asegurado)}</span>
             ) : null}
             {prima > 0 && (
-              <span>🧾 Prima{totalRenovaciones > 0 ? ' total (con renovaciones)' : ''}: {poliza.moneda === 'USD' ? `U$S ${fmt((parseFloat(poliza.prima) || 0) + renovacionesVigentes.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0))} (≈ ${fmt(prima)})` : fmt(prima)} · Pagado: {fmt(totalPagado)} · Saldo: {fmt(saldo)}</span>
+              <span>🧾 Prima{totalRenovaciones > 0 ? ' total (con renovaciones)' : ''}: {poliza.moneda === 'USD' ? `U$S ${fmtDec(primaRealPoliza(poliza) + renovacionesVigentes.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0))} (≈ ${fmtDec(prima)})` : fmtDec(prima)} · Pagado: {fmtDec(totalPagado)} · Saldo: {fmtDec(saldo)}</span>
             )}
             {poliza.fecha_inicio && <span>📅 Vigencia desde: {fmtFechaAR(poliza.fecha_inicio)}</span>}
           </div>
@@ -1394,7 +1394,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted }}>🔁 Renovaciones por período registradas</div>
               {renovaciones.map(r => (
                 <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, background: r.anulada ? '#F3F3F3' : '#FFF8ED', padding: '5px 8px', borderRadius: 6, textDecoration: r.anulada ? 'line-through' : 'none', color: r.anulada ? '#888' : '#8A5200' }}>
-                  <span>Hasta {fmtFechaAR(r.periodo_hasta)} · {poliza.moneda === 'USD' ? `U$S ${fmt(r.monto)}${r.tipo_cambio > 0 ? ` (≈ ${fmt(enPesos(r.monto, poliza.moneda, r.tipo_cambio))} al TC ${r.tipo_cambio})` : ' (falta tipo de cambio)'}` : fmt(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : ''}</span>
+                  <span>Hasta {fmtFechaAR(r.periodo_hasta)} · {poliza.moneda === 'USD' ? `U$S ${fmtDec(r.monto)}${r.tipo_cambio > 0 ? ` (≈ ${fmtDec(enPesos(r.monto, poliza.moneda, r.tipo_cambio))} al TC ${r.tipo_cambio})` : ' (falta tipo de cambio)'}` : fmtDec(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : ''}</span>
                   {!r.anulada && <button onClick={() => onAnularRenovacion(r)} style={{ background: 'none', border: 'none', color: C.purple, fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: "'Outfit', sans-serif" }}>Anular (retroactivo)</button>}
                 </div>
               ))}
@@ -1503,13 +1503,27 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
 }
 
 // ── Cuenta corriente con las aseguradoras (o corredores) — agrupa pólizas ──
+// Monto real de la prima para la cuenta corriente: `poliza.prima` es lo que la IA pudo leer de la
+// carátula de la póliza al cargarla (a veces no trae el monto neto, o directamente no figura ahí —
+// está en la cuponera o la factura, ver ModalFacturaPoliza) — es una ESTIMACIÓN provisoria. En
+// cuanto se carga la factura real ("+ Factura"), ese monto (guardado en poliza_documentos.monto)
+// es la fuente de verdad de lo que realmente hay que pagarle a la aseguradora — reemplaza a
+// poliza.prima en vez de sumarse, porque es el mismo cargo visto con más precisión, no uno nuevo.
+// Si hay más de una factura cargada (distintos períodos/endosos), se suman todas (setiembre 2026,
+// antes la cuenta corriente quedaba en $0 si nunca se había completado poliza.prima a mano).
+function primaRealPoliza(poliza) {
+  const facturas = (poliza.poliza_documentos || []).filter(d => d.tipo === 'factura' && parseFloat(d.monto) > 0)
+  if (facturas.length > 0) return facturas.reduce((s, d) => s + (parseFloat(d.monto) || 0), 0)
+  return parseFloat(poliza.prima) || 0
+}
 // Prima "vigente" de una póliza para efectos de cuenta corriente, YA CONVERTIDA A PESOS (ver
-// enPesos más arriba — si la póliza es ARS, es el monto tal cual): la original + toda renovación
-// por período que NO haya sido anulada retroactivamente (puede diferir de la prima original por
-// reajuste — cada renovación trae su propio monto Y su propio tipo de cambio, si la póliza es USD).
+// enPesos más arriba — si la póliza es ARS, es el monto tal cual): la original (o la de factura,
+// ver primaRealPoliza) + toda renovación por período que NO haya sido anulada retroactivamente
+// (puede diferir de la prima original por reajuste — cada renovación trae su propio monto Y su
+// propio tipo de cambio, si la póliza es USD).
 function primaConRenovaciones(poliza, renovaciones) {
   const propias = renovaciones.filter(r => r.poliza_id === poliza.id && !r.anulada)
-  const primaPesos = enPesos(poliza.prima, poliza.moneda, poliza.tipo_cambio)
+  const primaPesos = enPesos(primaRealPoliza(poliza), poliza.moneda, poliza.tipo_cambio)
   return primaPesos + propias.reduce((s, r) => s + enPesos(r.monto, poliza.moneda, r.tipo_cambio), 0)
 }
 
@@ -1525,10 +1539,15 @@ function primaConRenovaciones(poliza, renovaciones) {
 function movimientosPoliza(poliza, renovaciones, pagos) {
   const moneda = poliza.moneda || 'ARS'
   const renovacionesDeLaPoliza = (renovaciones || []).filter(r => r.poliza_id === poliza.id)
+  // Si ya hay factura(s) real(es) cargada(s), usamos su monto (y su fecha, más precisa que
+  // fecha_emision) en vez de poliza.prima — ver primaRealPoliza.
+  const facturasPoliza = (poliza.poliza_documentos || []).filter(d => d.tipo === 'factura' && parseFloat(d.monto) > 0)
+  const primaReal = primaRealPoliza(poliza)
   const items = [
-    { tipo: 'prima', id: `prima-${poliza.id}`, fecha: poliza.fecha_emision || poliza.fecha_inicio || null,
-      montoOriginal: parseFloat(poliza.prima) || 0, moneda, tipoCambio: poliza.tipo_cambio,
-      monto: enPesos(poliza.prima, moneda, poliza.tipo_cambio), anulada: false, label: 'Prima original' },
+    { tipo: 'prima', id: `prima-${poliza.id}`, fecha: (facturasPoliza[0]?.fecha) || poliza.fecha_emision || poliza.fecha_inicio || null,
+      montoOriginal: primaReal, moneda, tipoCambio: poliza.tipo_cambio,
+      monto: enPesos(primaReal, moneda, poliza.tipo_cambio), anulada: false,
+      label: facturasPoliza.length > 0 ? 'Prima (según factura)' : 'Prima original' },
     ...renovacionesDeLaPoliza.map(r => ({
       tipo: 'renovacion', id: r.id, fecha: r.periodo_hasta,
       montoOriginal: parseFloat(r.monto) || 0, moneda, tipoCambio: r.tipo_cambio,
@@ -1577,7 +1596,7 @@ function ResumenSubtotales({ titulo, icono, grupos }) {
           {grupos.map(g => (
             <div key={g.nombre} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}>
               <span style={{ color: C.textMuted }}>{g.nombre}</span>
-              <span style={{ color: g.saldo > 0 ? '#C62828' : C.green, fontWeight: 600 }}>{fmt(g.saldo)}</span>
+              <span style={{ color: g.saldo > 0 ? '#C62828' : C.green, fontWeight: 600 }}>{fmtDec(g.saldo)}</span>
             </div>
           ))}
         </div>
@@ -1665,9 +1684,9 @@ function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, diasAviso, 
             <BtnSecondary onClick={() => onRegistrarPago(g.polizas)}>+ Registrar pago</BtnSecondary>
           </div>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12, color: C.textMuted, marginBottom: 10 }}>
-            <span>Prima total: <strong style={{ color: C.text }}>{fmt(g.totalPrima)}</strong></span>
-            <span>Pagado: <strong style={{ color: C.green }}>{fmt(g.totalPagado)}</strong></span>
-            <span>Saldo (teórico): <strong style={{ color: g.saldo > 0 ? '#C62828' : C.green }}>{fmt(g.saldo)}</strong></span>
+            <span>Prima total: <strong style={{ color: C.text }}>{fmtDec(g.totalPrima)}</strong></span>
+            <span>Pagado: <strong style={{ color: C.green }}>{fmtDec(g.totalPagado)}</strong></span>
+            <span>Saldo (teórico): <strong style={{ color: g.saldo > 0 ? '#C62828' : C.green }}>{fmtDec(g.saldo)}</strong></span>
             <span>{g.polizas.length} póliza(s)</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1683,8 +1702,8 @@ function CuentaCorrienteAseguradoras({ polizas, pagos, renovaciones, diasAviso, 
                       <span>{m.label}{m.fecha ? ` (${fmtFechaAR(m.fecha)})` : ''}</span>
                       <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         {m.moneda === 'USD'
-                          ? <span>U$S {fmt(m.montoOriginal)} {m.tipoCambio > 0 ? <>≈ {fmt(m.monto)} <span style={{ color: C.textFaint }}>(TC {m.tipoCambio})</span></> : <span style={{ color: '#C62828' }}>(falta tipo de cambio)</span>}</span>
-                          : fmt(m.monto)}
+                          ? <span>U$S {fmtDec(m.montoOriginal)} {m.tipoCambio > 0 ? <>≈ {fmtDec(m.monto)} <span style={{ color: C.textFaint }}>(TC {m.tipoCambio})</span></> : <span style={{ color: '#C62828' }}>(falta tipo de cambio)</span>}</span>
+                          : fmtDec(m.monto)}
                         <EstadoPagoBadge estadoPago={m.estadoPago} />
                       </span>
                     </div>
@@ -1880,8 +1899,11 @@ export default function Seguros() {
       discrimina_iva: false,
       pagado: false,
     }, null, true)
+    // monto/fecha quedan guardados acá (no solo en el gasto) porque son los que usa primaRealPoliza()
+    // para la cuenta corriente con la aseguradora — así no depende de ir a buscar el gasto vinculado.
     const doc = await dbWrite('POST', 'poliza_documentos', {
       poliza_id: polizaParaFactura.id, tipo: 'factura', archivo_url, nombre_archivo, gasto_id: nuevoGasto?.id || null,
+      monto, fecha,
     }, null, true)
     setPolizas(prev => prev.map(p => p.id === polizaParaFactura.id ? { ...p, poliza_documentos: [...(p.poliza_documentos || []), doc] } : p))
     setModal(null); setPolizaParaFactura(null)
