@@ -435,12 +435,21 @@ async function subirDocumentoStorage(file, carpeta = 'polizas') {
       new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 60000))
     ])
     let res = await intentar()
-    if (res?.error) { await new Promise(r => setTimeout(r, 1500)); res = await intentar() }
-    if (res?.error) { toast('No se pudo subir el archivo. Verificá la conexión e intentá de nuevo.'); return null }
+    // Antes acá no se logueaba nada si Supabase devolvía un error "prolijo" (sin throw) — el toast
+    // genérico no alcanzaba para diagnosticar un fallo persistente (ej. cuota de Storage agotada,
+    // política de RLS del bucket, sesión vencida). Ahora se loguea el error completo en consola
+    // (F12 → Console) Y se muestra el mensaje técnico en el propio toast, para poder mandarlo por
+    // captura de pantalla sin tener que abrir las herramientas de desarrollador (setiembre 2026).
+    if (res?.error) { console.warn('subirDocumentoStorage (1er intento):', res.error); await new Promise(r => setTimeout(r, 1500)); res = await intentar() }
+    if (res?.error) {
+      console.error('subirDocumentoStorage: falló tras reintentar:', res.error)
+      toast(`No se pudo subir el archivo${res.error?.message ? ` — ${res.error.message}` : ''}. Verificá la conexión e intentá de nuevo.`)
+      return null
+    }
     return supabase.storage.from('polizas-documentos').getPublicUrl(path).data.publicUrl
   } catch (e) {
-    console.warn('subirDocumentoStorage:', e?.message || e)
-    toast('No se pudo subir el archivo.')
+    console.error('subirDocumentoStorage:', e)
+    toast(`No se pudo subir el archivo${e?.message ? ` — ${e.message}` : ''}.`)
     return null
   }
 }
