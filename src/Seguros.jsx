@@ -545,7 +545,12 @@ function usePolizas() {
     try {
       const { data, error } = await supabase
         .from('polizas')
-        .select('*, obras(nombre, organismo, etapa, estado_licitacion, monto_contrato), poliza_documentos(*)')
+        // clientes(nombre) agregado acá (setiembre 2026): el comitente real de la obra casi siempre
+        // viene del cliente vinculado (obras.cliente_id → clientes.nombre), no del campo `organismo`
+        // (legacy, casi nunca cargado) — ver nombreOrganismoObra(). Sin este join, el Excel exportaba
+        // la celda "Comitente" vacía para cualquier obra que tuviera cliente vinculado en vez de
+        // organismo en texto libre (que es el caso normal).
+        .select('*, obras(nombre, organismo, etapa, estado_licitacion, monto_contrato, clientes(nombre)), poliza_documentos(*)')
         .order('created_at', { ascending: false })
       if (!error && data) setPolizas(data)
     } catch (e) { console.error(e) }
@@ -1273,16 +1278,40 @@ function ModalPagoPoliza({ polizas, polizaIdDefecto, bancos, renovaciones = [], 
 // ── Modal: registrar el cargo de una renovación automática por período ──
 // Ojo: el monto de la renovación NO se copia automáticamente de la prima original — puede diferir
 // por reajuste (ej. "reajustable trimestralmente") — por eso se pide como dato aparte.
-function ModalRenovacionPoliza({ poliza, onClose, onGuardar }) {
+// ── Modal: confirmar (y opcionalmente corregir) una renovación cargada como estimación ──
+function ModalConfirmarRenovacion({ renovacion, onClose, onGuardar }) {
+  const [monto, setMonto] = useState(renovacion.monto ?? '')
+  return (
+    <Modal title={`Confirmar renovación — hasta ${fmtFechaAR(renovacion.periodo_hasta)}`} onClose={onClose} guardarLabel="Confirmar" onGuardar={async () => {
+      const montoNum = parseFloat(monto) || 0
+      if (!montoNum) throw new Error('Ingresá el monto confirmado')
+      await onGuardar({ monto: montoNum })
+    }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ fontSize: 12, color: C.textMuted }}>Corregí el monto si la aseguradora te informó un valor distinto al estimado, y confirmalo — deja de aparecer como "provisorio, a confirmar".</div>
+        <Campo label="Monto confirmado"><input type="number" style={inputSt} value={monto} onChange={e => setMonto(e.target.value)} autoFocus /></Campo>
+      </div>
+    </Modal>
+  )
+}
+
+function ModalRenovacionPoliza({ poliza, renovaciones = [], onClose, onGuardar }) {
   const corteAnterior = poliza.fecha_vencimiento
   const esUSD = poliza.moneda === 'USD'
+  // Monto sugerido = el último conocido: la renovación previa más reciente (no anulada) si ya hay
+  // alguna, si no primaRealPoliza() (que ya prioriza la factura real por sobre poliza.prima — ver
+  // más arriba). Es una ESTIMACIÓN: por eso el formulario arranca con "confirmado" destildado.
+  const renovacionesDeLaPoliza = renovaciones.filter(r => r.poliza_id === poliza.id && !r.anulada)
+  const ultimaRenovacion = renovacionesDeLaPoliza.slice().sort((a, b) => (b.periodo_hasta || '').localeCompare(a.periodo_hasta || ''))[0]
+  const montoSugerido = ultimaRenovacion?.monto ?? primaRealPoliza(poliza)
   const [form, setForm] = useState({
     periodo_desde: corteAnterior || hoy(),
     periodo_hasta: sumarDias(corteAnterior, poliza.duracion_periodo_dias) || '',
-    monto: poliza.prima ?? '',
+    monto: montoSugerido || '',
     tipo_cambio: '',
     fecha_tipo_cambio: hoy(),
     observaciones: '',
+    confirmado: false,
   })
   const [buscandoTC, setBuscandoTC] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -1307,7 +1336,10 @@ function ModalRenovacionPoliza({ poliza, onClose, onGuardar }) {
           <Campo label="Período desde"><input type="date" style={inputSt} value={form.periodo_desde} onChange={e => set('periodo_desde', e.target.value)} /></Campo>
           <Campo label="Período hasta (nuevo corte)"><input type="date" style={inputSt} value={form.periodo_hasta} onChange={e => set('periodo_hasta', e.target.value)} /></Campo>
         </div>
-        <Campo label={`Monto de la prima de este período ${esUSD ? '(U$S)' : '($)'}`}><input type="number" style={inputSt} value={form.monto} onChange={e => set('monto', e.target.value)} /></Campo>
+        <Campo label={`Monto de la prima de este período ${esUSD ? '(U$S)' : '($)'}`}>
+          <input type="number" style={inputSt} value={form.monto} onChange={e => set('monto', e.target.value)} />
+          <div style={{ fontSize: 11, color: C.textFaint, marginTop: 4 }}>Sugerido = último monto conocido ({fmtDec(montoSugerido)}). Corregilo si ya sabés el monto real.</div>
+        </Campo>
         {esUSD && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 10, alignItems: 'end' }}>
             <Campo label="Tipo de cambio de esta renovación ($/US$)"><input type="number" style={inputSt} value={form.tipo_cambio} onChange={e => set('tipo_cambio', e.target.value)} placeholder="Se busca solo, pero podés corregirlo" /></Campo>
@@ -1316,6 +1348,15 @@ function ModalRenovacionPoliza({ poliza, onClose, onGuardar }) {
           </div>
         )}
         <Campo label="Observaciones (opcional)"><textarea style={{ ...inputSt, minHeight: 50 }} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} placeholder="Ej. reajuste del 8% por inflación" /></Campo>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.text, cursor: 'pointer' }}>
+          <input type="checkbox" checked={form.confirmado} onChange={e => set('confirmado', e.target.checked)} />
+          Ya tengo este monto confirmado por la aseguradora (no es una estimación)
+        </label>
+        {!form.confirmado && (
+          <div style={{ fontSize: 11, color: '#8A5200', background: '#FFF8ED', padding: '6px 9px', borderRadius: 8 }}>
+            ⚠️ Va a quedar marcada "provisorio — a confirmar" hasta que la tildes o corrijas el monto cuando te llegue el estado de cuenta real de la aseguradora.
+          </div>
+        )}
       </div>
     </Modal>
   )
@@ -1348,7 +1389,7 @@ function ListaDocumentos({ documentos }) {
 // solo muestra lo esencial para identificarla (tipo de seguro y vencimiento, si tiene); el resto
 // del detalle (descripción, montos, cláusulas, documentos, acciones) aparece al desplegar. Las
 // alertas rojas (vencimiento/renovación/baja) se muestran siempre, estén o no desplegadas.
-function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = [], diasAviso = DIAS_AVISO_VENCIMIENTO, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onEditar, onEliminar }) {
+function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = [], diasAviso = DIAS_AVISO_VENCIMIENTO, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditar, onEliminar }) {
   const [expandido, setExpandido] = useState(false)
   const totalPagado = pagos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
   const renovacionesVigentes = renovaciones.filter(r => !r.anulada)
@@ -1407,12 +1448,23 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
           {poliza.se_autorenueva && renovaciones.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted }}>🔁 Renovaciones por período registradas</div>
-              {renovaciones.map(r => (
-                <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, background: r.anulada ? '#F3F3F3' : '#FFF8ED', padding: '5px 8px', borderRadius: 6, textDecoration: r.anulada ? 'line-through' : 'none', color: r.anulada ? '#888' : '#8A5200' }}>
-                  <span>Hasta {fmtFechaAR(r.periodo_hasta)} · {poliza.moneda === 'USD' ? `U$S ${fmtDec(r.monto)}${r.tipo_cambio > 0 ? ` (≈ ${fmtDec(enPesos(r.monto, poliza.moneda, r.tipo_cambio))} al TC ${r.tipo_cambio})` : ' (falta tipo de cambio)'}` : fmtDec(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : ''}</span>
-                  {!r.anulada && <button onClick={() => onAnularRenovacion(r)} style={{ background: 'none', border: 'none', color: C.purple, fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: "'Outfit', sans-serif" }}>Anular (retroactivo)</button>}
-                </div>
-              ))}
+              {renovaciones.map(r => {
+                // Provisorio = todavía no confirmado el monto real con la aseguradora — se muestra
+                // resaltado en ámbar con un botón para confirmarlo/corregirlo; una vez confirmado pasa
+                // a un estilo neutro, igual que una renovación cargada ya con el monto real.
+                const provisorio = !r.anulada && !r.confirmado
+                return (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, background: r.anulada ? '#F3F3F3' : provisorio ? '#FFF8ED' : '#FBFBFD', padding: '5px 8px', borderRadius: 6, textDecoration: r.anulada ? 'line-through' : 'none', color: r.anulada ? '#888' : provisorio ? '#8A5200' : C.textMuted }}>
+                    <span>Hasta {fmtFechaAR(r.periodo_hasta)} · {poliza.moneda === 'USD' ? `U$S ${fmtDec(r.monto)}${r.tipo_cambio > 0 ? ` (≈ ${fmtDec(enPesos(r.monto, poliza.moneda, r.tipo_cambio))} al TC ${r.tipo_cambio})` : ' (falta tipo de cambio)'}` : fmtDec(r.monto)}{r.anulada ? ' · anulada (retroactiva)' : provisorio ? ' · ⚠️ provisorio, a confirmar' : ''}</span>
+                    {!r.anulada && (
+                      <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+                        {provisorio && <button onClick={() => onConfirmarRenovacion(r)} style={{ background: 'none', border: 'none', color: '#8A5200', fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0, fontFamily: "'Outfit', sans-serif" }}>✓ Confirmar</button>}
+                        <button onClick={() => onAnularRenovacion(r)} style={{ background: 'none', border: 'none', color: C.purple, fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: "'Outfit', sans-serif" }}>Anular (retroactivo)</button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -1442,7 +1494,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
 }
 
 // ── Fila de obra (con transición de etapa/estado de licitación y sus pólizas anidadas) ──
-function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onEditarPoliza, onEliminarPoliza }) {
+function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditarPoliza, onEliminarPoliza }) {
   const [expandido, setExpandido] = useState(false)
   const polizasPendientes = polizasDeLaObra.filter(p => p.estado_admin !== 'dada_de_baja')
   // Tipos de cobertura que tiene cargados esta obra ahora mismo (sin contar pólizas dadas de baja) —
@@ -1507,7 +1559,7 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
                   diasAviso={diasAviso}
                   onMarcarBajaPresentada={onMarcarBajaPresentada} onConfirmarBaja={onConfirmarBaja}
                   onAgregarDocumento={onAgregarDocumento} onAgregarFactura={onAgregarFactura} onRegistrarPago={onRegistrarPago}
-                  onRegistrarRenovacion={onRegistrarRenovacion} onAnularRenovacion={onAnularRenovacion}
+                  onRegistrarRenovacion={onRegistrarRenovacion} onAnularRenovacion={onAnularRenovacion} onConfirmarRenovacion={onConfirmarRenovacion}
                   onEditar={onEditarPoliza} onEliminar={onEliminarPoliza} />
               ))}
             </div>
@@ -1567,7 +1619,7 @@ function movimientosPoliza(poliza, renovaciones, pagos) {
       tipo: 'renovacion', id: r.id, fecha: r.periodo_hasta,
       montoOriginal: parseFloat(r.monto) || 0, moneda, tipoCambio: r.tipo_cambio,
       monto: enPesos(r.monto, moneda, r.tipo_cambio), anulada: !!r.anulada,
-      label: `Renovación hasta ${fmtFechaAR(r.periodo_hasta)}`, observaciones: r.observaciones, motivo_anulacion: r.motivo_anulacion,
+      label: `Renovación hasta ${fmtFechaAR(r.periodo_hasta)}${!r.anulada && !r.confirmado ? ' (provisorio, a confirmar)' : ''}`, observaciones: r.observaciones, motivo_anulacion: r.motivo_anulacion,
     })),
   ].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
 
@@ -1797,7 +1849,7 @@ export default function Seguros() {
   const [filtroPoliza, setFiltroPoliza] = useState('todas') // 'todas' | 'sin' | 'con' — setiembre 2026: separa las obras sin póliza cargada de las que ya tienen, en vez de mezclarlas todas juntas
   const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false)
   const [soloFinalizadasPendientes, setSoloFinalizadasPendientes] = useState(false)
-  const [modal, setModal] = useState(null) // 'nuevaObra' | 'poliza' | 'documento' | 'recepcion' | 'confirmarBaja' | 'pago' | 'renovacion'
+  const [modal, setModal] = useState(null) // 'nuevaObra' | 'poliza' | 'documento' | 'recepcion' | 'confirmarBaja' | 'pago' | 'renovacion' | 'confirmarRenovacion'
   const [obraIdParaPoliza, setObraIdParaPoliza] = useState('')
   const [polizaParaEditar, setPolizaParaEditar] = useState(null)
   const [polizaParaDocumento, setPolizaParaDocumento] = useState(null)
@@ -1807,6 +1859,7 @@ export default function Seguros() {
   const [polizasParaPago, setPolizasParaPago] = useState(null)
   const [polizaParaRenovacion, setPolizaParaRenovacion] = useState(null)
   const [polizaParaFactura, setPolizaParaFactura] = useState(null)
+  const [renovacionParaConfirmar, setRenovacionParaConfirmar] = useState(null)
 
   const alertas = calcularAlertas(polizas, renovacionesPoliza, diasAviso)
   // Obras adjudicadas (etapa 'ejecucion') que requieren póliza pero todavía tienen 0 cargadas — no
@@ -2036,10 +2089,11 @@ export default function Seguros() {
       tipo_cambio: form.tipo_cambio ?? null,
       fecha_tipo_cambio: form.fecha_tipo_cambio || null,
       observaciones: form.observaciones || null,
+      confirmado: !!form.confirmado,
     }, null, true)
     if (nueva) setRenovacionesPoliza(prev => [nueva, ...prev])
     setModal(null); setPolizaParaRenovacion(null)
-    toast('Renovación registrada — se sumó a la deuda con la aseguradora', 'ok')
+    toast(form.confirmado ? 'Renovación registrada — se sumó a la deuda con la aseguradora' : 'Renovación registrada como provisorio — confirmala cuando tengas el monto real', 'ok')
   }
 
   // Anular retroactivamente una renovación ya registrada: la recepción de obra tenía fecha
@@ -2051,6 +2105,16 @@ export default function Seguros() {
     await dbWrite('PATCH', 'renovaciones_poliza', { anulada: true, motivo_anulacion: motivo || null }, `id=eq.${renovacion.id}`)
     setRenovacionesPoliza(prev => prev.map(r => r.id === renovacion.id ? { ...r, anulada: true, motivo_anulacion: motivo || null } : r))
     toast('Renovación anulada — ya no cuenta como deuda', 'ok')
+  }
+
+  // Confirmar (y opcionalmente corregir) el monto de una renovación cargada como estimación —
+  // "provisorio, a confirmar" — apenas llega el estado de cuenta real de la aseguradora. Deja de
+  // mostrarse como pendiente de confirmar en todos lados (FilaPoliza y Cuenta Corriente).
+  const confirmarRenovacion = async (renovacion, form) => {
+    await dbWrite('PATCH', 'renovaciones_poliza', { monto: form.monto, confirmado: true }, `id=eq.${renovacion.id}`)
+    setRenovacionesPoliza(prev => prev.map(r => r.id === renovacion.id ? { ...r, monto: form.monto, confirmado: true } : r))
+    setModal(null); setRenovacionParaConfirmar(null)
+    toast('Renovación confirmada', 'ok')
   }
 
   if (loading) return <Spinner />
@@ -2114,6 +2178,7 @@ export default function Seguros() {
                   onRegistrarPago={pz => { setPolizasParaPago([pz]); setModal('pago') }}
                   onRegistrarRenovacion={pz => { setPolizaParaRenovacion(pz); setModal('renovacion') }}
                   onAnularRenovacion={anularRenovacion}
+                  onConfirmarRenovacion={r => { setRenovacionParaConfirmar(r); setModal('confirmarRenovacion') }}
                   onEditarPoliza={pz => { setPolizaParaEditar(pz); setModal('poliza') }}
                   onEliminarPoliza={eliminarPoliza} />
               ))}
@@ -2135,7 +2200,8 @@ export default function Seguros() {
       {modal === 'recepcion' && obraParaRecepcion && <ModalRecepcionObra obra={obraParaRecepcion} tipoRecepcion={tipoRecepcion} onClose={() => { setModal(null); setObraParaRecepcion(null); setTipoRecepcion(null) }} onGuardar={guardarRecepcion} />}
       {modal === 'confirmarBaja' && polizaParaBaja && <ModalConfirmarBaja poliza={polizaParaBaja} onClose={() => { setModal(null); setPolizaParaBaja(null) }} onGuardar={guardarConfirmacionBaja} />}
       {modal === 'pago' && polizasParaPago && <ModalPagoPoliza polizas={polizasParaPago} polizaIdDefecto={polizasParaPago[0]?.id} bancos={bancos} renovaciones={renovacionesPoliza} onClose={() => { setModal(null); setPolizasParaPago(null) }} onGuardar={guardarPagoPoliza} />}
-      {modal === 'renovacion' && polizaParaRenovacion && <ModalRenovacionPoliza poliza={polizaParaRenovacion} onClose={() => { setModal(null); setPolizaParaRenovacion(null) }} onGuardar={guardarRenovacion} />}
+      {modal === 'renovacion' && polizaParaRenovacion && <ModalRenovacionPoliza poliza={polizaParaRenovacion} renovaciones={renovacionesPoliza} onClose={() => { setModal(null); setPolizaParaRenovacion(null) }} onGuardar={guardarRenovacion} />}
+      {modal === 'confirmarRenovacion' && renovacionParaConfirmar && <ModalConfirmarRenovacion renovacion={renovacionParaConfirmar} onClose={() => { setModal(null); setRenovacionParaConfirmar(null) }} onGuardar={form => confirmarRenovacion(renovacionParaConfirmar, form)} />}
     </div>
   )
 }

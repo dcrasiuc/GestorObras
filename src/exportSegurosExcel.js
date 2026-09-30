@@ -18,6 +18,18 @@ const COBERTURA_LABELS = {
   responsabilidad_civil: 'Responsabilidad Civil',
   otro: 'Otro',
 }
+// Mismo motivo que COBERTURA_LABELS de arriba: copia local de ORGANISMO_LABELS y de la lógica de
+// nombreOrganismoObra() (ambas viven en Seguros.jsx) para no crear un ciclo de import. El comitente
+// real de la obra casi siempre viene del cliente vinculado (obras.cliente_id → clientes.nombre, que
+// usePolizas() ya trae embebido) — `organismo` es un campo legacy que casi nunca está cargado
+// (setiembre 2026: antes esta columna salía vacía porque acá solo se miraba `organismo`).
+const ORGANISMO_LABELS = {
+  IPRODA: 'IPRODA', EBY: 'Entidad Binacional Yacyretá', UCEF: 'UCEF',
+  MUNI_POSADAS: 'Muni. Posadas', VIALIDAD: 'Vialidad Provincial', Privado: 'Privado', Otro: 'Otro',
+}
+function nombreComitenteObra(obra) {
+  return obra?.clientes?.nombre?.trim() || (obra?.organismo ? (ORGANISMO_LABELS[obra.organismo] || obra.organismo) : '') || ''
+}
 const num = v => Math.round((parseFloat(v) || 0) * 100) / 100
 
 const ESTADO_PAGO_LABELS = {
@@ -65,7 +77,7 @@ export function exportarCuentaCorrienteSeguros(grupos = [], agrupador = 'asegura
         filasMovimientos.push({
           [columnaGrupo]: g.nombre,
           'Obra': p.obras?.nombre ?? '',
-          'Comitente': p.obras?.organismo ?? '',
+          'Comitente': nombreComitenteObra(p.obras),
           'Póliza': p.nro_poliza || 's/n',
           'Tipo de cobertura': COBERTURA_LABELS[p.tipo_cobertura] || p.tipo_cobertura || '',
           'Movimiento': m.label,
