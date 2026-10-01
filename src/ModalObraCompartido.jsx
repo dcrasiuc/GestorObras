@@ -64,13 +64,18 @@ export function etapaInicial(requierePoliza, requiereGarantiaOferta) {
 
 export function ModalObra({ itemEdit, clientes, onClose, onGuardar }) {
   const esEdicion = !!itemEdit
-  const [form, setForm] = useState(itemEdit || { nombre: '', cliente_id: '', estado: 'activa', presupuesto: '', monto_contrato: '', requiere_poliza: true, requiere_garantia_oferta: true, excluir_gastos_generales: false })
+  const [form, setForm] = useState(itemEdit || { nombre: '', detalle: '', cliente_id: '', estado: 'activa', presupuesto: '', monto_contrato: '', requiere_poliza: true, requiere_garantia_oferta: true, excluir_gastos_generales: false })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const requierePoliza = form.requiere_poliza !== false
   const requiereGarantiaOferta = requierePoliza && form.requiere_garantia_oferta !== false
   return (
     <ModalInterno title={esEdicion ? 'Editar Obra' : 'Nueva Obra'} onClose={onClose} onGuardar={() => onGuardar(form)}>
       <Campo label="Nombre de la obra"><input style={inputSt} value={form.nombre} onChange={e => set('nombre', e.target.value)} placeholder="Ej: Edificio Tucumán 1420 / Repavimentación Ruta 12" /></Campo>
+      {/* Nombre corto para listados (ej. "CLP 8572 Garupá") separado de un detalle más explícito
+          (el objeto completo de la licitación/contrato) — pedido del usuario octubre 2026 al cargar
+          una obra desde un pliego: el nombre corto alcanza para identificarla de un vistazo, pero
+          conviene guardar también la descripción oficial completa en algún lado. Opcional. */}
+      <div style={{ marginTop: 10 }}><Campo label="Detalle (opcional)"><textarea style={{ ...inputSt, minHeight: 60, resize: 'vertical' }} value={form.detalle || ''} onChange={e => set('detalle', e.target.value)} placeholder="Ej: objeto completo del pliego/contrato, aclaraciones, tramo, ubicación exacta..." /></Campo></div>
       <div style={{ marginTop: 10 }}><Campo label="Cliente"><select style={inputSt} value={form.cliente_id || ''} onChange={e => set('cliente_id', e.target.value)}><option value="">Sin cliente</option>{clientes?.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></Campo></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
         <Campo label="Presupuesto (gastos)"><input style={inputSt} type="number" value={form.presupuesto} onChange={e => set('presupuesto', e.target.value)} placeholder="0" /></Campo>

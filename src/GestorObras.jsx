@@ -605,8 +605,8 @@ export default function GestorObras({ usuario }) {
       {/* ── MODALES ── */}
       {modal === 'obra' && <ModalObra itemEdit={itemEditando} clientes={clientes} onClose={cerrarModal} onGuardar={async d => {
         if (!d.nombre) return window._toast?.('El nombre es obligatorio')
-        const { id, nombre, cliente_id, estado, presupuesto, monto_contrato, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales } = d
-        const payload = { nombre, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, monto_contrato: parseFloat(monto_contrato) || null, requiere_poliza: requiere_poliza !== false, requiere_garantia_oferta: requiere_garantia_oferta !== false, excluir_gastos_generales: !!excluir_gastos_generales }
+        const { id, nombre, detalle, cliente_id, estado, presupuesto, monto_contrato, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales } = d
+        const payload = { nombre, detalle: detalle?.trim() || null, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, monto_contrato: parseFloat(monto_contrato) || null, requiere_poliza: requiere_poliza !== false, requiere_garantia_oferta: requiere_garantia_oferta !== false, excluir_gastos_generales: !!excluir_gastos_generales }
         if (id) {
           await dbWrite('PATCH', 'obras', payload, `id=eq.${id}`)
           setObras(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o))

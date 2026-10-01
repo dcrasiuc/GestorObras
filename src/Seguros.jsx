@@ -185,6 +185,10 @@ function candidatasObra(obras, nombreIA, orgIA, excluirId) {
 // ── Estilos compartidos (mismo lenguaje visual que el resto de la app) ──
 const inputSt = { width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: "'Outfit', sans-serif", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.text, boxSizing: 'border-box', outline: 'none', colorScheme: 'light' }
 const cardSt = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12 }
+// Botón compacto para iconos/acciones cortas inline (ej. "= saldo" en ModalPagoPoliza, ✏️ editar obra en
+// FilaObra) — faltaba esta definición (bug descubierto octubre 2026: "btnIconSt is not defined" rompía
+// el modal de Registrar pago en producción apenas alguna póliza tenía saldo pendiente).
+const btnIconSt = { padding: '4px 9px', background: C.surface, color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontFamily: "'Outfit', sans-serif", whiteSpace: 'nowrap' }
 
 function Campo({ label, children, style }) {
   return <div style={{ ...style }}><label style={{ fontSize: 10, fontWeight: 600, color: C.textFaint, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</label>{children}</div>
@@ -1571,7 +1575,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
 }
 
 // ── Fila de obra (con transición de etapa/estado de licitación y sus pólizas anidadas) ──
-function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditarPoliza, onEliminarPoliza }) {
+function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditarPoliza, onEliminarPoliza, onEditarObra }) {
   const [expandido, setExpandido] = useState(false)
   const polizasPendientes = polizasDeLaObra.filter(p => p.estado_admin !== 'dada_de_baja')
   // Tipos de cobertura que tiene cargados esta obra ahora mismo (sin contar pólizas dadas de baja) —
@@ -1585,16 +1589,20 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
   return (
     <div style={{ ...cardSt, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, ...((finalizadaConPendientes || sinGarantiaAdjudicada) ? { border: '1px solid #FFB0B0' } : {}) }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ cursor: 'pointer' }} onClick={() => setExpandido(v => !v)}>
+        <div style={{ cursor: 'pointer', flex: 1, minWidth: 0 }} onClick={() => setExpandido(v => !v)}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{expandido ? '▾' : '▸'} {obra.nombre}</div>
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{nombreOrganismoObra(obra) || 'Sin cliente vinculado'}{obra.monto_contrato ? ` · $${fmt(obra.monto_contrato)}` : ''} · {polizasDeLaObra.length} póliza(s)</div>
+          {/* Descripción oficial completa (objeto del pliego/contrato) — separada del nombre corto
+              que se usa para identificar la obra de un vistazo en listados (octubre 2026). */}
+          {obra.detalle && <div style={{ fontSize: 11, color: C.textFaint, fontStyle: 'italic', marginTop: 3, maxWidth: 520 }}>{obra.detalle}</div>}
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           {obra.estado === 'finalizada' && <Badge bg="#F3F3F3" color="#555">🏁 Finalizada (panel Obras)</Badge>}
           {obra.estado === 'pausada' && <Badge bg="#FFF8ED" color="#8A5200">⏸️ Pausada</Badge>}
           {obra.requiere_poliza === false && <Badge bg="#F3F3F3" color="#888">Sin póliza requerida</Badge>}
           <EtapaBadge etapa={obra.etapa} />
           <EstadoLicitacionBadge estado={obra.estado_licitacion} />
+          {onEditarObra && <button onClick={() => onEditarObra(obra)} style={{ ...btnIconSt, fontSize: 11 }} title="Editar obra">✏️</button>}
         </div>
       </div>
       {tiposPresentes.length > 0 && (
@@ -1927,7 +1935,8 @@ export default function Seguros() {
   const [filtroPoliza, setFiltroPoliza] = useState('todas') // 'todas' | 'sin' | 'con' — setiembre 2026: separa las obras sin póliza cargada de las que ya tienen, en vez de mezclarlas todas juntas
   const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false)
   const [soloFinalizadasPendientes, setSoloFinalizadasPendientes] = useState(false)
-  const [modal, setModal] = useState(null) // 'nuevaObra' | 'poliza' | 'documento' | 'recepcion' | 'confirmarBaja' | 'pago' | 'renovacion' | 'confirmarRenovacion'
+  const [modal, setModal] = useState(null) // 'nuevaObra' | 'editarObra' | 'poliza' | 'documento' | 'recepcion' | 'confirmarBaja' | 'pago' | 'renovacion' | 'confirmarRenovacion'
+  const [obraParaEditar, setObraParaEditar] = useState(null)
   const [obraIdParaPoliza, setObraIdParaPoliza] = useState('')
   const [polizaParaEditar, setPolizaParaEditar] = useState(null)
   const [polizaParaDocumento, setPolizaParaDocumento] = useState(null)
@@ -1972,14 +1981,27 @@ export default function Seguros() {
   // de si requiere garantía de OFERTA específicamente, no de que se haya creado desde este panel
   // ni de si requiere pólizas en general (`etapaInicial` — una obra puede requerir pólizas, p.ej.
   // por adjudicación directa, sin requerir garantía de oferta, y arrancar directo en ejecución).
-  const crearObra = async ({ nombre, cliente_id, organismo, monto_contrato, presupuesto, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales }) => {
+  const crearObra = async ({ nombre, detalle, cliente_id, organismo, monto_contrato, presupuesto, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales }) => {
     if (!nombre?.trim()) { toast('El nombre es obligatorio'); return null }
     const requierePoliza = requiere_poliza !== false
     const requiereGarantiaOferta = requiere_garantia_oferta !== false
-    const payload = { nombre: nombre.trim(), cliente_id: cliente_id || null, organismo: organismo || null, monto_contrato: parseFloat(monto_contrato) || null, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requierePoliza, requiere_garantia_oferta: requiereGarantiaOferta, excluir_gastos_generales: !!excluir_gastos_generales, etapa: etapaInicial(requierePoliza, requiereGarantiaOferta), estado_licitacion: 'en_curso' }
+    const payload = { nombre: nombre.trim(), detalle: detalle?.trim() || null, cliente_id: cliente_id || null, organismo: organismo || null, monto_contrato: parseFloat(monto_contrato) || null, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requierePoliza, requiere_garantia_oferta: requiereGarantiaOferta, excluir_gastos_generales: !!excluir_gastos_generales, etapa: etapaInicial(requierePoliza, requiereGarantiaOferta), estado_licitacion: 'en_curso' }
     const nueva = await dbWrite('POST', 'obras', payload, null, true)
     if (nueva?.id) { setObras(prev => [{ ...payload, ...nueva }, ...prev]); toast('Obra creada', 'ok') }
     return nueva
+  }
+
+  // Editar una obra ya creada desde Seguros — hacía falta sobre todo para las obras en etapa
+  // "oferta": esas no aparecen en el panel principal de Obras (ver obrasOperativas en GestorObras.jsx)
+  // hasta que se adjudican, así que hasta ahora no había ninguna forma de corregirles un dato (cliente,
+  // nombre, detalle) mientras estaban en esa etapa — se detectó este gap al cargar una obra real desde
+  // un pliego (octubre 2026). No toca etapa/estado_licitacion — eso sigue yendo por cambiarEtapa/onPedirRecepcion.
+  const editarObra = async (obraId, { nombre, detalle, cliente_id, monto_contrato, presupuesto, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales }) => {
+    if (!nombre?.trim()) { toast('El nombre es obligatorio'); return }
+    const payload = { nombre: nombre.trim(), detalle: detalle?.trim() || null, cliente_id: cliente_id || null, monto_contrato: parseFloat(monto_contrato) || null, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requiere_poliza !== false, requiere_garantia_oferta: requiere_garantia_oferta !== false, excluir_gastos_generales: !!excluir_gastos_generales }
+    await dbWrite('PATCH', 'obras', payload, `id=eq.${obraId}`)
+    setObras(prev => prev.map(o => o.id === obraId ? { ...o, ...payload } : o))
+    toast('Obra actualizada', 'ok')
   }
 
   const cambiarEtapa = async (obra, etapa) => {
@@ -2304,7 +2326,8 @@ export default function Seguros() {
                   onAnularRenovacion={anularRenovacion}
                   onConfirmarRenovacion={r => { setRenovacionParaConfirmar(r); setModal('confirmarRenovacion') }}
                   onEditarPoliza={pz => { setPolizaParaEditar(pz); setModal('poliza') }}
-                  onEliminarPoliza={eliminarPoliza} />
+                  onEliminarPoliza={eliminarPoliza}
+                  onEditarObra={o => { setObraParaEditar(o); setModal('editarObra') }} />
               ))}
             </div>
           )}
@@ -2318,6 +2341,7 @@ export default function Seguros() {
       )}
 
       {modal === 'nuevaObra' && <ModalObra clientes={clientes} onClose={() => setModal(null)} onGuardar={async d => { const n = await crearObra(d); if (n) setModal(null) }} />}
+      {modal === 'editarObra' && obraParaEditar && <ModalObra itemEdit={obraParaEditar} clientes={clientes} onClose={() => { setModal(null); setObraParaEditar(null) }} onGuardar={async d => { await editarObra(obraParaEditar.id, d); setModal(null); setObraParaEditar(null) }} />}
       {modal === 'poliza' && <ModalPoliza obras={obras} obraIdDefecto={obraIdParaPoliza} polizaExistente={polizaParaEditar} onClose={() => { setModal(null); setPolizaParaEditar(null) }} onGuardar={guardarPoliza} onCrearObra={crearObra} />}
       {modal === 'documento' && polizaParaDocumento && <ModalDocumentoPoliza poliza={polizaParaDocumento} onClose={() => { setModal(null); setPolizaParaDocumento(null) }} onGuardar={guardarDocumento} />}
       {modal === 'factura' && polizaParaFactura && <ModalFacturaPoliza poliza={polizaParaFactura} onClose={() => { setModal(null); setPolizaParaFactura(null) }} onGuardar={guardarFactura} />}
