@@ -613,6 +613,38 @@ function useClientesSeguros() {
   return clientes
 }
 
+// Proveedores (tabla compartida con Gastos/GestorObras) — Seguros no los consultaba hasta ahora
+// porque los gastos que genera (factura/pago de prima) nunca llevaban proveedor_id (reportado por
+// el usuario, octubre 2026: en la lista de Gastos esos movimientos aparecían sin proveedor). Acá
+// solo se necesita id+nombre para poder encontrar/crear el que corresponda (ver resolverProveedorPoliza).
+function useProveedoresSeguros() {
+  const [proveedores, setProveedores] = useState([])
+  useEffect(() => { supabase.from('proveedores').select('id, nombre').order('nombre').then(({ data }) => { if (data) setProveedores(data) }) }, [])
+  return { proveedores, setProveedores }
+}
+
+// El proveedor a usar en el gasto que genera una póliza es el corredor/productor si la póliza
+// tiene uno cargado, si no la aseguradora (compañía) — en ambos casos son campos de texto libre en
+// la póliza (no un vínculo a `proveedores`), por eso hace falta buscar/crear por nombre.
+function nombreProveedorPoliza(poliza) {
+  return (poliza.corredor?.trim() || poliza.aseguradora?.trim() || '')
+}
+
+// Busca `nombre` (sin mayúsculas/espacios) en `cache` o crea un proveedor nuevo con ese nombre. NO
+// toca estado de React — devuelve el proveedor (existente o recién creado) y es responsabilidad de
+// quien llama actualizar su propia copia de `cache` y, al final, sincronizar el estado una sola vez.
+// Esto importa cuando se resuelven varias pólizas en la misma tanda (guardarPagoPoliza con un pago
+// que cubre varias pólizas de la misma aseguradora): todas deben ver los proveedores que se van
+// creando DENTRO de esa misma tanda, no solo los que ya estaban en el estado al empezar — si no,
+// cada póliza de la tanda termina creando su propio proveedor duplicado con el mismo nombre.
+async function resolverProveedorPorNombre(nombre, cache) {
+  const existente = cache.find(p => p.nombre?.trim().toLowerCase() === nombre.toLowerCase())
+  if (existente) return existente
+  return await dbWrite('POST', 'proveedores', {
+    nombre, rubro: 'Seguros', situacion_impositiva: 'responsable_inscripto', condicion_pago: 'contado', redondear_viernes: true,
+  }, null, true)
+}
+
 // ── Configuración editable de Seguros (tabla configuracion_app, clave/valor genérica) ──
 // Por ahora solo guarda "dias_aviso_vencimiento_seguros" — el umbral con el que se decide si una
 // póliza/renovación está "por vencer" (tanto en las alertas como en la cuenta corriente). Antes era
@@ -1172,22 +1204,55 @@ function ModalConfirmarBaja({ poliza, onClose, onGuardar }) {
 }
 
 // ── Modal: registrar un pago de prima (impacta la cuenta corriente con la aseguradora Y el gasto de la obra) ──
-function ModalPagoPoliza({ polizas, polizaIdDefecto, bancos, renovaciones = [], onClose, onGuardar }) {
-  const [form, setForm] = useState({ poliza_id: polizaIdDefecto || polizas[0]?.id || '', fecha_pago: hoy(), monto: '', medio_pago: 'transferencia', banco_id: '', nro_operacion: '', observaciones: '' })
+// Saldo pendiente teórico de una póliza (suma de saldoMonto de todos sus movimientos no anulados).
+// Para una póliza en USD este número está calculado al tipo de cambio CARGADO en la póliza —
+// el monto real transferido casi siempre va a diferir un poco (dólar comprador/vendedor, un día
+// antes o después, cotización del día del pago) — es normal (confirmado por el usuario, octubre
+// 2026) y por eso el campo de monto de abajo es editable: se precarga con este valor pero el
+// usuario lo ajusta al monto real para que la póliza quede exactamente en $0, sin dejar un
+// residuo que se va acumulando sin ningún significado real (era el bug reportado: saldos como
+// "-475,65" que no salían de ningún lado, puro arrastre del tipo de cambio).
+function saldoPendientePoliza(poliza, renovaciones, pagos) {
+  return movimientosPoliza(poliza, renovaciones, pagos).filter(m => !m.anulada).reduce((s, m) => s + m.saldoMonto, 0)
+}
+
+// Registra el pago de UNA O MÁS pólizas con los mismos datos de transferencia/comprobante. Antes
+// solo se podía pagar una póliza por vez — pero es común que la aseguradora facture varias
+// coberturas juntas y el usuario haga UNA sola transferencia que cubre varios seguros (reportado
+// por el usuario con un caso real: una transferencia, tres pólizas). Cada póliza seleccionada
+// genera su propio gasto/pago (o liquida su factura pendiente si ya había una cargada) pero todas
+// comparten fecha, medio de pago, banco, comprobante y observaciones — porque físicamente fue un
+// solo movimiento bancario.
+function ModalPagoPoliza({ polizas, polizaIdDefecto, bancos, renovaciones = [], pagos = [], onClose, onGuardar }) {
+  const defId = polizaIdDefecto || polizas[0]?.id
+  const [montos, setMontos] = useState(() => {
+    const ini = {}
+    polizas.forEach(p => {
+      // Si hay una sola póliza candidata (o es la que vino preseleccionada), se precarga con el
+      // saldo pendiente teórico — así el usuario ve de entrada "esto es lo que falta" y solo tiene
+      // que confirmarlo o ajustarlo, en vez de arrancar de un campo vacío.
+      const precargar = polizas.length === 1 || p.id === defId
+      ini[p.id] = precargar ? String(Math.round(saldoPendientePoliza(p, renovaciones, pagos) * 100) / 100 || '') : ''
+    })
+    return ini
+  })
+  const [common, setCommon] = useState({ fecha_pago: hoy(), medio_pago: 'transferencia', banco_id: '', nro_operacion: '', observaciones: '' })
   const [file, setFile] = useState(null)
   const [subiendo, setSubiendo] = useState(false)
   const [analizando, setAnalizando] = useState(false)
   const [analizado, setAnalizado] = useState(false)
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const necesitaBanco = ['transferencia', 'cheque', 'tarjeta', 'tarjeta_credito', 'tarjeta_debito'].includes(form.medio_pago)
+  const [montoLeido, setMontoLeido] = useState(null)
+  const setC = (k, v) => setCommon(c => ({ ...c, [k]: v }))
+  const setMonto = (id, v) => setMontos(m => ({ ...m, [id]: v }))
+  const necesitaBanco = ['transferencia', 'cheque', 'tarjeta', 'tarjeta_credito', 'tarjeta_debito'].includes(common.medio_pago)
 
   // El "comprobante de pago" acá puede ser una transferencia, pero también una CUPONERA de la
   // aseguradora (a veces se paga directo con el cupón, sin que exista una factura aparte). Al
   // elegir el archivo lo leemos con la misma IA de comprobantes de gasto para autocompletar
-  // fecha/monto — y lo comparamos contra la prima esperada de la póliza para que el usuario note
-  // cualquier diferencia antes de guardar (reajustes, cargos parciales, etc.).
+  // fecha/monto. Si hay una sola póliza en juego se lo aplica directo; si hay varias, el monto
+  // leído se muestra como dato de referencia (no sabemos a cuál de las pólizas corresponde).
   const onFile = async (f) => {
-    setFile(f); setAnalizado(false)
+    setFile(f); setAnalizado(false); setMontoLeido(null)
     if (!f) return
     setAnalizando(true)
     try {
@@ -1209,8 +1274,11 @@ function ModalPagoPoliza({ polizas, polizaIdDefecto, bancos, renovaciones = [], 
       if (respRaw.ok && data?.content) {
         const text = data.content.map(i => i.text || '').join('')
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
-        if (parsed.monto) set('monto', parsed.monto)
-        if (parsed.fecha) set('fecha_pago', parsed.fecha)
+        if (parsed.fecha) setC('fecha_pago', parsed.fecha)
+        if (parsed.monto) {
+          if (polizas.length === 1) setMonto(polizas[0].id, parsed.monto)
+          setMontoLeido(parsed.monto)
+        }
         setAnalizado(true)
       }
     } catch (e) {
@@ -1220,56 +1288,65 @@ function ModalPagoPoliza({ polizas, polizaIdDefecto, bancos, renovaciones = [], 
     }
   }
 
-  const polizaSel = polizas.find(p => p.id === form.poliza_id)
-  const primaEsperada = polizaSel ? primaConRenovaciones(polizaSel, renovaciones) : 0
-  const montoNum = parseFloat(form.monto) || 0
-  const difiereDeLaPrima = analizado && primaEsperada > 0 && montoNum > 0 && Math.abs(montoNum - primaEsperada) / primaEsperada > 0.02
+  const filas = polizas.map(p => ({ poliza: p, saldo: saldoPendientePoliza(p, renovaciones, pagos) }))
+  const totalIngresado = Object.values(montos).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+  const cantSeleccionadas = Object.values(montos).filter(v => (parseFloat(v) || 0) > 0).length
+  const hayUSD = polizas.some(p => p.moneda === 'USD')
 
   return (
-    <Modal title="Registrar pago de póliza" onClose={onClose} guardarLabel={subiendo ? 'Subiendo...' : 'Guardar pago'} onGuardar={async () => {
-      if (!form.poliza_id) throw new Error('Elegí a qué póliza corresponde el pago')
-      if (!montoNum) throw new Error('Ingresá un monto válido')
+    <Modal title={polizas.length > 1 ? 'Registrar pago — una o más pólizas' : 'Registrar pago de póliza'} onClose={onClose} guardarLabel={subiendo ? 'Subiendo...' : 'Guardar pago'} onGuardar={async () => {
+      const seleccion = polizas
+        .map(p => ({ poliza_id: p.id, monto: Math.round((parseFloat(montos[p.id]) || 0) * 100) / 100 }))
+        .filter(x => x.monto > 0)
+      if (seleccion.length === 0) throw new Error('Ingresá el monto a pagar en al menos una póliza')
       let comprobante_url = null
       if (file) { setSubiendo(true); comprobante_url = await subirDocumentoStorage(file, 'pagos_poliza'); setSubiendo(false); if (!comprobante_url) throw new Error('No se pudo subir el comprobante') }
-      await onGuardar({ ...form, monto: montoNum, banco_id: form.banco_id || null, comprobante_url })
+      await onGuardar({ polizas: seleccion, ...common, banco_id: common.banco_id || null, comprobante_url })
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {polizas.length > 1 && (
-          <Campo label="Póliza">
-            <select style={inputSt} value={form.poliza_id} onChange={e => set('poliza_id', e.target.value)}>
-              {polizas.map(p => <option key={p.id} value={p.id}>{p.nro_poliza || 's/n'} — {p.obras?.nombre}</option>)}
-            </select>
-          </Campo>
-        )}
         <Campo label="Comprobante de pago o cuponera (opcional, se lee con IA)">
           <input type="file" accept="image/*,application/pdf" onChange={e => onFile(e.target.files[0] || null)} />
           {analizando && <div style={{ fontSize: 11, color: C.purple, marginTop: 4 }}>🔎 Leyendo con IA...</div>}
-          {analizado && !analizando && <div style={{ fontSize: 11, color: C.green, marginTop: 4 }}>✓ Fecha y monto autocompletados por IA — revisalos antes de guardar.</div>}
-          {difiereDeLaPrima && <div style={{ fontSize: 11, color: '#8A5200', marginTop: 4 }}>⚠️ El monto leído ({fmt(montoNum)}) difiere de la prima esperada de esta póliza ({fmt(primaEsperada)}) — puede ser normal (pago parcial, reajuste) pero conviene verificarlo.</div>}
+          {analizado && !analizando && polizas.length === 1 && <div style={{ fontSize: 11, color: C.green, marginTop: 4 }}>✓ Fecha y monto autocompletados por IA — revisalos antes de guardar.</div>}
+          {analizado && !analizando && polizas.length > 1 && montoLeido && <div style={{ fontSize: 11, color: C.purple, marginTop: 4 }}>ℹ️ La IA leyó $ {fmt(montoLeido)} en el comprobante — repartilo entre las pólizas que corresponda, abajo.</div>}
         </Campo>
         <VistaPreviaArchivo file={file} url={null} />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <Campo label="Fecha de pago"><input type="date" style={inputSt} value={form.fecha_pago} onChange={e => set('fecha_pago', e.target.value)} /></Campo>
-          <Campo label="Monto ($)"><input type="number" style={inputSt} value={form.monto} onChange={e => set('monto', e.target.value)} /></Campo>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            {polizas.length > 1 ? 'Elegí a qué póliza(s) corresponde esta transferencia' : 'Póliza'}
+          </div>
+          {filas.map(({ poliza: p, saldo }) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{p.nro_poliza || 's/n'} — {p.obras?.nombre}</div>
+                <div style={{ fontSize: 11, color: C.textFaint }}>Saldo pendiente (teórico): $ {fmtDec(saldo)}{p.moneda === 'USD' ? ' · en pesos, según t.c. cargado' : ''}</div>
+              </div>
+              <input type="number" style={{ ...inputSt, width: 130 }} placeholder="0" value={montos[p.id]} onChange={e => setMonto(p.id, e.target.value)} />
+              {saldo > 0 && <button type="button" onClick={() => setMonto(p.id, String(Math.round(saldo * 100) / 100))} style={{ ...btnIconSt, fontSize: 11 }} title="Completar con el saldo pendiente — deja esta póliza en $0">= saldo</button>}
+            </div>
+          ))}
+          {polizas.length > 1 && <div style={{ fontSize: 11, color: C.textMuted, textAlign: 'right' }}>Total a registrar: $ {fmtDec(totalIngresado)}{cantSeleccionadas > 1 ? ` — en ${cantSeleccionadas} pólizas` : ''}</div>}
+          {hayUSD && <div style={{ fontSize: 11, color: '#8A5200' }}>💡 El saldo de una póliza en USD es teórico (al tipo de cambio cargado en la póliza) — es normal que difiera un poco del monto real transferido (dólar comprador/vendedor, cotización de otro día). Ajustá el monto de esa póliza al valor real para que quede en $0 y no se acumule una diferencia sin sentido.</div>}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: necesitaBanco ? '1fr 1fr' : '1fr', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <Campo label="Fecha de pago"><input type="date" style={inputSt} value={common.fecha_pago} onChange={e => setC('fecha_pago', e.target.value)} /></Campo>
           <Campo label="Medio de pago">
-            <select style={inputSt} value={form.medio_pago} onChange={e => set('medio_pago', e.target.value)}>
+            <select style={inputSt} value={common.medio_pago} onChange={e => setC('medio_pago', e.target.value)}>
               {MEDIOS_PAGO.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </Campo>
-          {necesitaBanco && (
-            <Campo label="Banco">
-              <select style={inputSt} value={form.banco_id} onChange={e => set('banco_id', e.target.value)}>
-                <option value="">-- Elegir --</option>
-                {bancos.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
-              </select>
-            </Campo>
-          )}
         </div>
-        <Campo label="Nro. de operación (opcional)"><input style={inputSt} value={form.nro_operacion} onChange={e => set('nro_operacion', e.target.value)} /></Campo>
-        <Campo label="Observaciones"><textarea style={{ ...inputSt, minHeight: 50 }} value={form.observaciones} onChange={e => set('observaciones', e.target.value)} /></Campo>
-        <div style={{ fontSize: 11, color: C.textFaint }}>Este pago se registra también como gasto (concepto "Seguros / Pólizas") en la obra correspondiente. Si había una factura pendiente cargada para esta póliza, se liquida esa en vez de crear un gasto nuevo.</div>
+        {necesitaBanco && (
+          <Campo label="Banco">
+            <select style={inputSt} value={common.banco_id} onChange={e => setC('banco_id', e.target.value)}>
+              <option value="">-- Elegir --</option>
+              {bancos.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+            </select>
+          </Campo>
+        )}
+        <Campo label="Nro. de operación (opcional)"><input style={inputSt} value={common.nro_operacion} onChange={e => setC('nro_operacion', e.target.value)} /></Campo>
+        <Campo label="Observaciones"><textarea style={{ ...inputSt, minHeight: 50 }} value={common.observaciones} onChange={e => setC('observaciones', e.target.value)} /></Campo>
+        <div style={{ fontSize: 11, color: C.textFaint }}>{polizas.length > 1 ? 'Si pagás más de una póliza acá, se registra un gasto "Seguros / Pólizas" por cada una (misma fecha, medio de pago y comprobante) — cada póliza queda con su cuenta corriente al día, aunque haya sido una sola transferencia.' : 'Este pago se registra también como gasto (concepto "Seguros / Pólizas") en la obra correspondiente. Si había una factura pendiente cargada para esta póliza, se liquida esa en vez de crear un gasto nuevo.'}</div>
       </div>
     </Modal>
   )
@@ -1842,6 +1919,7 @@ export default function Seguros() {
   const { renovaciones: renovacionesPoliza, setRenovaciones: setRenovacionesPoliza, loading: loadingRenovaciones } = useRenovacionesPoliza()
   const bancos = useBancosSeguros()
   const clientes = useClientesSeguros()
+  const { proveedores, setProveedores } = useProveedoresSeguros()
   const { diasAviso, guardarDiasAviso } = useConfiguracionSeguros()
 
   const [vista, setVista] = useState('obras') // 'obras' | 'cuentaCorriente'
@@ -2006,8 +2084,15 @@ export default function Seguros() {
   const guardarFactura = async (form) => {
     if (!polizaParaFactura) return
     const { archivo_url, nombre_archivo, monto, fecha, nro_factura, tipo_comprobante } = form
+    let proveedor_id = null
+    const nombreProv = nombreProveedorPoliza(polizaParaFactura)
+    if (nombreProv) {
+      const prov = await resolverProveedorPorNombre(nombreProv, proveedores)
+      if (prov) { proveedor_id = prov.id; if (!proveedores.some(p => p.id === prov.id)) setProveedores(prev => [...prev, prov]) }
+    }
     const nuevoGasto = await dbWrite('POST', 'gastos', {
       obra_id: polizaParaFactura.obra_id,
+      proveedor_id,
       fecha,
       concepto: 'seguros',
       descripcion: `Factura prima póliza ${polizaParaFactura.nro_poliza || 's/n'} — ${polizaParaFactura.aseguradora || 'aseguradora s/e'}${nro_factura ? ` (Fact. ${nro_factura})` : ''}`,
@@ -2031,48 +2116,87 @@ export default function Seguros() {
   // gasto (+ pago) en la obra correspondiente. Si esta póliza tiene una factura pendiente (gasto
   // pagado=false, generado por guardarFactura), liquidamos ESE gasto en vez de crear uno nuevo —
   // así no se duplica el gasto de la obra cuando primero se cargó la factura y después se pagó.
+  // `form.polizas` es un array de { poliza_id, monto } — una o más (ver ModalPagoPoliza: desde
+  // octubre 2026 una sola transferencia puede liquidar varias pólizas a la vez). El resto de los
+  // datos (fecha, medio de pago, banco, comprobante, observaciones) es común a todas porque
+  // físicamente fue un solo movimiento bancario — cada póliza genera su propio gasto/pago (o
+  // liquida su factura pendiente si ya tenía una cargada), pero todos comparten esos datos.
   const guardarPagoPoliza = async (form) => {
-    const poliza = polizas.find(p => p.id === form.poliza_id)
-    if (!poliza) throw new Error('No encontré la póliza')
-    const { fecha_pago, monto, medio_pago, banco_id, nro_operacion, observaciones, comprobante_url } = form
+    const { polizas: seleccion, fecha_pago, medio_pago, banco_id, nro_operacion, observaciones, comprobante_url } = form
+    if (!seleccion || seleccion.length === 0) throw new Error('No hay ninguna póliza con monto a pagar')
+    const pagosNuevos = []
+    let liquidaronFactura = 0
+    // Copia local de los proveedores conocidos — se va actualizando DENTRO de este loop a medida
+    // que se crean nuevos, para que si dos pólizas de esta misma tanda comparten aseguradora/corredor
+    // (el caso típico: una transferencia que paga varias pólizas de la misma compañía) la segunda
+    // encuentre el proveedor que acaba de crear la primera en vez de duplicarlo. Recién al final se
+    // sincroniza el estado de React una sola vez con los que realmente se crearon.
+    let proveedoresCache = proveedores
+    const proveedoresNuevos = []
+    for (const { poliza_id, monto } of seleccion) {
+      const poliza = polizas.find(p => p.id === poliza_id)
+      if (!poliza) continue
 
-    // Buscamos el gasto pendiente vinculado a alguna factura de esta póliza consultando directo,
-    // porque `poliza.poliza_documentos` no trae el estado `pagado` del gasto (solo el gasto_id).
-    let gastoAUsar = null
-    const docsFactura = (poliza.poliza_documentos || []).filter(d => d.tipo === 'factura' && d.gasto_id)
-    if (docsFactura.length > 0) {
-      const { data: gastosPendientes } = await supabase.from('gastos').select('id, pagado').in('id', docsFactura.map(d => d.gasto_id)).eq('pagado', false)
-      if (gastosPendientes && gastosPendientes.length > 0) gastoAUsar = gastosPendientes[0]
-    }
+      // Buscamos el gasto pendiente vinculado a alguna factura de esta póliza consultando directo,
+      // porque `poliza.poliza_documentos` no trae el estado `pagado` del gasto (solo el gasto_id).
+      let gastoAUsar = null
+      const docsFactura = (poliza.poliza_documentos || []).filter(d => d.tipo === 'factura' && d.gasto_id)
+      if (docsFactura.length > 0) {
+        const { data: gastosPendientes } = await supabase.from('gastos').select('id, pagado, proveedor_id').in('id', docsFactura.map(d => d.gasto_id)).eq('pagado', false)
+        if (gastosPendientes && gastosPendientes.length > 0) gastoAUsar = gastosPendientes[0]
+      }
 
-    let gastoId
-    if (gastoAUsar) {
-      await dbWrite('PATCH', 'gastos', { pagado: true, monto, fecha: fecha_pago, tipo_comprobante: comprobante_url ? 'recibo' : undefined }, `id=eq.${gastoAUsar.id}`)
-      gastoId = gastoAUsar.id
-    } else {
-      const nuevoGasto = await dbWrite('POST', 'gastos', {
-        obra_id: poliza.obra_id,
-        fecha: fecha_pago,
-        concepto: 'seguros',
-        descripcion: `Prima póliza ${poliza.nro_poliza || 's/n'} — ${poliza.aseguradora || 'aseguradora s/e'}`,
-        monto,
-        tipo_comprobante: comprobante_url ? 'recibo' : 'sin_comprobante',
-        discrimina_iva: false,
-        pagado: true,
+      // Se resuelve el proveedor (corredor/aseguradora) salvo que ya se vaya a liquidar un gasto
+      // pendiente que YA tenga uno cargado — si es uno viejo (de antes de este arreglo, octubre
+      // 2026) sin proveedor_id, se lo completamos acá mismo al liquidarlo.
+      let proveedor_id = null
+      if (!gastoAUsar || !gastoAUsar.proveedor_id) {
+        const nombreProv = nombreProveedorPoliza(poliza)
+        if (nombreProv) {
+          const prov = await resolverProveedorPorNombre(nombreProv, proveedoresCache)
+          if (prov) {
+            proveedor_id = prov.id
+            if (!proveedoresCache.some(p => p.id === prov.id)) { proveedoresCache = [...proveedoresCache, prov]; proveedoresNuevos.push(prov) }
+          }
+        }
+      }
+
+      let gastoId
+      if (gastoAUsar) {
+        await dbWrite('PATCH', 'gastos', { pagado: true, monto, fecha: fecha_pago, tipo_comprobante: comprobante_url ? 'recibo' : undefined, proveedor_id: gastoAUsar.proveedor_id || proveedor_id }, `id=eq.${gastoAUsar.id}`)
+        gastoId = gastoAUsar.id
+        liquidaronFactura++
+      } else {
+        const nuevoGasto = await dbWrite('POST', 'gastos', {
+          obra_id: poliza.obra_id,
+          proveedor_id,
+          fecha: fecha_pago,
+          concepto: 'seguros',
+          descripcion: `Prima póliza ${poliza.nro_poliza || 's/n'} — ${poliza.aseguradora || 'aseguradora s/e'}`,
+          monto,
+          tipo_comprobante: comprobante_url ? 'recibo' : 'sin_comprobante',
+          discrimina_iva: false,
+          pagado: true,
+        }, null, true)
+        gastoId = nuevoGasto?.id || null
+      }
+      if (gastoId) {
+        await dbWrite('POST', 'pagos', { gasto_id: gastoId, fecha_pago, medio_pago: medio_pago || 'transferencia', monto, banco_id: banco_id || null, nro_operacion: nro_operacion || null, comprobante_url: comprobante_url || null, observaciones: observaciones || null })
+      }
+      const nuevoPago = await dbWrite('POST', 'pagos_poliza', {
+        poliza_id: poliza.id, fecha_pago, monto, medio_pago: medio_pago || 'transferencia',
+        banco_id: banco_id || null, nro_operacion: nro_operacion || null, comprobante_url: comprobante_url || null,
+        observaciones: observaciones || null, gasto_id: gastoId || null,
       }, null, true)
-      gastoId = nuevoGasto?.id || null
+      if (nuevoPago) pagosNuevos.push(nuevoPago)
     }
-    if (gastoId) {
-      await dbWrite('POST', 'pagos', { gasto_id: gastoId, fecha_pago, medio_pago: medio_pago || 'transferencia', monto, banco_id: banco_id || null, nro_operacion: nro_operacion || null, comprobante_url: comprobante_url || null, observaciones: observaciones || null })
-    }
-    const nuevoPago = await dbWrite('POST', 'pagos_poliza', {
-      poliza_id: poliza.id, fecha_pago, monto, medio_pago: medio_pago || 'transferencia',
-      banco_id: banco_id || null, nro_operacion: nro_operacion || null, comprobante_url: comprobante_url || null,
-      observaciones: observaciones || null, gasto_id: gastoId || null,
-    }, null, true)
-    if (nuevoPago) setPagosPoliza(prev => [nuevoPago, ...prev])
+    if (pagosNuevos.length > 0) setPagosPoliza(prev => [...pagosNuevos, ...prev])
+    if (proveedoresNuevos.length > 0) setProveedores(prev => [...prev, ...proveedoresNuevos])
     setModal(null); setPolizasParaPago(null)
-    toast(gastoAUsar ? 'Pago registrado — se liquidó la factura pendiente de esta póliza' : 'Pago registrado y reflejado como gasto de la obra', 'ok')
+    const msg = seleccion.length > 1
+      ? `Pago registrado en ${seleccion.length} pólizas${liquidaronFactura > 0 ? ` (${liquidaronFactura} liquidó factura pendiente)` : ''}`
+      : (liquidaronFactura > 0 ? 'Pago registrado — se liquidó la factura pendiente de esta póliza' : 'Pago registrado y reflejado como gasto de la obra')
+    toast(msg, 'ok')
   }
 
   // Registrar el cargo de una renovación automática por período (aumenta la deuda con la
@@ -2199,7 +2323,7 @@ export default function Seguros() {
       {modal === 'factura' && polizaParaFactura && <ModalFacturaPoliza poliza={polizaParaFactura} onClose={() => { setModal(null); setPolizaParaFactura(null) }} onGuardar={guardarFactura} />}
       {modal === 'recepcion' && obraParaRecepcion && <ModalRecepcionObra obra={obraParaRecepcion} tipoRecepcion={tipoRecepcion} onClose={() => { setModal(null); setObraParaRecepcion(null); setTipoRecepcion(null) }} onGuardar={guardarRecepcion} />}
       {modal === 'confirmarBaja' && polizaParaBaja && <ModalConfirmarBaja poliza={polizaParaBaja} onClose={() => { setModal(null); setPolizaParaBaja(null) }} onGuardar={guardarConfirmacionBaja} />}
-      {modal === 'pago' && polizasParaPago && <ModalPagoPoliza polizas={polizasParaPago} polizaIdDefecto={polizasParaPago[0]?.id} bancos={bancos} renovaciones={renovacionesPoliza} onClose={() => { setModal(null); setPolizasParaPago(null) }} onGuardar={guardarPagoPoliza} />}
+      {modal === 'pago' && polizasParaPago && <ModalPagoPoliza polizas={polizasParaPago} polizaIdDefecto={polizasParaPago[0]?.id} bancos={bancos} renovaciones={renovacionesPoliza} pagos={pagosPoliza} onClose={() => { setModal(null); setPolizasParaPago(null) }} onGuardar={guardarPagoPoliza} />}
       {modal === 'renovacion' && polizaParaRenovacion && <ModalRenovacionPoliza poliza={polizaParaRenovacion} renovaciones={renovacionesPoliza} onClose={() => { setModal(null); setPolizaParaRenovacion(null) }} onGuardar={guardarRenovacion} />}
       {modal === 'confirmarRenovacion' && renovacionParaConfirmar && <ModalConfirmarRenovacion renovacion={renovacionParaConfirmar} onClose={() => { setModal(null); setRenovacionParaConfirmar(null) }} onGuardar={form => confirmarRenovacion(renovacionParaConfirmar, form)} />}
     </div>
