@@ -436,6 +436,18 @@ async function comprimirImagenBlob(file, maxLado = 1600, calidad = 0.72) {
     new Promise((_, rej) => setTimeout(() => rej(new Error('toBlob timeout')), 10000))
   ])
 }
+// Token de la sesión actual, leído directo del storage del cliente (misma storageKey que configura
+// supabaseClient.js: 'seate-auth') — ver nota en subirDocumentoStorage sobre por qué se usa esto en
+// vez de supabase.storage.from(...).upload(...).
+function _accessTokenActual() {
+  try {
+    const raw = localStorage.getItem('seate-auth')
+    if (!raw) return null
+    return JSON.parse(raw)?.access_token || null
+  } catch {
+    return null
+  }
+}
 // Subida directa de documentos (comprobante de pago, endoso, recepción de obra, baja, etc.) — no requiere IA.
 async function subirDocumentoStorage(file, carpeta = 'polizas') {
   try {
@@ -446,9 +458,32 @@ async function subirDocumentoStorage(file, carpeta = 'polizas') {
       try { blob = await comprimirImagenBlob(file); ext = 'jpg' } catch { /* sube original */ }
     }
     const path = `${carpeta}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+    const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+    // Subida por fetch directo en vez de supabase.storage.from(...).upload(...) (octubre 2026): el
+    // método del SDK se quedaba colgado para siempre —ni resolvía ni tiraba error— en la SEGUNDA
+    // subida de storage dentro de la misma carga de página (la primera siempre funcionaba bien; se
+    // reprodujo así de forma consistente varias veces, en pestañas distintas y después de recargar).
+    // Un fetch directo con el mismo token al mismo bucket respondía bien y en menos de 1 segundo —
+    // confirma que el cuelgue estaba del lado del cliente (SDK), no en Supabase ni en la policy de
+    // RLS del bucket. Este fetch manual hace la misma subida evitando lo que sea que el SDK esté
+    // haciendo mal ahí (algún lock interno que no se libera, es la sospecha más probable).
     const intentar = () => Promise.race([
-      supabase.storage.from('polizas-documentos').upload(path, blob, { upsert: true }),
-      new Promise(r => setTimeout(() => r({ data: null, error: { message: 'timeout' } }), 60000))
+      (async () => {
+        const token = _accessTokenActual()
+        if (!token) return { error: { message: 'sin sesión activa' } }
+        try {
+          const resp = await fetch(`${SUPABASE_URL}/storage/v1/object/polizas-documentos/${path}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': blob.type || 'application/octet-stream', 'x-upsert': 'true' },
+            body: blob,
+          })
+          if (!resp.ok) { const txt = await resp.text().catch(() => ''); return { error: { message: `HTTP ${resp.status}${txt ? ` — ${txt.slice(0, 200)}` : ''}` } } }
+          return { error: null }
+        } catch (e) {
+          return { error: { message: e?.message || 'fetch falló' } }
+        }
+      })(),
+      new Promise(r => setTimeout(() => r({ error: { message: 'timeout' } }), 60000))
     ])
     let res = await intentar()
     // Antes acá no se logueaba nada si Supabase devolvía un error "prolijo" (sin throw) — el toast
@@ -462,7 +497,7 @@ async function subirDocumentoStorage(file, carpeta = 'polizas') {
       toast(`No se pudo subir el archivo${res.error?.message ? ` — ${res.error.message}` : ''}. Verificá la conexión e intentá de nuevo.`)
       return null
     }
-    return supabase.storage.from('polizas-documentos').getPublicUrl(path).data.publicUrl
+    return `${SUPABASE_URL}/storage/v1/object/public/polizas-documentos/${path}`
   } catch (e) {
     console.error('subirDocumentoStorage:', e)
     toast(`No se pudo subir el archivo${e?.message ? ` — ${e.message}` : ''}.`)
