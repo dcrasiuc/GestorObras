@@ -532,6 +532,10 @@ function useObrasSeguros() {
     try {
       const { data, error } = await supabase.from('obras').select('*, clientes(nombre)').order('created_at', { ascending: false })
       if (!error && data) setObras(data)
+      // Antes un error "prolijo" (sin throw) acá se tragaba en silencio: la lista de obras se
+      // quedaba vacía para siempre y no había ninguna pista de por qué (bug reportado octubre 2026:
+      // tras volver a iniciar sesión, Seguros mostraba "0 obras" sin explicación, en ningún lado).
+      else if (error) { console.error('useObrasSeguros:', error); toast(`No se pudieron cargar las obras — ${error.message || error.code || 'error desconocido'}.`) }
     } catch (e) { console.error(e) }
     clearTimeout(failsafe)
     setLoading(false)
@@ -557,6 +561,7 @@ function usePolizas() {
         .select('*, obras(nombre, organismo, etapa, estado_licitacion, monto_contrato, clientes(nombre)), poliza_documentos(*)')
         .order('created_at', { ascending: false })
       if (!error && data) setPolizas(data)
+      else if (error) { console.error('usePolizas:', error); toast(`No se pudieron cargar las pólizas — ${error.message || error.code || 'error desconocido'}.`) }
     } catch (e) { console.error(e) }
     clearTimeout(failsafe)
     setLoading(false)
@@ -574,6 +579,7 @@ function usePagosPoliza() {
     try {
       const { data, error } = await supabase.from('pagos_poliza').select('*').order('fecha_pago', { ascending: false })
       if (!error && data) setPagos(data)
+      else if (error) { console.error('usePagosPoliza:', error); toast(`No se pudieron cargar los pagos de pólizas — ${error.message || error.code || 'error desconocido'}.`) }
     } catch (e) { console.error(e) }
     clearTimeout(failsafe)
     setLoading(false)
@@ -595,6 +601,7 @@ function useRenovacionesPoliza() {
     try {
       const { data, error } = await supabase.from('renovaciones_poliza').select('*').order('periodo_hasta', { ascending: false })
       if (!error && data) setRenovaciones(data)
+      else if (error) { console.error('useRenovacionesPoliza:', error); toast(`No se pudieron cargar las renovaciones de pólizas — ${error.message || error.code || 'error desconocido'}.`) }
     } catch (e) { console.error(e) }
     clearTimeout(failsafe)
     setLoading(false)
