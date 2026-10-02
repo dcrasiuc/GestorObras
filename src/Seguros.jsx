@@ -727,10 +727,25 @@ function calcularAlertas(polizas, renovaciones = [], diasAviso = DIAS_AVISO_VENC
   return polizas.map(p => {
     const motivos = []
     let accion = null
+    // Mantenimiento de Oferta: caduca sola al adjudicarse la obra (o vencer la oferta) — a
+    // diferencia de Cumplimiento de Contrato, Anticipo Financiero y Fondo de Reparo, NO hay que
+    // presentarle nada a la aseguradora pidiendo la baja ni esperar que ella la confirme (aclarado
+    // con el usuario, octubre 2026: "muere por sí solo, no debería exigirse presentar baja ni
+    // confirmar baja"). Por eso se chequea aparte, ANTES del flujo general activa→baja_presentada→
+    // confirmar_baja de abajo, y nunca entra a ese flujo: ofrece una única acción que cierra la
+    // póliza directo. Esto también resuelve sola cualquier póliza de este tipo que haya quedado mal
+    // marcada "baja_presentada" por el flujo viejo, antes de esta corrección.
+    if (p.tipo_cobertura === 'mantenimiento_oferta' && p.estado_admin !== 'dada_de_baja') {
+      const o = p.obras
+      if ((o && o.etapa === 'ejecucion') || p.estado_admin === 'baja_presentada') {
+        motivos.push('La obra ya fue adjudicada — esta garantía de Mantenimiento de Oferta caduca sola, no hace falta presentarle ni esperar confirmación de baja a la aseguradora.')
+        return { poliza: p, motivos, accion: 'cerrar_mantenimiento_oferta' }
+      }
+      return null
+    }
     if (p.estado_admin === 'activa') {
       const o = p.obras
       if (o) {
-        if (p.tipo_cobertura === 'mantenimiento_oferta' && o.etapa === 'ejecucion') motivos.push('La obra ya fue adjudicada — esta garantía de Mantenimiento de Oferta ya no corresponde.')
         if (p.tipo_cobertura === 'ejecucion_contrato' && (o.estado_licitacion === 'recepcion_provisoria' || o.estado_licitacion === 'recepcion_definitiva')) motivos.push('La obra ya llegó a recepción — esta garantía de Cumplimiento de Contrato ya no corresponde.')
         // Anticipo Financiero se amortiza contra los certificados de obra (no espera a la recepción como
         // Cumplimiento de Contrato) — si la obra ya llegó a recepción definitiva y la póliza sigue activa,
@@ -1517,7 +1532,7 @@ function ListaDocumentos({ documentos }) {
 // solo muestra lo esencial para identificarla (tipo de seguro y vencimiento, si tiene); el resto
 // del detalle (descripción, montos, cláusulas, documentos, acciones) aparece al desplegar. Las
 // alertas rojas (vencimiento/renovación/baja) se muestran siempre, estén o no desplegadas.
-function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = [], diasAviso = DIAS_AVISO_VENCIMIENTO, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditar, onEliminar }) {
+function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = [], diasAviso = DIAS_AVISO_VENCIMIENTO, onMarcarBajaPresentada, onConfirmarBaja, onCerrarMantenimientoOferta, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditar, onEliminar }) {
   const [expandido, setExpandido] = useState(false)
   const totalPagado = pagos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
   const renovacionesVigentes = renovaciones.filter(r => !r.anulada)
@@ -1546,6 +1561,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
           <div>
             {alertaInfo.accion === 'presentar_baja' && <BtnSecondary onClick={() => onMarcarBajaPresentada(poliza)}>Marcar baja presentada a la aseguradora</BtnSecondary>}
             {alertaInfo.accion === 'confirmar_baja' && <BtnSecondary onClick={() => onConfirmarBaja(poliza)}>Confirmar baja de la aseguradora</BtnSecondary>}
+            {alertaInfo.accion === 'cerrar_mantenimiento_oferta' && <BtnSecondary onClick={() => onCerrarMantenimientoOferta(poliza)}>Marcar como dada de baja (caduca sola)</BtnSecondary>}
             {alertaInfo.accion === 'registrar_renovacion' && <BtnSecondary onClick={() => onRegistrarRenovacion(poliza)}>Registrar cargo de renovación</BtnSecondary>}
           </div>
         </div>
@@ -1622,7 +1638,7 @@ function FilaPoliza({ poliza, alertaInfo, advertencias, pagos, renovaciones = []
 }
 
 // ── Fila de obra (con transición de etapa/estado de licitación y sus pólizas anidadas) ──
-function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditarPoliza, onEliminarPoliza, onEditarObra }) {
+function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, alertas, diasAviso = DIAS_AVISO_VENCIMIENTO, onCambiarEtapa, onPedirRecepcion, onNuevaPoliza, onMarcarBajaPresentada, onConfirmarBaja, onCerrarMantenimientoOferta, onAgregarDocumento, onAgregarFactura, onRegistrarPago, onRegistrarRenovacion, onAnularRenovacion, onConfirmarRenovacion, onEditarPoliza, onEliminarPoliza, onEditarObra }) {
   const [expandido, setExpandido] = useState(false)
   const polizasPendientes = polizasDeLaObra.filter(p => p.estado_admin !== 'dada_de_baja')
   // Tipos de cobertura que tiene cargados esta obra ahora mismo (sin contar pólizas dadas de baja) —
@@ -1689,7 +1705,7 @@ function FilaObra({ obra, polizasDeLaObra, pagosPoliza, renovacionesPoliza, aler
                   pagos={pagosPoliza.filter(pg => pg.poliza_id === p.id)}
                   renovaciones={renovacionesPoliza.filter(r => r.poliza_id === p.id)}
                   diasAviso={diasAviso}
-                  onMarcarBajaPresentada={onMarcarBajaPresentada} onConfirmarBaja={onConfirmarBaja}
+                  onMarcarBajaPresentada={onMarcarBajaPresentada} onConfirmarBaja={onConfirmarBaja} onCerrarMantenimientoOferta={onCerrarMantenimientoOferta}
                   onAgregarDocumento={onAgregarDocumento} onAgregarFactura={onAgregarFactura} onRegistrarPago={onRegistrarPago}
                   onRegistrarRenovacion={onRegistrarRenovacion} onAnularRenovacion={onAnularRenovacion} onConfirmarRenovacion={onConfirmarRenovacion}
                   onEditar={onEditarPoliza} onEliminar={onEliminarPoliza} />
@@ -2075,6 +2091,15 @@ export default function Seguros() {
     toast('Póliza marcada como baja presentada', 'ok')
   }
 
+  // Mantenimiento de Oferta caduca sola (ver nota en calcularAlertas) — un solo paso, sin modal ni
+  // documento de la aseguradora, directo a "dada de baja".
+  const cerrarMantenimientoOferta = async (poliza) => {
+    if (!window.confirm('Esta garantía de Mantenimiento de Oferta caduca sola — no hace falta que la aseguradora confirme nada. ¿La marco como dada de baja?')) return
+    await dbWrite('PATCH', 'polizas', { estado_admin: 'dada_de_baja' }, `id=eq.${poliza.id}`)
+    setPolizas(prev => prev.map(p => p.id === poliza.id ? { ...p, estado_admin: 'dada_de_baja' } : p))
+    toast('Póliza de Mantenimiento de Oferta cerrada', 'ok')
+  }
+
   const guardarConfirmacionBaja = async ({ url }) => {
     const poliza = polizaParaBaja
     await dbWrite('PATCH', 'polizas', { estado_admin: 'dada_de_baja' }, `id=eq.${poliza.id}`)
@@ -2366,6 +2391,7 @@ export default function Seguros() {
                   onNuevaPoliza={id => { setObraIdParaPoliza(id); setPolizaParaEditar(null); setModal('poliza') }}
                   onMarcarBajaPresentada={marcarBajaPresentada}
                   onConfirmarBaja={pz => { setPolizaParaBaja(pz); setModal('confirmarBaja') }}
+                  onCerrarMantenimientoOferta={cerrarMantenimientoOferta}
                   onAgregarDocumento={pz => { setPolizaParaDocumento(pz); setModal('documento') }}
                   onAgregarFactura={pz => { setPolizaParaFactura(pz); setModal('factura') }}
                   onRegistrarPago={pz => { setPolizasParaPago([pz]); setModal('pago') }}
