@@ -483,7 +483,12 @@ async function subirDocumentoStorage(file, carpeta = 'polizas') {
           return { error: { message: e?.message || 'fetch falló' } }
         }
       })(),
-      new Promise(r => setTimeout(() => r({ error: { message: 'timeout' } }), 60000))
+      // 240s (antes 60s): con archivos más pesados (pólizas/facturas escaneadas de varios MB) una
+      // conexión de subida lenta puede necesitar más de 60s para un solo POST; 60s alcanzaba para
+      // los archivos chicos probados en octubre 2026 pero cortaba de forma prematura (sin que el
+      // fetch realmente hubiera fallado) en un PDF de ~5MB — el timeout se disparaba antes de que la
+      // subida (lenta pero en curso) pudiera terminar.
+      new Promise(r => setTimeout(() => r({ error: { message: 'timeout' } }), 240000))
     ])
     let res = await intentar()
     // Antes acá no se logueaba nada si Supabase devolvía un error "prolijo" (sin throw) — el toast
