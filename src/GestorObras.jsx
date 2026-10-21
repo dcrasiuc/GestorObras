@@ -265,8 +265,9 @@ export default function GestorObras({ usuario }) {
   // testea en producción.
   const enBeta = usuario?.email === 'dcrasiuc@gmail.com'
   // Seguros tiene su propia lista aparte de Relevamientos (setiembre 2026, pedido del usuario: sumar
-  // a alongarzo@gmail.com solo a Seguros, sin darle Relevamientos todavía).
-  const EMAILS_SEGUROS = ['dcrasiuc@gmail.com', 'alongarzo@gmail.com']
+  // a alongarzo@gmail.com solo a Seguros, sin darle Relevamientos todavía). Octubre 2026: se suma
+  // a Marcelo (marques.juan.marcelo@gmail.com) para que pueda cargar él las pólizas.
+  const EMAILS_SEGUROS = ['dcrasiuc@gmail.com', 'alongarzo@gmail.com', 'marques.juan.marcelo@gmail.com']
   const puedeVerSeguros = EMAILS_SEGUROS.includes(usuario?.email)
   // El listado de comprobantes para el contador (export ZIP) lo puede emitir un admin, o puntualmente
   // Marcelo (Juan Marcelo Marques, rol "operador") aunque no sea admin.
@@ -1085,9 +1086,10 @@ function PanelInicio({ obras, gastos, remitosPorObra = {}, esAdmin, onVerGastos,
 // ── Panel Más (mobile) ────────────────────────────────────────
 function PanelMas({ esAdmin, onContactos, onSeguros, onAdmin, onLogout, usuario, onRelevamientos }) {
   // Relevamientos: en prueba (beta), visible solo para el usuario de Daniel mientras se testea en
-  // producción. Seguros tiene su propia lista aparte (setiembre 2026, ver el otro enBeta arriba).
+  // producción. Seguros tiene su propia lista aparte (setiembre 2026, ver el otro enBeta arriba;
+  // debe mantenerse igual a EMAILS_SEGUROS de más arriba — octubre 2026, se suma Marcelo).
   const enBeta = usuario?.email === 'dcrasiuc@gmail.com'
-  const puedeVerSeguros = ['dcrasiuc@gmail.com', 'alongarzo@gmail.com'].includes(usuario?.email)
+  const puedeVerSeguros = ['dcrasiuc@gmail.com', 'alongarzo@gmail.com', 'marques.juan.marcelo@gmail.com'].includes(usuario?.email)
   const opciones = [
     { icon: '👥', label: 'Contactos', sub: 'Clientes y proveedores', action: onContactos },
     ...(puedeVerSeguros ? [{ icon: '🛡️', label: 'Seguros', sub: 'Pólizas y garantías por obra', action: onSeguros }] : []),
