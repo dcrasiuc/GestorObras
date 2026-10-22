@@ -609,8 +609,20 @@ export default function GestorObras({ usuario }) {
         const { id, nombre, detalle, cliente_id, estado, presupuesto, monto_contrato, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales } = d
         const payload = { nombre, detalle: detalle?.trim() || null, cliente_id: cliente_id || null, estado, presupuesto: parseFloat(presupuesto) || 0, monto_contrato: parseFloat(monto_contrato) || null, requiere_poliza: requiere_poliza !== false, requiere_garantia_oferta: requiere_garantia_oferta !== false, excluir_gastos_generales: !!excluir_gastos_generales }
         if (id) {
-          await dbWrite('PATCH', 'obras', payload, `id=eq.${id}`)
-          setObras(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o))
+          // Si la obra estaba "en oferta" solo porque requería garantía de OFERTA, y al editarla se
+          // desmarca esa garantía (o "requiere pólizas" en general), ya no hay nada por lo que tenga
+          // que seguir esperando — pasa a "ejecución" sola, igual que si se la creara así desde cero
+          // (ver etapaInicial). Nunca al revés: volver a tildar el requisito en una obra que ya está
+          // en ejecución no la manda de nuevo a "oferta" (podría tener gastos ya cargados). Octubre
+          // 2026: Daniel detectó que destildar el checkbox no liberaba la obra para cargar gastos —
+          // faltaba este recálculo, porque hasta ahora editar una obra adrede no tocaba la etapa.
+          const payloadFinal = { ...payload }
+          if (itemEditando?.etapa === 'oferta' && etapaInicial(payload.requiere_poliza, payload.requiere_garantia_oferta) === 'ejecucion') {
+            payloadFinal.etapa = 'ejecucion'
+          }
+          await dbWrite('PATCH', 'obras', payloadFinal, `id=eq.${id}`)
+          setObras(prev => prev.map(o => o.id === id ? { ...o, ...payloadFinal } : o))
+          if (payloadFinal.etapa === 'ejecucion') window._toast?.('Obra actualizada — ya no requiere garantía de oferta, pasa a ejecución y aparece en gastos y finanzas', 'ok')
         } else {
           // La etapa inicial depende de si requiere garantía de OFERTA específicamente (licitación
           // en curso), no de que se la haya creado desde este panel ni de si requiere pólizas en

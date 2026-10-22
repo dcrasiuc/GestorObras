@@ -2058,13 +2058,23 @@ export default function Seguros() {
   // "oferta": esas no aparecen en el panel principal de Obras (ver obrasOperativas en GestorObras.jsx)
   // hasta que se adjudican, así que hasta ahora no había ninguna forma de corregirles un dato (cliente,
   // nombre, detalle) mientras estaban en esa etapa — se detectó este gap al cargar una obra real desde
-  // un pliego (octubre 2026). No toca etapa/estado_licitacion — eso sigue yendo por cambiarEtapa/onPedirRecepcion.
+  // un pliego (octubre 2026). En general no toca etapa/estado_licitacion — eso sigue yendo por
+  // cambiarEtapa/onPedirRecepcion — con una excepción (agregada el mismo mes, ver GestorObras.jsx
+  // para el mismo fix del lado de Obras): si la obra está "en oferta" solo porque requería garantía
+  // de OFERTA y acá se destilda ese requisito, ya no tiene sentido que siga esperando — pasa sola a
+  // "ejecución". Nunca al revés, para no esconder una obra que ya tenga gastos cargados.
   const editarObra = async (obraId, { nombre, detalle, cliente_id, monto_contrato, presupuesto, requiere_poliza, requiere_garantia_oferta, excluir_gastos_generales }) => {
     if (!nombre?.trim()) { toast('El nombre es obligatorio'); return }
-    const payload = { nombre: nombre.trim(), detalle: detalle?.trim() || null, cliente_id: cliente_id || null, monto_contrato: parseFloat(monto_contrato) || null, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requiere_poliza !== false, requiere_garantia_oferta: requiere_garantia_oferta !== false, excluir_gastos_generales: !!excluir_gastos_generales }
+    const requierePoliza = requiere_poliza !== false
+    const requiereGarantiaOferta = requiere_garantia_oferta !== false
+    const payload = { nombre: nombre.trim(), detalle: detalle?.trim() || null, cliente_id: cliente_id || null, monto_contrato: parseFloat(monto_contrato) || null, presupuesto: parseFloat(presupuesto) || 0, requiere_poliza: requierePoliza, requiere_garantia_oferta: requiereGarantiaOferta, excluir_gastos_generales: !!excluir_gastos_generales }
+    const obraActual = obras.find(o => o.id === obraId)
+    if (obraActual?.etapa === 'oferta' && etapaInicial(requierePoliza, requiereGarantiaOferta) === 'ejecucion') {
+      payload.etapa = 'ejecucion'
+    }
     await dbWrite('PATCH', 'obras', payload, `id=eq.${obraId}`)
     setObras(prev => prev.map(o => o.id === obraId ? { ...o, ...payload } : o))
-    toast('Obra actualizada', 'ok')
+    toast(payload.etapa === 'ejecucion' ? 'Obra actualizada — ya no requiere garantía de oferta, pasa a ejecución y aparece en gastos y finanzas' : 'Obra actualizada', 'ok')
   }
 
   const cambiarEtapa = async (obra, etapa) => {
